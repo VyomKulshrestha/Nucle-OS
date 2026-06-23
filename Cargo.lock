@@ -466,6 +466,7 @@ dependencies = [
  "chrono",
  "env_logger",
  "log",
+ "nucle_agent",
  "nucle_codec",
  "nucle_ecc",
  "nucle_index",
