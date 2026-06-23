@@ -1,1 +1,292 @@
-// Placeholder — implemented in Commit 7
+//! # Codec Benchmarking Framework
+//!
+//! Compares the performance of different DNA codecs across key metrics:
+//!
+//! - **Density**: bits per nucleotide achieved
+//! - **Constraint compliance**: GC content, homopolymer runs
+//! - **Strand count**: how many strands needed for given data
+//! - **Roundtrip integrity**: encode → decode produces original data
+//!
+//! This is a contribution to the field — no standardised benchmark
+//! suite exists for DNA storage codecs.
+
+use crate::base::{DnaCodec, DnaError, StrandCollection};
+use crate::constraints::{ConstraintConfig, ConstraintValidator};
+use std::fmt;
+use std::time::Instant;
+
+// ---------------------------------------------------------------------------
+// Benchmark Result
+// ---------------------------------------------------------------------------
+
+/// Results from benchmarking a single codec on a single dataset.
+#[derive(Debug, Clone)]
+pub struct BenchmarkResult {
+    /// Name of the codec.
+    pub codec_name: String,
+    /// Size of input data in bytes.
+    pub input_size: usize,
+    /// Number of strands produced.
+    pub strand_count: usize,
+    /// Total nucleotides across all strands.
+    pub total_nucleotides: usize,
+    /// Bits per nucleotide (higher is better, max 2.0).
+    pub bits_per_nucleotide: f64,
+    /// Average GC content across all strands (ideal: 0.50).
+    pub avg_gc_content: f64,
+    /// Maximum homopolymer run across all strands (lower is better).
+    pub max_homopolymer: usize,
+    /// Number of strands that violate default constraints.
+    pub constraint_violations: usize,
+    /// Whether encode → decode roundtrip succeeded.
+    pub roundtrip_ok: bool,
+    /// Encoding time in microseconds.
+    pub encode_time_us: u128,
+    /// Decoding time in microseconds.
+    pub decode_time_us: u128,
+    /// Encoding throughput in bytes/second.
+    pub encode_throughput: f64,
+    /// Decoding throughput in bytes/second.
+    pub decode_throughput: f64,
+}
+
+impl fmt::Display for BenchmarkResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "┌─ {} ─────────────────────────────", self.codec_name)?;
+        writeln!(f, "│ Input:        {} bytes", self.input_size)?;
+        writeln!(f, "│ Strands:      {}", self.strand_count)?;
+        writeln!(f, "│ Nucleotides:  {}", self.total_nucleotides)?;
+        writeln!(f, "│ Density:      {:.3} bits/nt", self.bits_per_nucleotide)?;
+        writeln!(f, "│ GC content:   {:.1}%", self.avg_gc_content * 100.0)?;
+        writeln!(f, "│ Max homopoly: {}", self.max_homopolymer)?;
+        writeln!(f, "│ Violations:   {}", self.constraint_violations)?;
+        writeln!(f, "│ Roundtrip:    {}", if self.roundtrip_ok { "✓ PASS" } else { "✗ FAIL" })?;
+        writeln!(f, "│ Encode:       {} μs ({:.0} KB/s)", self.encode_time_us, self.encode_throughput / 1024.0)?;
+        writeln!(f, "│ Decode:       {} μs ({:.0} KB/s)", self.decode_time_us, self.decode_throughput / 1024.0)?;
+        write!(f, "└────────────────────────────────────")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark Runner
+// ---------------------------------------------------------------------------
+
+/// Run a benchmark on a single codec with given input data.
+pub fn benchmark_codec(
+    codec: &dyn DnaCodec,
+    data: &[u8],
+) -> Result<BenchmarkResult, DnaError> {
+    // Encode
+    let encode_start = Instant::now();
+    let encoded = codec.encode(data)?;
+    let encode_time = encode_start.elapsed();
+
+    // Decode
+    let decode_start = Instant::now();
+    let decoded = codec.decode(&encoded)?;
+    let decode_time = decode_start.elapsed();
+
+    // Check roundtrip
+    let roundtrip_ok = decoded == data;
+
+    // Check constraints
+    let validator = ConstraintValidator::new(ConstraintConfig::relaxed());
+    let constraint_violations = encoded
+        .strands
+        .iter()
+        .filter(|s| !validator.is_valid(s))
+        .count();
+
+    let encode_us = encode_time.as_micros();
+    let decode_us = decode_time.as_micros();
+
+    let encode_throughput = if encode_us > 0 {
+        data.len() as f64 / (encode_us as f64 / 1_000_000.0)
+    } else {
+        f64::INFINITY
+    };
+
+    let decode_throughput = if decode_us > 0 {
+        data.len() as f64 / (decode_us as f64 / 1_000_000.0)
+    } else {
+        f64::INFINITY
+    };
+
+    Ok(BenchmarkResult {
+        codec_name: codec.name().to_string(),
+        input_size: data.len(),
+        strand_count: encoded.strand_count(),
+        total_nucleotides: encoded.total_nucleotides(),
+        bits_per_nucleotide: encoded.bits_per_nucleotide(),
+        avg_gc_content: encoded.avg_gc_content(),
+        max_homopolymer: encoded.max_homopolymer(),
+        constraint_violations,
+        roundtrip_ok,
+        encode_time_us: encode_us,
+        decode_time_us: decode_us,
+        encode_throughput,
+        decode_throughput,
+    })
+}
+
+/// Comparison report across multiple codecs.
+#[derive(Debug)]
+pub struct ComparisonReport {
+    pub results: Vec<BenchmarkResult>,
+}
+
+impl ComparisonReport {
+    /// Create a comparison report from benchmark results.
+    pub fn new(results: Vec<BenchmarkResult>) -> Self {
+        Self { results }
+    }
+
+    /// Get the codec with the best density.
+    pub fn best_density(&self) -> Option<&BenchmarkResult> {
+        self.results
+            .iter()
+            .max_by(|a, b| a.bits_per_nucleotide.partial_cmp(&b.bits_per_nucleotide).unwrap())
+    }
+
+    /// Get the codec with the fastest encoding.
+    pub fn fastest_encoder(&self) -> Option<&BenchmarkResult> {
+        self.results.iter().min_by_key(|r| r.encode_time_us)
+    }
+
+    /// Get the codec with the fewest constraint violations.
+    pub fn most_compliant(&self) -> Option<&BenchmarkResult> {
+        self.results.iter().min_by_key(|r| r.constraint_violations)
+    }
+}
+
+impl fmt::Display for ComparisonReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "╔══════════════════════════════════════════════════════════════╗")?;
+        writeln!(f, "║              DNA Codec Benchmark Comparison                 ║")?;
+        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
+        writeln!(f, "║ {:20} │ {:>8} │ {:>6} │ {:>4} │ {:>6} ║",
+            "Codec", "bits/nt", "GC %", "Hpol", "Pass")?;
+        writeln!(f, "╟──────────────────────┼──────────┼────────┼──────┼────────╢")?;
+
+        for r in &self.results {
+            writeln!(f, "║ {:20} │ {:>8.3} │ {:>5.1}% │ {:>4} │ {:>6} ║",
+                r.codec_name,
+                r.bits_per_nucleotide,
+                r.avg_gc_content * 100.0,
+                r.max_homopolymer,
+                if r.roundtrip_ok { "✓" } else { "✗" }
+            )?;
+        }
+
+        writeln!(f, "╚══════════════════════════════════════════════════════════════╝")?;
+
+        if let Some(best) = self.best_density() {
+            writeln!(f, "  Best density:    {} ({:.3} bits/nt)", best.codec_name, best.bits_per_nucleotide)?;
+        }
+        if let Some(fast) = self.fastest_encoder() {
+            writeln!(f, "  Fastest encode:  {} ({} μs)", fast.codec_name, fast.encode_time_us)?;
+        }
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Convenience: run all codecs
+// ---------------------------------------------------------------------------
+
+/// Benchmark all available codecs on the given data and return a comparison.
+pub fn benchmark_all_codecs(data: &[u8]) -> ComparisonReport {
+    use crate::fountain::{FountainCodec, FountainConfig};
+    use crate::ternary::{TernaryCodec, TernaryConfig};
+
+    let mut results = Vec::new();
+
+    // Ternary — no overlap
+    let ternary_no = TernaryCodec::new(TernaryConfig::no_overlap());
+    if let Ok(r) = benchmark_codec(&ternary_no, data) {
+        results.push(r);
+    }
+
+    // Ternary — default overlap
+    let ternary_def = TernaryCodec::new(TernaryConfig::default());
+    if let Ok(r) = benchmark_codec(&ternary_def, data) {
+        results.push(r);
+    }
+
+    // Fountain — default
+    let fountain_def = FountainCodec::new(FountainConfig::default());
+    if let Ok(r) = benchmark_codec(&fountain_def, data) {
+        results.push(r);
+    }
+
+    // Fountain — high density
+    let fountain_hd = FountainCodec::new(FountainConfig::high_density());
+    if let Ok(r) = benchmark_codec(&fountain_hd, data) {
+        results.push(r);
+    }
+
+    ComparisonReport::new(results)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ternary::{TernaryCodec, TernaryConfig};
+    use crate::fountain::{FountainCodec, FountainConfig};
+
+    #[test]
+    fn test_benchmark_ternary() {
+        let codec = TernaryCodec::new(TernaryConfig::no_overlap());
+        let data = b"Benchmark test data for ternary codec";
+
+        let result = benchmark_codec(&codec, data).unwrap();
+        assert!(result.roundtrip_ok);
+        assert!(result.bits_per_nucleotide > 0.0);
+        assert!(result.max_homopolymer <= 1); // Ternary guarantees no homopolymers
+    }
+
+    #[test]
+    fn test_benchmark_fountain() {
+        let codec = FountainCodec::new(FountainConfig {
+            segment_size: 4,
+            overhead: 2.0,
+            seed: 42,
+            ..FountainConfig::default()
+        });
+        let data = b"Benchmark test data!";
+
+        let result = benchmark_codec(&codec, data).unwrap();
+        assert!(result.roundtrip_ok);
+        assert!(result.bits_per_nucleotide > 0.0);
+    }
+
+    #[test]
+    fn test_comparison_report() {
+        let data = b"Compare these codecs on identical data for a fair benchmark";
+        let report = benchmark_all_codecs(data);
+
+        assert!(!report.results.is_empty());
+        assert!(report.best_density().is_some());
+
+        // All should roundtrip successfully
+        for r in &report.results {
+            assert!(r.roundtrip_ok, "{} failed roundtrip", r.codec_name);
+        }
+    }
+
+    #[test]
+    fn test_benchmark_display() {
+        let codec = TernaryCodec::new(TernaryConfig::no_overlap());
+        let data = b"Display test";
+
+        let result = benchmark_codec(&codec, data).unwrap();
+        let display = format!("{}", result);
+        assert!(display.contains("ternary"));
+        assert!(display.contains("bits/nt"));
+    }
+}
