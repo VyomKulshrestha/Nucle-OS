@@ -2,7 +2,7 @@
 
 ## Design Philosophy
 
-Nucle-OS follows the same bottom-up layered architecture as FerrumOS. Each layer is a separate Rust crate with well-defined responsibilities and clean interfaces to adjacent layers. Dependencies flow strictly upward — lower layers never depend on higher layers.
+Nucle-OS follows the same bottom-up layered architecture as FerrumOS(https://github.com/VyomKulshrestha/Ferrum-OS). Each layer is a separate Rust crate with well-defined responsibilities and clean interfaces to adjacent layers. Dependencies flow strictly upward — lower layers never depend on higher layers.
 
 ## Layer Dependency Graph
 
