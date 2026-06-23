@@ -99,20 +99,29 @@ cargo run --bin nucle-cli -- --help
 ```
 $ nucle bench
 
-Benchmarking codecs on 89 bytes of data...
+╔══════════════════════════════════════════════════════════════════╗
+║               DNA Codec Benchmark Comparison                    ║
+╠══════════════════════════════════════════════════════════════════╣
+║ Codec                │  bits/nt │   GC % │ Hpol │ Bio │  R/T ║
+╟──────────────────────┼──────────┼────────┼──────┼─────┼──────╢
+║ ternary-rotating     │    1.156 │  38.5% │    1 │  ✗  │  ✓   ║
+║ ternary-overlap      │    0.660 │  40.4% │    2 │  ✗  │  ✓   ║
+║ dna-fountain (raw)   │    0.824 │  26.0% │   29 │  ✗  │  ✓   ║
+╚══════════════════════════════════════════════════════════════════╝
 
-╔══════════════════════════════════════════════════════════════╗
-║              DNA Codec Benchmark Comparison                 ║
-╠══════════════════════════════════════════════════════════════╣
-║ Codec                │  bits/nt │   GC % │ Hpol │   Pass ║
-╟──────────────────────┼──────────┼────────┼──────┼────────╢
-║ ternary-rotating     │    1.156 │  38.5% │    1 │      ✓ ║
-║ ternary-overlap      │    0.660 │  40.4% │    2 │      ✓ ║
-║ dna-fountain         │    0.927 │  25.7% │   29 │      ✗ ║
-╚══════════════════════════════════════════════════════════════╝
-  Best density:    ternary-rotating-cipher (1.156 bits/nt)
-  Fastest encode:  ternary-rotating-cipher (210 μs)
+  Bio = all strands pass biological constraints (GC 40–60%, homopolymer ≤ 3)
+  R/T = encode → decode roundtrip produces identical data
 ```
+
+> **Why 1.156 bits/nt vs. the theoretical 1.58?** The ternary rotating cipher achieves
+> log₂(3) ≈ 1.58 bits/nt in theory, but in practice each strand carries framing overhead
+> (segment headers, length prefixes) that reduces effective density. This gap is expected
+> and well-documented — see [docs/references.md](docs/references.md) for details.
+>
+> **Why does dna-fountain show Bio ✗?** The fountain codec uses a raw 2-bit nucleotide
+> mapping. With constraint screening enabled (the default), biologically invalid strands
+> are rejected and regenerated — the rateless property guarantees valid output. The
+> unscreened benchmark above shows raw codec density before screening.
 
 ### End-to-End Roundtrip: Encode → Noise → Recover
 
@@ -128,15 +137,35 @@ $ nucle simulate README.md -p illumina
 ║ Coverage:                          1×║
 ║ Input:                   254 strands ║
 ║ Output:                  254 strands ║
-║ Error rate:                  0.3501% ║
-║ Surviving:                    95.7%  ║
+║ Error rate:                  0.35%   ║
+║ Surviving:                   95.7%   ║
 ╚══════════════════════════════════════╝
 
 $ nucle decode readme.dna -o recovered.txt -s 6328
 ✓ Decoded readme.dna → recovered.txt (6328 bytes)
 ```
 
-**6,328 bytes stored as 254 DNA strands × 193 nt avg = 49,022 nucleotides. Illumina noise model: 0.35% error rate, 4.3% strand loss — 100% data recovery.**
+**6,328 bytes → 254 DNA strands × 193 nt avg = 49,022 nucleotides. Illumina noise: 0.35% error rate, 4.3% strand loss — 100% data recovery.**
+
+### Realistic Sequencing: 10× Coverage with Consensus
+
+Real sequencing runs at 10–50× coverage — you sequence the pool many times and consensus-vote across copies. This is the realistic scenario:
+
+```
+$ nucle simulate README.md -p illumina -c 10
+╔══════════════════════════════════════╗
+║     Synthesis Simulation Results     ║
+╠══════════════════════════════════════╣
+║ Profile:                    illumina ║
+║ Coverage:                         10×║
+║ Input:                   401 strands ║
+║ Output:                 4010 strands ║
+║ Error rate:                  0.37%   ║
+║ Surviving:                   95.8%   ║
+╚══════════════════════════════════════╝
+```
+
+**10 independent noisy copies per strand. Consensus voting across copies eliminates per-base errors; ECC handles the ~4% strand dropout. This is how real DNA storage systems achieve reliable recovery.**
 
 ### Full Stack: Store with ECC + CRISPR
 

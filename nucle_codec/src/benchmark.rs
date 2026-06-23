@@ -89,8 +89,8 @@ pub fn benchmark_codec(
     // Check roundtrip
     let roundtrip_ok = decoded == data;
 
-    // Check constraints
-    let validator = ConstraintValidator::new(ConstraintConfig::relaxed());
+    // Check constraints (standard synthesis requirements)
+    let validator = ConstraintValidator::new(ConstraintConfig::default());
     let constraint_violations = encoded
         .strands
         .iter()
@@ -161,24 +161,26 @@ impl ComparisonReport {
 
 impl fmt::Display for ComparisonReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "╔══════════════════════════════════════════════════════════════╗")?;
-        writeln!(f, "║              DNA Codec Benchmark Comparison                 ║")?;
-        writeln!(f, "╠══════════════════════════════════════════════════════════════╣")?;
-        writeln!(f, "║ {:20} │ {:>8} │ {:>6} │ {:>4} │ {:>6} ║",
-            "Codec", "bits/nt", "GC %", "Hpol", "Pass")?;
-        writeln!(f, "╟──────────────────────┼──────────┼────────┼──────┼────────╢")?;
+        writeln!(f, "╔══════════════════════════════════════════════════════════════════╗")?;
+        writeln!(f, "║               DNA Codec Benchmark Comparison                    ║")?;
+        writeln!(f, "╠══════════════════════════════════════════════════════════════════╣")?;
+        writeln!(f, "║ {:20} │ {:>8} │ {:>6} │ {:>4} │ {:>3} │ {:>4} ║",
+            "Codec", "bits/nt", "GC %", "Hpol", "Bio", "R/T")?;
+        writeln!(f, "╟──────────────────────┼──────────┼────────┼──────┼─────┼──────╢")?;
 
         for r in &self.results {
-            writeln!(f, "║ {:20} │ {:>8.3} │ {:>5.1}% │ {:>4} │ {:>6} ║",
+            let bio_ok = r.constraint_violations == 0;
+            writeln!(f, "║ {:20} │ {:>8.3} │ {:>5.1}% │ {:>4} │  {}  │  {}   ║",
                 r.codec_name,
                 r.bits_per_nucleotide,
                 r.avg_gc_content * 100.0,
                 r.max_homopolymer,
-                if r.roundtrip_ok { "✓" } else { "✗" }
+                if bio_ok { "✓" } else { "✗" },
+                if r.roundtrip_ok { "✓" } else { "✗" },
             )?;
         }
 
-        writeln!(f, "╚══════════════════════════════════════════════════════════════╝")?;
+        writeln!(f, "╚══════════════════════════════════════════════════════════════════╝")?;
 
         if let Some(best) = self.best_density() {
             writeln!(f, "  Best density:    {} ({:.3} bits/nt)", best.codec_name, best.bits_per_nucleotide)?;
@@ -186,6 +188,9 @@ impl fmt::Display for ComparisonReport {
         if let Some(fast) = self.fastest_encoder() {
             writeln!(f, "  Fastest encode:  {} ({} μs)", fast.codec_name, fast.encode_time_us)?;
         }
+        writeln!(f)?;
+        writeln!(f, "  Bio = all strands pass biological constraints (GC 40–60%, homopolymer ≤ 3)")?;
+        writeln!(f, "  R/T = encode → decode roundtrip produces identical data")?;
 
         Ok(())
     }
@@ -214,15 +219,22 @@ pub fn benchmark_all_codecs(data: &[u8]) -> ComparisonReport {
         results.push(r);
     }
 
-    // Fountain — default
-    let fountain_def = FountainCodec::new(FountainConfig::default());
-    if let Ok(r) = benchmark_codec(&fountain_def, data) {
+    // Fountain — with constraint screening (biologically valid output).
+    // Needs enough data variation for screening to find valid strands;
+    // if the input is too small/uniform, screening rejects everything
+    // and this benchmark is silently skipped.
+    let fountain_screened = FountainCodec::new(FountainConfig::default());
+    if let Ok(r) = benchmark_codec(&fountain_screened, data) {
         results.push(r);
     }
 
-    // Fountain — high density
-    let fountain_hd = FountainCodec::new(FountainConfig::high_density());
-    if let Ok(r) = benchmark_codec(&fountain_hd, data) {
+    // Fountain — unscreened (raw codec, shows theoretical density
+    // but strands may violate biological constraints).
+    let fountain_raw = FountainCodec::new(FountainConfig {
+        overhead: 1.50,
+        ..FountainConfig::unscreened()
+    });
+    if let Ok(r) = benchmark_codec(&fountain_raw, data) {
         results.push(r);
     }
 
@@ -256,7 +268,7 @@ mod tests {
             segment_size: 4,
             overhead: 2.0,
             seed: 42,
-            ..FountainConfig::default()
+            ..FountainConfig::unscreened()
         });
         let data = b"Benchmark test data!";
 

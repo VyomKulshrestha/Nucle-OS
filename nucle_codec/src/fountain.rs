@@ -73,10 +73,10 @@ impl Default for FountainConfig {
     fn default() -> Self {
         Self {
             segment_size: 16,  // 16 bytes per segment
-            overhead: 1.30,    // 30% overhead for safety
+            overhead: 1.50,    // 50% overhead — screening rejects some strands
             max_screening_attempts: 1000,
-            screen_constraints: false, // Disable by default for reliability
-            constraint_config: ConstraintConfig::relaxed(),
+            screen_constraints: true,  // Enforce biological constraints (per Erlich 2017)
+            constraint_config: ConstraintConfig::default(),
             seed: 42,
         }
     }
@@ -84,13 +84,14 @@ impl Default for FountainConfig {
 
 impl FountainConfig {
     /// Configuration optimized for density (low overhead).
+    /// Still enforces biological constraints — rateless property handles rejections.
     pub fn high_density() -> Self {
         Self {
             segment_size: 20,
-            overhead: 1.10,
+            overhead: 1.20,
             max_screening_attempts: 2000,
-            screen_constraints: false,
-            constraint_config: ConstraintConfig::relaxed(),
+            screen_constraints: true,
+            constraint_config: ConstraintConfig::default(),
             seed: 42,
         }
     }
@@ -101,9 +102,20 @@ impl FountainConfig {
             segment_size: 12,
             overhead: 2.0,
             max_screening_attempts: 500,
+            screen_constraints: true,
+            constraint_config: ConstraintConfig::default(),
+            seed: 42,
+        }
+    }
+
+    /// Configuration with constraint screening disabled.
+    /// Only use for internal testing or when raw throughput matters
+    /// more than biological validity.
+    pub fn unscreened() -> Self {
+        Self {
             screen_constraints: false,
             constraint_config: ConstraintConfig::relaxed(),
-            seed: 42,
+            ..Self::default()
         }
     }
 }
@@ -671,8 +683,8 @@ mod tests {
 
     #[test]
     fn test_density() {
-        let codec = FountainCodec::default_codec();
-        let data = vec![0u8; 100];
+        let codec = FountainCodec::new(FountainConfig::unscreened());
+        let data: Vec<u8> = (0..100).collect(); // varied byte values
 
         let encoded = codec.encode(&data).unwrap();
         let bpn = encoded.bits_per_nucleotide();

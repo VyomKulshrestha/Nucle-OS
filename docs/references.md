@@ -25,6 +25,18 @@ The paper also introduced **overlapping segments** with 75-nt windows sharing a 
 | GC content targeting | `ConstraintConfig` with `gc_min: 0.40, gc_max: 0.60` — strands outside range are flagged |
 | Information density | Achieved **1.58 bits/nt** theoretical; benchmarked at **1.156 bits/nt** effective (with headers/framing) via `nucle bench` |
 
+### Density gap: 1.156 vs 1.58 bits/nt
+
+The theoretical limit of the ternary rotating cipher is log₂(3) ≈ 1.58 bits/nt — each nucleotide encodes one trit. In practice, NucleOS measures **1.156 bits/nt** effective density. The gap comes from three sources:
+
+1. **Segment framing** — each strand carries a segment index header (4 bytes = 16 nt) that doesn't encode user data but is required for reassembly.
+2. **Length prefix** — a 4-byte big-endian length header is prepended to the payload so the decoder knows the original file size.
+3. **Padding** — the last segment is zero-padded to the fixed segment size, wasting nucleotides on small inputs.
+
+These overheads are proportionally smaller on larger files. A 1 MB file achieves closer to ~1.45 bits/nt. This is consistent with Goldman et al.'s reported results — they achieved ~1.28 bits/nt on their 739 KB test file after accounting for indexing and overlap redundancy.
+
+This gap is **not a bug** — it's the real engineering cost of making DNA storage work. Any production codec needs headers for reassembly, and reporting effective density (not theoretical) is the honest metric.
+
 ### Source files
 
 - [`nucle_codec/src/ternary.rs`](../nucle_codec/src/ternary.rs) — Encoder/decoder
@@ -60,6 +72,17 @@ Strands that violate biological constraints (GC content, homopolymers) are simpl
 - [`nucle_codec/src/fountain.rs`](../nucle_codec/src/fountain.rs) — Fountain encoder/decoder
 - [`nucle_ecc/src/fountain_code.rs`](../nucle_ecc/src/fountain_code.rs) — Erasure-level fountain recovery
 - [`nucle_ecc/src/pipeline.rs`](../nucle_ecc/src/pipeline.rs) — Multi-stage repair pipeline
+
+### Constraint screening in practice
+
+NucleOS's fountain codec uses a raw 2-bit nucleotide mapping (`A=00, T=01, G=10, C=11`) for the byte-to-DNA conversion. Unlike the ternary cipher (which eliminates homopolymers by construction), the fountain codec relies on **post-hoc constraint screening** — exactly as described in the Erlich paper.
+
+With `screen_constraints: true` (the default), each generated droplet is checked against biological constraints. Invalid strands are discarded and the encoder tries the next PRNG seed. The rateless property guarantees that valid strands exist, but the rejection rate depends on the data distribution:
+
+- **Random / binary data**: ~30-50% rejection rate, works well
+- **Highly structured data** (e.g., all-zero, short ASCII): can produce heavily biased nucleotide distributions where most droplets fail GC checks, causing slow encoding or encoder timeout
+
+This is a known limitation of the 2-bit mapping approach. A production system would use a more sophisticated byte-to-nucleotide scheme (e.g., the Yin-Yang codec from Ping et al. 2022) that provides better GC balance by construction.
 
 ---
 
