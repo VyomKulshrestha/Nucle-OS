@@ -83,12 +83,61 @@ A ReAct agent that takes natural-language file operations, plans across the VFS 
 # Build the entire workspace
 cargo build --workspace
 
-# Run all tests
+# Run all tests (190+ tests)
 cargo test --workspace
 
 # Run the CLI
 cargo run --bin nucle-cli -- --help
 ```
+
+---
+
+## CLI Usage
+
+```bash
+# Encode a file to DNA strands
+nucle encode myfile.txt -o myfile.dna
+
+# Decode DNA strands back to binary
+nucle decode myfile.dna -o recovered.txt -s 1024
+
+# Store a file with error correction (4 parity strands)
+nucle store myfile.txt -r 4
+
+# Retrieve a stored file
+nucle retrieve myfile.txt
+
+# Search for files
+nucle search "name:readme type:txt"
+
+# Pool statistics
+nucle pool
+
+# Simulate synthesis noise (Illumina profile)
+nucle simulate myfile.txt -p illumina
+
+# Benchmark all codecs
+nucle bench
+
+# Natural language agent
+nucle agent "store readme.txt with 3x redundancy"
+nucle agent "search for text files"
+nucle agent "pool status"
+```
+
+---
+
+## Test Coverage
+
+| Crate | Tests | What's Tested |
+|-------|------:|---------------|
+| `nucle_codec` | 46 | Nucleotide types, constraints, ternary codec, fountain codec, benchmarks |
+| `nucle_synth` | 10 | Error models, noise engine, hardware profiles |
+| `nucle_ecc` | 23 | Reed-Solomon, fountain erasure, consensus, repair pipeline |
+| `nucle_index` | 28 | Primers, CRISPR sim, vector index, semantic search |
+| `nucle_vfs` | 31 | Pool, file, catalog, syscall API (full stack roundtrip) |
+| `nucle_agent` | 27 | Tool defs, planner, executor |
+| **Total** | **190+** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
