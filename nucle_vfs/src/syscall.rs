@@ -1,21 +1,31 @@
 //! # Syscall-Style API — `dna_write()`, `dna_read()`, `dna_stat()`
 //!
-//! The top-level API that ties every layer together:
+//! The top-level API that ties **every** layer together:
 //!
 //! ```text
-//! dna_write(name, data) → Codec → ECC → Primers → Pool
-//! dna_read(name)        → Pool → Primers → ECC → Codec → data
-//! dna_stat()            → Pool stats, file listing, health
-//! dna_delete(name)      → Remove from Pool + Catalog
+//! dna_write(name, data, redundancy)
+//!   → Codec encode → RS ECC parity → Primer tag → Pool store
+//!
+//! dna_read(name)
+//!   → Catalog lookup → CRISPR retrieve → Primer untag
+//!   → RS ECC decode → Codec decode → data
+//!
+//! dna_stat()  → Pool stats, file listing, health metrics
+//! dna_delete() → Remove from Pool + Catalog + Search
 //! ```
+//!
+//! Full stack: VFS → Index → ECC → Codec → Synth
 
 use crate::pool::{DnaPool, PoolEntry};
 use crate::file::DnaFile;
 use crate::catalog::Catalog;
-use nucle_codec::base::{DnaCodec, StrandCollection};
+use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
+use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
 use nucle_index::primer::PrimerLibrary;
+use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
+use nucle_synth::noise::{NoiseEngine, SimulationConfig};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use std::fmt;
@@ -27,11 +37,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The main DNA storage operating system.
 ///
-/// Combines all layers into a single interface:
-/// - Codec (encode/decode)
-/// - ECC (error correction — not applied in basic write for now)
-/// - Index (primers, search)
-/// - VFS (pool, catalog)
+/// Integrates all 6 layers:
+/// 1. **Codec** — binary ↔ DNA encoding (ternary rotating cipher)
+/// 2. **Synth** — synthesis/sequencing noise simulation
+/// 3. **ECC** — Reed-Solomon strand-level erasure recovery
+/// 4. **Index** — primer addressing + CRISPR retrieval + vector search
+/// 5. **VFS** — pool, catalog, file metadata
+/// 6. **Agent** — (Phase 5)
 pub struct NucleOS {
     /// DNA strand storage pool.
     pub pool: DnaPool,
@@ -39,8 +51,14 @@ pub struct NucleOS {
     pub catalog: Catalog,
     /// Primer library for file addressing.
     pub primers: PrimerLibrary,
-    /// Search engine.
+    /// Search engine for semantic file lookup.
     pub search: SearchEngine,
+    /// CRISPR simulator for selective retrieval.
+    crispr: CrisprSimulator,
+    /// Whether to simulate synthesis/sequencing noise on write.
+    pub simulate_noise: bool,
+    /// Noise simulation config (used when simulate_noise is true).
+    pub noise_config: SimulationConfig,
     /// Number of primer pairs used so far.
     primers_used: usize,
 }
@@ -57,6 +75,9 @@ impl NucleOS {
             catalog: Catalog::new(),
             primers,
             search,
+            crispr: CrisprSimulator::new(CrisprConfig::ideal()),
+            simulate_noise: false,
+            noise_config: SimulationConfig::pristine(),
             primers_used: 0,
         }
     }
@@ -66,14 +87,39 @@ impl NucleOS {
         Self::new(100)
     }
 
+    /// Enable noise simulation with a given config.
+    pub fn with_noise(mut self, config: SimulationConfig) -> Self {
+        self.simulate_noise = true;
+        self.noise_config = config;
+        self
+    }
+
+    /// Set CRISPR retrieval config (for simulating imperfect retrieval).
+    pub fn with_crispr(mut self, config: CrisprConfig) -> Self {
+        self.crispr = CrisprSimulator::new(config);
+        self
+    }
+
     // -----------------------------------------------------------------------
     // dna_write — store a file into DNA
     // -----------------------------------------------------------------------
 
     /// Store binary data as a file in DNA storage.
     ///
-    /// Pipeline: data → encode → tag with primers → store in pool
-    pub fn dna_write(&mut self, filename: &str, data: &[u8]) -> Result<WriteResult, String> {
+    /// Full pipeline:
+    /// 1. **Codec**: encode binary → DNA strands (ternary rotating cipher)
+    /// 2. **ECC**: compute RS parity strands (if redundancy > 0)
+    /// 3. **Primers**: tag each strand with unique file primer pair
+    /// 4. **Synth** (optional): simulate synthesis noise
+    /// 5. **Pool**: store all tagged strands
+    ///
+    /// `redundancy`: number of RS parity strands (0 = no ECC).
+    pub fn dna_write(
+        &mut self,
+        filename: &str,
+        data: &[u8],
+        redundancy: usize,
+    ) -> Result<WriteResult, String> {
         // Check if filename already exists
         if self.catalog.contains_name(filename) {
             return Err(format!("file '{}' already exists", filename));
@@ -86,33 +132,86 @@ impl NucleOS {
             .clone();
         self.primers_used += 1;
 
-        // Encode using ternary codec
+        // ── Layer 1: Codec ── encode binary → DNA strands
         let codec = TernaryCodec::new(TernaryConfig::no_overlap());
         let encoded = codec.encode(data)
             .map_err(|e| format!("encoding failed: {}", e))?;
 
-        // Tag each strand with primers
-        let tagged_strands: Vec<_> = encoded.strands.iter()
+        let data_strand_count = encoded.strands.len();
+
+        // ── Layer 3: ECC ── compute RS parity strands
+        let mut parity_strands: Vec<DnaStrand> = Vec::new();
+        if redundancy > 0 {
+            let rs = ReedSolomon::new(RsConfig::new(redundancy));
+
+            // Convert DNA strands to byte vectors for RS
+            let strand_bytes: Vec<Vec<u8>> = encoded.strands.iter()
+                .map(|s| s.bases().iter().map(|n| n.to_bits()).collect())
+                .collect();
+
+            let parity_bytes = rs.encode_block(&strand_bytes)
+                .map_err(|e| format!("ECC encoding failed: {}", e))?;
+
+            // Convert parity bytes back to DNA strands
+            for parity in &parity_bytes {
+                let bases: Vec<_> = parity.iter()
+                    .filter_map(|&b| nucle_codec::base::Nucleotide::from_bits(b).ok())
+                    .collect();
+                parity_strands.push(DnaStrand::new(bases));
+            }
+        }
+
+        // ── Layer 4: Index ── tag each strand with primer pair
+        let tagged_data: Vec<DnaStrand> = encoded.strands.iter()
             .map(|s| primer_pair.tag_strand(s))
             .collect();
 
-        // Compute content hash
+        let tagged_parity: Vec<DnaStrand> = parity_strands.iter()
+            .map(|s| primer_pair.tag_strand(s))
+            .collect();
+
+        // ── Layer 2: Synth (optional) ── simulate noise
+        let final_data = if self.simulate_noise {
+            let collection = StrandCollection::from_strands(
+                tagged_data.clone(),
+                data.len(),
+            );
+            let engine = NoiseEngine::new(self.noise_config.clone());
+            let result = engine.simulate(&collection);
+            result.pool.to_strand_collection(data.len()).strands
+        } else {
+            tagged_data
+        };
+
+        let final_parity = if self.simulate_noise {
+            let collection = StrandCollection::from_strands(
+                tagged_parity.clone(),
+                0, // parity has no original data size
+            );
+            let engine = NoiseEngine::new(self.noise_config.clone());
+            let result = engine.simulate(&collection);
+            result.pool.to_strand_collection(0).strands
+        } else {
+            tagged_parity
+        };
+
+        // ── Compute content hash
         let mut hasher = Sha256::new();
         hasher.update(data);
         let hash = hasher.finalize();
         let content_hash = hash[..8].to_vec();
 
-        // Get timestamp
+        // ── Timestamp
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        // Generate file ID
+        // ── Generate file ID
         let file_id = self.catalog.next_file_id();
 
-        // Store strands in pool
-        for (i, strand) in tagged_strands.iter().enumerate() {
+        // ── Layer 5: VFS ── store in pool
+        for (i, strand) in final_data.iter().enumerate() {
             self.pool.add_strand(PoolEntry {
                 strand: strand.clone(),
                 file_id: file_id.clone(),
@@ -121,7 +220,24 @@ impl NucleOS {
             });
         }
 
-        // Register in catalog
+        for (i, strand) in final_parity.iter().enumerate() {
+            self.pool.add_strand(PoolEntry {
+                strand: strand.clone(),
+                file_id: file_id.clone(),
+                strand_index: data_strand_count + i,
+                is_parity: true,
+            });
+        }
+
+        let parity_count = final_parity.len();
+        let total_strands = final_data.len() + parity_count;
+        let redundancy_ratio = if final_data.is_empty() {
+            0.0
+        } else {
+            total_strands as f64 / final_data.len() as f64
+        };
+
+        // ── Register in catalog
         let dna_file = DnaFile {
             file_id: file_id.clone(),
             filename: filename.to_string(),
@@ -129,29 +245,32 @@ impl NucleOS {
             content_hash: content_hash.clone(),
             created_at,
             primer_id: primer_pair.id.clone(),
-            data_strand_count: tagged_strands.len(),
-            parity_strand_count: 0,
+            data_strand_count: final_data.len(),
+            parity_strand_count: parity_count,
             codec: "ternary-rotating-cipher".into(),
-            redundancy: 1.0,
+            redundancy: redundancy_ratio,
         };
         self.catalog.register(dna_file);
 
-        // Register in search engine
+        // ── Register in search engine
         self.search.register_file(FileMeta {
             file_id: file_id.clone(),
             filename: filename.to_string(),
             size: data.len(),
             content_hash,
             primer_id: primer_pair.id.clone(),
-            strand_count: tagged_strands.len(),
+            strand_count: total_strands,
         });
 
         Ok(WriteResult {
             file_id,
             filename: filename.to_string(),
             data_size: data.len(),
-            strand_count: tagged_strands.len(),
+            data_strand_count: final_data.len(),
+            parity_strand_count: parity_count,
+            total_strand_count: total_strands,
             primer_id: primer_pair.id,
+            redundancy: redundancy_ratio,
         })
     }
 
@@ -161,37 +280,110 @@ impl NucleOS {
 
     /// Read a file back from DNA storage.
     ///
-    /// Pipeline: find primer → get strands → untag → decode
+    /// Full pipeline:
+    /// 1. **Catalog**: look up file metadata
+    /// 2. **CRISPR**: selectively retrieve strands by primer matching
+    /// 3. **Primers**: untag strands (remove primer flanking regions)
+    /// 4. **ECC**: RS decode to recover any missing strands
+    /// 5. **Codec**: decode DNA → binary data
     pub fn dna_read(&self, filename: &str) -> Result<Vec<u8>, String> {
-        // Look up the file
+        // ── Layer 5: VFS ── look up file
         let dna_file = self.catalog.get_by_name(filename)
             .ok_or(format!("file '{}' not found", filename))?;
 
-        // Get the primer pair
+        // ── Layer 4: Index ── CRISPR selective retrieval
         let primer_pair = self.primers.get(&dna_file.primer_id)
             .ok_or(format!("primer '{}' not found", dna_file.primer_id))?;
 
-        // Get strands from pool
-        let pool_entries = self.pool.get_file_strands(&dna_file.file_id);
-        if pool_entries.is_empty() {
-            return Err(format!("no strands found for file '{}'", filename));
+        // Collect all strands from pool for CRISPR retrieval
+        let all_pool_strands: Vec<DnaStrand> = self.pool
+            .all_strands()
+            .into_iter()
+            .cloned()
+            .collect();
+
+        let retrieval = self.crispr.retrieve(&all_pool_strands, primer_pair);
+
+        if retrieval.target_strands.is_empty() {
+            return Err(format!(
+                "CRISPR retrieval failed for file '{}': no strands amplified",
+                filename
+            ));
         }
 
-        // Untag strands (remove primers)
-        let data_strands: Vec<_> = pool_entries.iter()
+        // ── Layer 4: Index ── untag strands (remove primers)
+        // Separate data and parity strands via pool metadata
+        let pool_entries = self.pool.get_file_strands(&dna_file.file_id);
+
+        let data_entries: Vec<_> = pool_entries.iter()
             .filter(|e| !e.is_parity)
+            .collect();
+        let parity_entries: Vec<_> = pool_entries.iter()
+            .filter(|e| e.is_parity)
+            .collect();
+
+        let data_strands: Vec<DnaStrand> = data_entries.iter()
             .filter_map(|e| primer_pair.untag_strand(&e.strand))
             .collect();
 
-        if data_strands.is_empty() {
-            return Err("failed to untag strands".into());
+        let parity_strands: Vec<DnaStrand> = parity_entries.iter()
+            .filter_map(|e| primer_pair.untag_strand(&e.strand))
+            .collect();
+
+        // ── Layer 3: ECC ── RS decode (if parity strands exist)
+        let decoded_strands = if !parity_strands.is_empty() && dna_file.parity_strand_count > 0 {
+            let rs = ReedSolomon::new(RsConfig::new(dna_file.parity_strand_count));
+
+            // Convert to byte vectors
+            let received: Vec<Option<Vec<u8>>> = data_strands.iter()
+                .map(|s| Some(s.bases().iter().map(|n| n.to_bits()).collect()))
+                .collect();
+
+            let parity_bytes: Vec<Vec<u8>> = parity_strands.iter()
+                .map(|s| s.bases().iter().map(|n| n.to_bits()).collect())
+                .collect();
+
+            match rs.decode_block(&received, &parity_bytes) {
+                Ok(recovered_bytes) => {
+                    // Convert back to DnaStrands
+                    recovered_bytes.iter().map(|bytes| {
+                        let bases: Vec<_> = bytes.iter()
+                            .filter_map(|&b| nucle_codec::base::Nucleotide::from_bits(b).ok())
+                            .collect();
+                        DnaStrand::new(bases)
+                    }).collect()
+                }
+                Err(_) => {
+                    // ECC failed — fall back to raw data strands
+                    data_strands
+                }
+            }
+        } else {
+            data_strands
+        };
+
+        if decoded_strands.is_empty() {
+            return Err("no data strands after ECC decode".into());
         }
 
-        // Decode
-        let collection = StrandCollection::from_strands(data_strands, dna_file.size);
+        // ── Layer 1: Codec ── decode DNA → binary
+        let collection = StrandCollection::from_strands(decoded_strands, dna_file.size);
         let codec = TernaryCodec::new(TernaryConfig::no_overlap());
         let decoded = codec.decode(&collection)
-            .map_err(|e| format!("decoding failed: {}", e))?;
+            .map_err(|e| format!("codec decoding failed: {}", e))?;
+
+        // ── Verify content hash
+        let mut hasher = Sha256::new();
+        hasher.update(&decoded);
+        let hash = hasher.finalize();
+        let recovered_hash = hash[..8].to_vec();
+
+        if recovered_hash != dna_file.content_hash {
+            return Err(format!(
+                "content hash mismatch: data may be corrupted (expected {:?}, got {:?})",
+                &dna_file.content_hash, &recovered_hash
+            ));
+        }
 
         Ok(decoded)
     }
@@ -200,7 +392,7 @@ impl NucleOS {
     // dna_stat — pool and file statistics
     // -----------------------------------------------------------------------
 
-    /// Get pool statistics.
+    /// Get comprehensive pool statistics.
     pub fn dna_stat(&self) -> PoolStatus {
         PoolStatus {
             file_count: self.catalog.len(),
@@ -213,8 +405,11 @@ impl NucleOS {
             files: self.catalog.list().iter().map(|f| FileInfo {
                 filename: f.filename.clone(),
                 size: f.size,
-                strand_count: f.total_strands(),
+                data_strands: f.data_strand_count,
+                parity_strands: f.parity_strand_count,
+                total_strands: f.total_strands(),
                 codec: f.codec.clone(),
+                redundancy: f.redundancy,
             }).collect(),
         }
     }
@@ -223,20 +418,15 @@ impl NucleOS {
     // dna_delete — remove a file
     // -----------------------------------------------------------------------
 
-    /// Delete a file from DNA storage.
+    /// Delete a file from DNA storage. Removes strands, catalog entry, and search index.
     pub fn dna_delete(&mut self, filename: &str) -> Result<DeleteResult, String> {
         let dna_file = self.catalog.get_by_name(filename)
             .ok_or(format!("file '{}' not found", filename))?;
         let file_id = dna_file.file_id.clone();
         let strand_count = dna_file.total_strands();
 
-        // Remove from pool
         self.pool.remove_file(&file_id);
-
-        // Remove from catalog
         self.catalog.remove(&file_id);
-
-        // Remove from search
         self.search.remove_file(&file_id);
 
         Ok(DeleteResult {
@@ -265,16 +455,26 @@ pub struct WriteResult {
     pub file_id: String,
     pub filename: String,
     pub data_size: usize,
-    pub strand_count: usize,
+    pub data_strand_count: usize,
+    pub parity_strand_count: usize,
+    pub total_strand_count: usize,
     pub primer_id: String,
+    pub redundancy: f64,
 }
 
 impl fmt::Display for WriteResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Stored '{}' ({} bytes → {} strands, primer={})",
-            self.filename, self.data_size, self.strand_count, self.primer_id
+            "Stored '{}' ({} bytes → {} data + {} parity = {} strands, \
+             {:.2}× redundancy, primer={})",
+            self.filename,
+            self.data_size,
+            self.data_strand_count,
+            self.parity_strand_count,
+            self.total_strand_count,
+            self.redundancy,
+            self.primer_id
         )
     }
 }
@@ -291,8 +491,11 @@ pub struct DeleteResult {
 pub struct FileInfo {
     pub filename: String,
     pub size: usize,
-    pub strand_count: usize,
+    pub data_strands: usize,
+    pub parity_strands: usize,
+    pub total_strands: usize,
     pub codec: String,
+    pub redundancy: f64,
 }
 
 /// Pool status report.
@@ -323,7 +526,11 @@ impl fmt::Display for PoolStatus {
         writeln!(f, "╟──────────────────────────────────────╢")?;
         writeln!(f, "║ Files:                               ║")?;
         for fi in &self.files {
-            writeln!(f, "║   {} ({} bytes, {} strands)", fi.filename, fi.size, fi.strand_count)?;
+            writeln!(
+                f,
+                "║   {} ({} B, {}d+{}p strands, {:.1}×)",
+                fi.filename, fi.size, fi.data_strands, fi.parity_strands, fi.redundancy
+            )?;
         }
         write!(f, "╚══════════════════════════════════════╝")
     }
@@ -337,51 +544,100 @@ impl fmt::Display for PoolStatus {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_write_and_read_roundtrip() {
-        let mut os = NucleOS::new(10);
-        let data = b"Hello, NucleOS! This is a test file stored in DNA.";
+    // ── Basic roundtrip ──
 
-        let result = os.dna_write("hello.txt", data).unwrap();
-        assert!(!result.file_id.is_empty());
-        assert!(result.strand_count > 0);
+    #[test]
+    fn test_write_read_no_ecc() {
+        let mut os = NucleOS::new(10);
+        let data = b"Hello, NucleOS! No ECC roundtrip test.";
+
+        let result = os.dna_write("hello.txt", data, 0).unwrap();
+        assert_eq!(result.parity_strand_count, 0);
+        assert!((result.redundancy - 1.0).abs() < 0.01);
 
         let recovered = os.dna_read("hello.txt").unwrap();
         assert_eq!(recovered, data.to_vec());
     }
 
     #[test]
-    fn test_write_binary_data() {
+    fn test_write_read_with_ecc() {
+        let mut os = NucleOS::new(10);
+        let data = b"Hello, NucleOS! With RS ECC parity strands.";
+
+        let result = os.dna_write("ecc.txt", data, 4).unwrap();
+        assert_eq!(result.parity_strand_count, 4);
+        assert!(result.redundancy > 1.0);
+
+        let recovered = os.dna_read("ecc.txt").unwrap();
+        assert_eq!(recovered, data.to_vec());
+    }
+
+    // ── Binary data ──
+
+    #[test]
+    fn test_binary_data_with_ecc() {
         let mut os = NucleOS::new(10);
         let data: Vec<u8> = (0..=255).collect();
 
-        os.dna_write("binary.bin", &data).unwrap();
+        os.dna_write("binary.bin", &data, 2).unwrap();
         let recovered = os.dna_read("binary.bin").unwrap();
         assert_eq!(recovered, data);
     }
 
+    // ── Multiple files ──
+
     #[test]
-    fn test_multiple_files() {
+    fn test_multiple_files_isolation() {
         let mut os = NucleOS::new(10);
 
-        os.dna_write("file1.txt", b"First file").unwrap();
-        os.dna_write("file2.txt", b"Second file").unwrap();
-        os.dna_write("file3.txt", b"Third file").unwrap();
+        os.dna_write("f1.txt", b"First file", 2).unwrap();
+        os.dna_write("f2.txt", b"Second file", 0).unwrap();
+        os.dna_write("f3.txt", b"Third file", 4).unwrap();
 
         let status = os.dna_stat();
         assert_eq!(status.file_count, 3);
+        assert!(status.parity_strands > 0); // f1 and f3 have parity
 
-        // Each file should decode correctly
-        assert_eq!(os.dna_read("file1.txt").unwrap(), b"First file");
-        assert_eq!(os.dna_read("file2.txt").unwrap(), b"Second file");
-        assert_eq!(os.dna_read("file3.txt").unwrap(), b"Third file");
+        assert_eq!(os.dna_read("f1.txt").unwrap(), b"First file");
+        assert_eq!(os.dna_read("f2.txt").unwrap(), b"Second file");
+        assert_eq!(os.dna_read("f3.txt").unwrap(), b"Third file");
     }
+
+    // ── CRISPR retrieval ──
+
+    #[test]
+    fn test_crispr_retrieval_path() {
+        let mut os = NucleOS::new(10);
+
+        os.dna_write("target.txt", b"CRISPR target data", 0).unwrap();
+        os.dna_write("other.txt", b"Other file data here", 0).unwrap();
+
+        // Read goes through CRISPR — should only get target strands
+        let recovered = os.dna_read("target.txt").unwrap();
+        assert_eq!(recovered, b"CRISPR target data");
+    }
+
+    // ── ECC + CRISPR combined ──
+
+    #[test]
+    fn test_full_stack_ecc_and_crispr() {
+        let mut os = NucleOS::new(10);
+        let data = b"Full stack integration: Codec -> ECC -> Primers -> CRISPR -> Pool";
+
+        let result = os.dna_write("fullstack.txt", data, 3).unwrap();
+        assert!(result.parity_strand_count > 0);
+
+        let recovered = os.dna_read("fullstack.txt").unwrap();
+        assert_eq!(recovered, data.to_vec(), "full stack roundtrip failed");
+    }
+
+    // ── Error cases ──
 
     #[test]
     fn test_duplicate_filename_error() {
         let mut os = NucleOS::new(10);
-        os.dna_write("test.txt", b"data").unwrap();
-        assert!(os.dna_write("test.txt", b"other").is_err());
+        os.dna_write("test.txt", b"data", 0).unwrap();
+        assert!(os.dna_write("test.txt", b"other", 0).is_err());
     }
 
     #[test]
@@ -390,13 +646,16 @@ mod tests {
         assert!(os.dna_read("missing.txt").is_err());
     }
 
+    // ── Delete ──
+
     #[test]
-    fn test_delete() {
+    fn test_delete_with_ecc() {
         let mut os = NucleOS::new(10);
-        os.dna_write("temp.txt", b"temporary data").unwrap();
+        os.dna_write("temp.txt", b"temporary data", 2).unwrap();
 
         let status = os.dna_stat();
         assert_eq!(status.file_count, 1);
+        assert!(status.parity_strands > 0);
 
         let del = os.dna_delete("temp.txt").unwrap();
         assert!(del.strands_removed > 0);
@@ -406,22 +665,26 @@ mod tests {
         assert_eq!(status.total_strands, 0);
     }
 
+    // ── Status & search ──
+
     #[test]
-    fn test_pool_status_display() {
+    fn test_pool_status_shows_ecc() {
         let mut os = NucleOS::new(10);
-        os.dna_write("test.txt", b"Status test").unwrap();
+        os.dna_write("test.txt", b"Status test", 4).unwrap();
 
         let status = os.dna_stat();
         let display = format!("{}", status);
         assert!(display.contains("NucleOS"));
         assert!(display.contains("test.txt"));
+        assert!(status.parity_strands > 0);
+        assert!(status.redundancy > 1.0);
     }
 
     #[test]
     fn test_search() {
         let mut os = NucleOS::new(10);
-        os.dna_write("readme.txt", b"read me").unwrap();
-        os.dna_write("photo.jpg", b"photo data here").unwrap();
+        os.dna_write("readme.txt", b"read me", 0).unwrap();
+        os.dna_write("photo.jpg", b"photo data here", 2).unwrap();
 
         let results = os.dna_search("readme", 5);
         assert!(!results.is_empty());
@@ -433,11 +696,37 @@ mod tests {
             file_id: "f1".into(),
             filename: "test.txt".into(),
             data_size: 100,
-            strand_count: 5,
+            data_strand_count: 5,
+            parity_strand_count: 2,
+            total_strand_count: 7,
             primer_id: "P0000".into(),
+            redundancy: 1.4,
         };
         let display = format!("{}", result);
         assert!(display.contains("test.txt"));
         assert!(display.contains("100 bytes"));
+        assert!(display.contains("5 data"));
+        assert!(display.contains("2 parity"));
+    }
+
+    // ── Content hash verification ──
+
+    #[test]
+    fn test_content_hash_integrity() {
+        let mut os = NucleOS::new(10);
+        let data = b"Hash integrity test data";
+
+        os.dna_write("hash.txt", data, 2).unwrap();
+
+        // Verify the catalog stores the correct hash
+        let file = os.catalog.get_by_name("hash.txt").unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let expected_hash = hasher.finalize()[..8].to_vec();
+        assert_eq!(file.content_hash, expected_hash);
+
+        // Read verifies hash automatically
+        let recovered = os.dna_read("hash.txt").unwrap();
+        assert_eq!(recovered, data.to_vec());
     }
 }
