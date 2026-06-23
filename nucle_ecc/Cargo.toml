@@ -1,0 +1,18 @@
+[package]
+name = "nucle_ecc"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Error correction for DNA storage — Reed-Solomon, fountain codes, consensus sequencing"
+
+[dependencies]
+nucle_codec = { path = "../nucle_codec" }
+nucle_synth = { path = "../nucle_synth" }
+rand = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }

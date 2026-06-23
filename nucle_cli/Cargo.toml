@@ -1,0 +1,23 @@
+[package]
+name = "nucle-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface for the Nucle-OS DNA storage engine"
+
+[[bin]]
+name = "nucle-cli"
+path = "src/main.rs"
+
+[dependencies]
+nucle_codec = { path = "../nucle_codec" }
+nucle_synth = { path = "../nucle_synth" }
+nucle_ecc = { path = "../nucle_ecc" }
+nucle_index = { path = "../nucle_index" }
+nucle_vfs = { path = "../nucle_vfs" }
+nucle_agent = { path = "../nucle_agent" }
+clap = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }

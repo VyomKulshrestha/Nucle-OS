@@ -1,0 +1,23 @@
+[package]
+name = "nucle_vfs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Virtual file system for DNA storage — syscall-style API abstraction"
+
+[dependencies]
+nucle_codec = { path = "../nucle_codec" }
+nucle_synth = { path = "../nucle_synth" }
+nucle_ecc = { path = "../nucle_ecc" }
+nucle_index = { path = "../nucle_index" }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }

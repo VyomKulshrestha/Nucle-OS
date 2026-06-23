@@ -1,0 +1,21 @@
+[package]
+name = "nucle_index"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "DNA retrieval and indexing — primer addressing, CRISPR-sim, vector search"
+
+[dependencies]
+nucle_codec = { path = "../nucle_codec" }
+nucle_synth = { path = "../nucle_synth" }
+nucle_ecc = { path = "../nucle_ecc" }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }

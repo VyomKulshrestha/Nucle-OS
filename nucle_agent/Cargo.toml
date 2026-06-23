@@ -1,0 +1,17 @@
+[package]
+name = "nucle_agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "ReAct agent interface for natural-language DNA storage operations"
+
+[dependencies]
+nucle_vfs = { path = "../nucle_vfs" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
