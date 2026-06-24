@@ -1,10 +1,10 @@
 # References — Foundational Papers
 
-The NucleOS codec layer implements algorithms described in two landmark papers on DNA data storage. This document maps each paper to its corresponding implementation in the codebase.
+The NucleOS codec layer implements algorithms described in three landmark papers on DNA data storage. This document maps each paper to its corresponding implementation in the codebase.
 
 ---
 
-## Goldman et al. (2013)
+## 1. Goldman et al. (2013)
 
 **"Towards practical, high-capacity, low-maintenance information storage in synthesized DNA"**
 *Nature*, 494(7435), 77–80. doi:[10.1038/nature11875](https://doi.org/10.1038/nature11875)
@@ -45,7 +45,7 @@ This gap is **not a bug** — it's the real engineering cost of making DNA stora
 
 ---
 
-## Erlich & Zielinski (2017)
+## 2. Erlich & Zielinski (2017)
 
 **"DNA Fountain enables a robust and efficient storage architecture"**
 *Science*, 355(6328), 950–954. doi:[10.1126/science.aaj2038](https://doi.org/10.1126/science.aaj2038)
@@ -86,9 +86,7 @@ This is a known limitation of the 2-bit mapping approach. A production system wo
 
 ---
 
----
-
-## 3. Ping, Z., et al. (2022) — Yin-Yang Codec
+## 3. Ping et al. (2022) — Yin-Yang Codec
 
 > "Towards practical and robust DNA-based data archiving using the yin–yang codec system."
 > *Nature Computational Science*, 2, 234–242.
@@ -138,4 +136,3 @@ The extreme-case failures are a fundamental limitation of the Yang rule: when *a
 
 - Church, G. M., Gao, Y., & Kosuri, S. (2012). "Next-generation digital information storage in DNA." *Science*, 337(6102), 1628. — First demonstration of large-scale DNA storage (659 KB).
 - Organick, L., et al. (2018). "Random access in large-scale DNA data storage." *Nature Biotechnology*, 36(3), 242–248. — Random access via primer-based addressing (maps to `nucle_index::primer` and `nucle_index::crispr_sim`).
-- Ping, Z., et al. (2022). "Towards practical and robust DNA-based data archiving using the yin–yang codec system." *Nature Computational Science*, 2, 234–242. — Full Yin-Yang codec paper (maps to `nucle_codec::yinyang`).
