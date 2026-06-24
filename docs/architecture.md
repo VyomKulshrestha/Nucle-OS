@@ -7,10 +7,17 @@ Nucle-OS follows the same bottom-up layered architecture as FerrumOS(https://git
 ## Layer Dependency Graph
 
 ```
-nucle_agent  →  nucle_vfs  →  nucle_index  →  nucle_ecc  →  nucle_codec
-                                                    ↓              ↓
-                                               nucle_synth  ← nucle_codec
+nucle_cli
+    └── nucle_agent
+            └── nucle_vfs
+                    └── nucle_index
+                            └── nucle_ecc
+                                    ├── nucle_codec
+                                    └── nucle_synth
+                                            └── nucle_codec
 ```
+
+Dependencies flow strictly downward. No layer ever imports from a layer above it.
 
 ## Biological Constraints
 
@@ -83,3 +90,15 @@ fn dna_read(query: &str) -> Result<Vec<u8>>;
 fn dna_stat(pool: &DnaPool) -> Result<PoolStats>;
 fn dna_delete(name: &str) -> Result<()>;
 ```
+
+### Explicitly out of scope
+
+The VFS is a **session-scoped in-memory abstraction**, not a persistent filesystem. The following are deliberate non-goals for the current design:
+
+- **Persistence across process restarts** — the pool exists only for the lifetime of the `NucleOS` instance. Serialisation to disk is left to the caller.
+- **Encryption** — data is stored as plaintext DNA. A production system would add an encryption layer between the VFS and the codec, but that's orthogonal to the storage stack.
+- **Access control / permissions** — no user model, no file ownership. Every caller has full read/write to the pool.
+- **Concurrent writes** — the pool is single-writer. Concurrent access requires external synchronisation.
+- **POSIX semantics** — no directories, no symlinks, no `seek()`. The API is flat key-value: name → blob.
+
+These boundaries are intentional. The VFS owns the question "how do I store and retrieve a named blob in DNA?" — everything else belongs to layers above it.
