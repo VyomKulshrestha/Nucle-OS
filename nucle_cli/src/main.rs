@@ -106,6 +106,25 @@ enum Commands {
         size: usize,
     },
 
+    /// Full-pipeline stress test: encode → noise → ECC → recover across many files
+    Pipeline {
+        /// Number of files to generate and test
+        #[arg(short, long, default_value = "100")]
+        files: usize,
+        /// Size of each test file in bytes
+        #[arg(short, long, default_value = "1024")]
+        size: usize,
+        /// Hardware noise profile: illumina, nanopore, twist, pristine
+        #[arg(short, long, default_value = "illumina")]
+        profile: String,
+        /// Sequencing coverage depth
+        #[arg(short, long, default_value = "10")]
+        coverage: usize,
+        /// RS parity strands per file
+        #[arg(short, long, default_value = "4")]
+        redundancy: usize,
+    },
+
     /// Run a natural language command via the agent
     Agent {
         /// Natural language command
@@ -129,6 +148,9 @@ fn main() {
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage),
         Commands::Bench { file } => cmd_bench(file.as_deref()),
         Commands::Stress { size } => cmd_stress(size),
+        Commands::Pipeline { files, size, profile, coverage, redundancy } => {
+            cmd_pipeline(files, size, &profile, coverage, redundancy)
+        }
         Commands::Agent { command } => cmd_agent(&command.join(" ")),
         Commands::Tools => cmd_help(),
     }
@@ -399,6 +421,7 @@ fn cmd_help() {
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle stress [-s size]                    Stress test all codecs");
+    println!("  nucle pipeline [-f N] [-s size] [-p prof]  Full-pipeline stress test");
     println!("  nucle agent <command>                     Natural language agent");
     println!("\n{}", tools::tools_help());
 }
@@ -535,4 +558,135 @@ fn cmd_stress(size: usize) {
         "  Total constraint violations: {} strands across {} codec/distribution pairs",
         total_violation_strands, violation_pairs
     );
+}
+
+fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redundancy: usize) {
+    let hw_profile = match profile.to_lowercase().as_str() {
+        "illumina" => HardwareProfile::Illumina,
+        "nanopore" => HardwareProfile::OxfordNanopore,
+        "twist" => HardwareProfile::TwistBioscience,
+        "pristine" => HardwareProfile::Pristine,
+        _ => {
+            eprintln!("Unknown profile: {}. Use: illumina, nanopore, twist, pristine", profile);
+            std::process::exit(1);
+        }
+    };
+
+    println!("╔══════════════════════════════════════════════════════════════╗");
+    println!("║           NucleOS Full-Pipeline Stress Test                 ║");
+    println!("╠══════════════════════════════════════════════════════════════╣");
+    println!("║ Files:      {:>6}   Size: {:>6} B   Profile: {:>12} ║", files, size, profile);
+    println!("║ Coverage:   {:>5}×   ECC parity: {:>2} strands               ║", coverage, redundancy);
+    println!("╚══════════════════════════════════════════════════════════════╝");
+    println!();
+
+    let mut rng = StdRng::seed_from_u64(42);
+
+    let mut recovered = 0usize;
+    let mut failed = 0usize;
+    let mut total_strands = 0usize;
+    let mut total_nucleotides = 0usize;
+    let mut total_bytes_stored = 0usize;
+    let mut failure_details: Vec<(usize, String)> = Vec::new();
+    let total_start = Instant::now();
+
+    // Progress bar width
+    let bar_width = 40;
+
+    for i in 0..files {
+        // Generate unique random data per file
+        let data: Vec<u8> = (0..size).map(|_| rng.gen()).collect();
+        let filename = format!("stress_{:04}.bin", i);
+
+        // Build a fresh NucleOS with noise enabled
+        let noise_cfg = SimulationConfig {
+            seed: 42 + i as u64,
+            coverage_depth: coverage as u32,
+            synthesis_profile: hw_profile,
+            sequencing_profile: hw_profile,
+            simulate_decay: false,
+            decay_rate: 0.0,
+            storage_time: 0.0,
+        };
+        let mut os = NucleOS::new(10).with_noise(noise_cfg);
+
+        // Write through full pipeline
+        let write_ok = os.dna_write(&filename, &data, redundancy);
+
+        match write_ok {
+            Ok(_result) => {
+                // Gather strand stats before read attempt
+                let stats = os.dna_stat();
+                total_strands += stats.total_strands;
+                total_nucleotides += stats.total_nucleotides;
+                total_bytes_stored += size;
+
+                // Read back through full pipeline
+                match os.dna_read(&filename) {
+                    Ok(read_data) if read_data == data => {
+                        recovered += 1;
+                    }
+                    Ok(_) => {
+                        failed += 1;
+                        failure_details.push((i, "data mismatch".into()));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        failure_details.push((i, e.to_string()));
+                    }
+                }
+            }
+            Err(e) => {
+                failed += 1;
+                failure_details.push((i, format!("write: {}", e)));
+            }
+        }
+
+        // Progress bar
+        let done = i + 1;
+        let pct = done * 100 / files;
+        let filled = done * bar_width / files;
+        let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
+        eprint!("\r  [{}] {:>3}% ({}/{})", bar, pct, done, files);
+    }
+    eprintln!(); // newline after progress bar
+
+    let elapsed = total_start.elapsed();
+    let recovery_rate = if files > 0 { recovered as f64 / files as f64 * 100.0 } else { 0.0 };
+    let throughput_bps = if elapsed.as_secs_f64() > 0.0 {
+        total_bytes_stored as f64 / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    // Results
+    println!();
+    println!("╔══════════════════════════════════════════════════════════════╗");
+    println!("║                    Results                                  ║");
+    println!("╠══════════════════════════════════════════════════════════════╣");
+    println!("║ Files tested:     {:>6}                                    ║", files);
+    println!("║ Recovered:        {:>6}  ({:>5.1}%)                          ║", recovered, recovery_rate);
+    println!("║ Failed:           {:>6}                                    ║", failed);
+    println!("║ Total strands:    {:>6}                                    ║", total_strands);
+    println!("║ Total nucleotides:{:>6}                                    ║", total_nucleotides);
+    println!("║ Bytes stored:     {:>6}                                    ║", total_bytes_stored);
+    println!("║ Elapsed:          {:>5.2}s                                   ║", elapsed.as_secs_f64());
+    println!("║ Throughput:       {:>5.0} B/s                                ║", throughput_bps);
+    println!("╚══════════════════════════════════════════════════════════════╝");
+
+    if !failure_details.is_empty() {
+        println!();
+        println!("Failure details (first 10):");
+        for (idx, reason) in failure_details.iter().take(10) {
+            println!("  File {:>4}: {}", idx, reason);
+        }
+        if failure_details.len() > 10 {
+            println!("  ... and {} more", failure_details.len() - 10);
+        }
+    }
+
+    // Exit with error code if any failures
+    if failed > 0 {
+        std::process::exit(1);
+    }
 }
