@@ -75,6 +75,10 @@ Data → [Outer RS/Fountain] → [Segmentation] → [Inner encoding] → [Constr
 DNA → [Basecalling] → [Clustering] → [Consensus] → [Inner decode] → [Outer decode] → Data
 ```
 
+### Current status
+
+The outer code (RS strand-level erasure recovery) is implemented. The inner code (per-strand error repair) is not yet implemented — the ternary decoder is strict and rejects noise-corrupted strands rather than attempting soft decoding. `nucle pipeline` with Illumina noise surfaces this: substitution errors introduce homopolymers that the rotating cipher decoder cannot tolerate. A consensus voting layer across coverage copies is the standard fix (implemented in `nucle_ecc::consensus` but not yet wired into the decode pipeline).
+
 ## Retrieval Architecture
 
 ```

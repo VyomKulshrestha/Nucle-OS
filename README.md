@@ -224,6 +224,9 @@ nucle bench
 # Stress test: sweep all codecs across data distributions
 nucle stress -s 256
 
+# Full-pipeline stress test: encode → noise → ECC → recover across N files
+nucle pipeline -f 100 -s 1024 -p illumina -c 10 -r 4
+
 # Natural language agent
 nucle agent "store readme.txt with 3x redundancy"
 nucle agent "search for text files"
