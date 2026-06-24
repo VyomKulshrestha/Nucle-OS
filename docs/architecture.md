@@ -56,6 +56,13 @@ DNA storage has a unique error profile unlike any digital channel:
 - Near-optimal density: ~1.57 bits/nucleotide
 - Natural erasure resilience — any sufficient subset of strands reconstructs data
 
+### Yin-Yang Codec (Ping et al., 2022)
+- Two complementary mapping rules achieve GC balance by construction
+- Yang rule: `0 → {A,T}`, `1 → {C,G}` — structural 50% GC guarantee
+- Yin rule: context-dependent (previous base) mapping reduces homopolymers
+- Highest density: 2.0 bits/nucleotide theoretical, ~1.85 effective
+- Best suited for real-world data with natural bit entropy
+
 ## Error Correction Architecture
 
 Two-layer coding scheme (industry standard):

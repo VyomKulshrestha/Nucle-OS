@@ -204,6 +204,7 @@ impl fmt::Display for ComparisonReport {
 pub fn benchmark_all_codecs(data: &[u8]) -> ComparisonReport {
     use crate::fountain::{FountainCodec, FountainConfig};
     use crate::ternary::{TernaryCodec, TernaryConfig};
+    use crate::yinyang::{YinYangCodec, YinYangConfig};
 
     let mut results = Vec::new();
 
@@ -216,6 +217,12 @@ pub fn benchmark_all_codecs(data: &[u8]) -> ComparisonReport {
     // Ternary — default overlap
     let ternary_def = TernaryCodec::new(TernaryConfig::default());
     if let Ok(r) = benchmark_codec(&ternary_def, data) {
+        results.push(r);
+    }
+
+    // Yin-Yang — GC-balanced by construction (2 bits/nt theoretical)
+    let yinyang = YinYangCodec::new(YinYangConfig::default());
+    if let Ok(r) = benchmark_codec(&yinyang, data) {
         results.push(r);
     }
 

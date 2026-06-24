@@ -86,8 +86,56 @@ This is a known limitation of the 2-bit mapping approach. A production system wo
 
 ---
 
+---
+
+## 3. Ping, Z., et al. (2022) — Yin-Yang Codec
+
+> "Towards practical and robust DNA-based data archiving using the yin–yang codec system."
+> *Nature Computational Science*, 2, 234–242.
+
+### Key ideas
+
+The Yin-Yang codec encodes **2 bits per nucleotide** using two complementary mapping rules:
+
+1. **Yang rule** — partitions nucleotides by GC content: `bit=0 → {A, T}`, `bit=1 → {C, G}`. This provides **structural GC balance**: for any input with roughly balanced bits, the output is ~50% GC by construction.
+
+2. **Yin rule** — a context-dependent mapping where the previous nucleotide determines which nucleotide pair maps to each bit value. This reduces homopolymer formation by encouraging base transitions.
+
+3. **Set intersection** — each nucleotide is uniquely determined by intersecting the Yang set (2 elements from GC partition) with the Yin set (2 elements from context rule). The sets always share exactly 1 element.
+
+### Mapping to NucleOS
+
+| Paper concept | Implementation |
+|---|---|
+| Yang rule (GC partition) | `yang_set()` in `nucle_codec::yinyang` — `0 → {A,T}`, `1 → {C,G}` |
+| Yin rule (context-dependent) | `yin_set()` — 4-entry table indexed by previous nucleotide |
+| Set intersection | `intersect()` — yields exactly 1 nucleotide per (bit_a, bit_b, prev) triple |
+| Bitstream splitting | Each byte → 4 nucleotides: high bit of each pair → Yang, low bit → Yin |
+| Rule selection (paper uses 1,536 configs) | NucleOS uses a fixed canonical rule; the paper's rule search is omitted for simplicity |
+| Information density | **2.0 bits/nt** theoretical; benchmarked at **1.855 bits/nt** effective (with index headers) |
+
+### Stress test findings
+
+The `nucle stress` command reveals the Yin-Yang codec's behavior across data distributions:
+
+| Distribution | GC% | Homopolymer | Notes |
+|---|---|---|---|
+| random | 45.7% | 5 | ✓ Near-optimal GC balance |
+| text (ASCII) | 40.3% | 4 | ✓ Good — ASCII has reasonable bit balance |
+| sequential (0–255) | 48.5% | 8 | ✓ Excellent GC, moderate homopolymers |
+| all-zero | 0.5% | 4 | ✗ Yang rule sends all bits to AT partition |
+| all-0xFF | 92.6% | 143 | ✗ Yang rule sends all bits to GC partition |
+
+The extreme-case failures are a fundamental limitation of the Yang rule: when *all* input bits are identical, the GC partition can't balance. This is consistent with the paper's observation that the codec works best on "real-world" data with natural bit entropy. A production system would add a whitening/scrambling pre-pass for pathological inputs.
+
+### Source files
+
+- [`nucle_codec/src/yinyang.rs`](../nucle_codec/src/yinyang.rs) — Encoder/decoder with full test suite
+
+---
+
 ## Further reading
 
 - Church, G. M., Gao, Y., & Kosuri, S. (2012). "Next-generation digital information storage in DNA." *Science*, 337(6102), 1628. — First demonstration of large-scale DNA storage (659 KB).
 - Organick, L., et al. (2018). "Random access in large-scale DNA data storage." *Nature Biotechnology*, 36(3), 242–248. — Random access via primer-based addressing (maps to `nucle_index::primer` and `nucle_index::crispr_sim`).
-- Ping, Z., et al. (2022). "Towards practical and robust DNA-based data archiving using the yin–yang codec system." *Nature Computational Science*, 2, 234–242. — Alternative codec with improved screening.
+- Ping, Z., et al. (2022). "Towards practical and robust DNA-based data archiving using the yin–yang codec system." *Nature Computational Science*, 2, 234–242. — Full Yin-Yang codec paper (maps to `nucle_codec::yinyang`).

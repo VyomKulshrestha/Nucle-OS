@@ -391,6 +391,7 @@ dependencies = [
  "nucle_index",
  "nucle_synth",
  "nucle_vfs",
+ "rand",
  "serde_json",
 ]
 

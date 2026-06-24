@@ -8,10 +8,15 @@ use nucle_agent::executor::Executor;
 use nucle_agent::tools;
 use nucle_codec::base::DnaCodec;
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
+use nucle_codec::fountain::{FountainCodec, FountainConfig};
+use nucle_codec::constraints::{ConstraintValidator, ConstraintConfig};
 use nucle_codec::benchmark::benchmark_all_codecs;
 use nucle_synth::noise::{NoiseEngine, SimulationConfig};
 use nucle_synth::profiles::HardwareProfile;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::fs;
+use std::time::Instant;
 
 /// NucleOS — DNA Storage Engine CLI
 #[derive(Parser)]
@@ -94,6 +99,13 @@ enum Commands {
         file: Option<String>,
     },
 
+    /// Stress test all codecs against diverse data distributions
+    Stress {
+        /// Data size in bytes for stress testing
+        #[arg(short, long, default_value = "256")]
+        size: usize,
+    },
+
     /// Run a natural language command via the agent
     Agent {
         /// Natural language command
@@ -116,6 +128,7 @@ fn main() {
         Commands::Pool => cmd_pool(),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage),
         Commands::Bench { file } => cmd_bench(file.as_deref()),
+        Commands::Stress { size } => cmd_stress(size),
         Commands::Agent { command } => cmd_agent(&command.join(" ")),
         Commands::Tools => cmd_help(),
     }
@@ -385,6 +398,141 @@ fn cmd_help() {
     println!("  nucle pool                                Show pool status");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
+    println!("  nucle stress [-s size]                    Stress test all codecs");
     println!("  nucle agent <command>                     Natural language agent");
     println!("\n{}", tools::tools_help());
+}
+
+fn cmd_stress(size: usize) {
+    // -----------------------------------------------------------------------
+    // Data distributions
+    // -----------------------------------------------------------------------
+    let pangram = "The quick brown fox jumps over the lazy dog. ";
+    let text_data: Vec<u8> = pangram.bytes().cycle().take(size).collect();
+
+    let mut rng = StdRng::seed_from_u64(42);
+    let random_data: Vec<u8> = (0..size).map(|_| rng.gen()).collect();
+
+    let distributions: Vec<(&str, Vec<u8>)> = vec![
+        ("all-zero",     vec![0u8; size]),
+        ("all-0xFF",     vec![0xFFu8; size]),
+        ("sequential",   (0..size).map(|i| i as u8).collect()),
+        ("random",       random_data),
+        ("text",         text_data),
+        ("low-entropy",  vec![0xAAu8; size]),
+    ];
+
+    // -----------------------------------------------------------------------
+    // Codecs
+    // -----------------------------------------------------------------------
+    let codecs: Vec<(&str, Box<dyn DnaCodec>)> = vec![
+        ("ternary", Box::new(TernaryCodec::new(TernaryConfig::no_overlap()))),
+        ("yin-yang", Box::new(nucle_codec::yinyang::YinYangCodec::new(
+            nucle_codec::yinyang::YinYangConfig::default(),
+        ))),
+        ("fountain-raw", Box::new(FountainCodec::new(FountainConfig::unscreened()))),
+        ("fountain-screened", Box::new(FountainCodec::new({
+            let mut cfg = FountainConfig::default();
+            cfg.max_screening_attempts = 100;
+            cfg
+        }))),
+    ];
+
+    let num_codecs = codecs.len();
+    let num_dists = distributions.len();
+
+    println!(
+        "NucleOS Codec Stress Test — {} bytes × {} distributions × {} codecs\n",
+        size, num_dists, num_codecs
+    );
+
+    // -----------------------------------------------------------------------
+    // Table header
+    // -----------------------------------------------------------------------
+    println!("╔═══════════════════╤══════════════╤═════╤═════╤════════╤═══════╤══════╤══════╗");
+    println!("║ Codec             │ Distribution │ Enc │ R/T │ bits/nt│  GC%  │ Hpol │ Viol ║");
+    println!("╟───────────────────┼──────────────┼─────┼─────┼────────┼───────┼──────┼──────╢");
+
+    let validator = ConstraintValidator::new(ConstraintConfig::default());
+
+    let mut total_encode_failures = 0usize;
+    let mut total_roundtrip_failures = 0usize;
+    let mut total_violation_strands = 0usize;
+    let mut violation_pairs = 0usize;
+
+    // -----------------------------------------------------------------------
+    // Run every (codec, distribution) combination
+    // -----------------------------------------------------------------------
+    for (codec_name, codec) in &codecs {
+        for (dist_name, data) in &distributions {
+            let start = Instant::now();
+            let encode_result = codec.encode(data);
+            let _encode_us = start.elapsed().as_micros();
+
+            match encode_result {
+                Err(_) => {
+                    total_encode_failures += 1;
+                    println!(
+                        "║ {:<17} │ {:<12} │  ✗  │  —  │      — │     — │    — │    — ║",
+                        codec_name, dist_name
+                    );
+                }
+                Ok(ref collection) => {
+                    // Roundtrip
+                    let roundtrip_ok = codec
+                        .decode(collection)
+                        .map(|decoded| decoded == *data)
+                        .unwrap_or(false);
+                    if !roundtrip_ok {
+                        total_roundtrip_failures += 1;
+                    }
+
+                    // Metrics
+                    let bpn = collection.bits_per_nucleotide();
+                    let gc = collection.avg_gc_content() * 100.0;
+                    let hpol = collection.max_homopolymer();
+
+                    // Constraint violations
+                    let mut strand_violations = 0usize;
+                    for strand in &collection.strands {
+                        let result = validator.validate(strand);
+                        if !result.is_valid() {
+                            strand_violations += 1;
+                        }
+                    }
+                    if strand_violations > 0 {
+                        total_violation_strands += strand_violations;
+                        violation_pairs += 1;
+                    }
+
+                    println!(
+                        "║ {:<17} │ {:<12} │  {}  │  {}  │ {:>6.3} │ {:>4.1}% │ {:>4} │ {:>4} ║",
+                        codec_name,
+                        dist_name,
+                        if true { "✓" } else { "✗" },
+                        if roundtrip_ok { "✓" } else { "✗" },
+                        bpn,
+                        gc,
+                        hpol,
+                        strand_violations,
+                    );
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Footer
+    // -----------------------------------------------------------------------
+    println!("╚═══════════════════╧══════════════╧═════╧═════╧════════╧═══════╧══════╧══════╝");
+    println!();
+    println!("Summary:");
+    println!("  Codecs tested: {}", num_codecs);
+    println!("  Distributions: {}", num_dists);
+    println!("  Total encode failures: {}", total_encode_failures);
+    println!("  Total roundtrip failures: {}", total_roundtrip_failures);
+    println!(
+        "  Total constraint violations: {} strands across {} codec/distribution pairs",
+        total_violation_strands, violation_pairs
+    );
 }

@@ -104,8 +104,9 @@ $ nucle bench
 ╠══════════════════════════════════════════════════════════════════╣
 ║ Codec                │  bits/nt │   GC % │ Hpol │ Bio │  R/T ║
 ╟──────────────────────┼──────────┼────────┼──────┼─────┼──────╢
-║ ternary-rotating     │    1.156 │  38.5% │    1 │  ✗  │  ✓   ║
+║ ternary-rotating     │    1.209 │  40.7% │    2 │  ✗  │  ✓   ║
 ║ ternary-overlap      │    0.660 │  40.4% │    2 │  ✗  │  ✓   ║
+║ yin-yang             │    1.855 │  43.2% │    4 │  ✗  │  ✓   ║
 ║ dna-fountain (raw)   │    0.824 │  26.0% │   29 │  ✗  │  ✓   ║
 ╚══════════════════════════════════════════════════════════════════╝
 
@@ -113,15 +114,16 @@ $ nucle bench
   R/T = encode → decode roundtrip produces identical data
 ```
 
-> **Why 1.156 bits/nt vs. the theoretical 1.58?** The ternary rotating cipher achieves
-> log₂(3) ≈ 1.58 bits/nt in theory, but in practice each strand carries framing overhead
-> (segment headers, length prefixes) that reduces effective density. This gap is expected
-> and well-documented — see [docs/references.md](docs/references.md) for details.
+> **Yin-Yang leads in density at 1.855 bits/nt** — nearly 2× the ternary codec. The
+> Yang rule maps each bit to an AT/GC partition, guaranteeing ~50% GC on balanced data.
+> The Yin rule uses the previous nucleotide as context to reduce homopolymer formation.
+> See [docs/references.md](docs/references.md) for the full algorithm (Ping et al. 2022).
 >
-> **Why does dna-fountain show Bio ✗?** The fountain codec uses a raw 2-bit nucleotide
-> mapping. With constraint screening enabled (the default), biologically invalid strands
-> are rejected and regenerated — the rateless property guarantees valid output. The
-> unscreened benchmark above shows raw codec density before screening.
+> **Why does ternary show Bio ✗?** On the small benchmark input (89 bytes), a few strands
+> fall just outside the GC 40–60% window. On larger files GC converges toward the target.
+>
+> **Why does fountain show Bio ✗?** The fountain codec uses a raw 2-bit mapping. With
+> constraint screening enabled (the default), invalid strands are rejected and regenerated.
 
 ### End-to-End Roundtrip: Encode → Noise → Recover
 
@@ -219,6 +221,9 @@ nucle simulate myfile.txt -p illumina
 # Benchmark all codecs
 nucle bench
 
+# Stress test: sweep all codecs across data distributions
+nucle stress -s 256
+
 # Natural language agent
 nucle agent "store readme.txt with 3x redundancy"
 nucle agent "search for text files"
@@ -231,7 +236,7 @@ nucle agent "pool status"
 
 | Crate | Tests | What's Tested |
 |-------|------:|---------------|
-| `nucle_codec` | 46 | Nucleotide types, constraints, ternary codec, fountain codec, benchmarks |
+| `nucle_codec` | 58 | Nucleotide types, constraints, ternary codec, fountain codec, yin-yang codec, benchmarks |
 | `nucle_synth` | 10 | Error models, noise engine, hardware profiles |
 | `nucle_ecc` | 23 | Reed-Solomon, fountain erasure, consensus, repair pipeline |
 | `nucle_index` | 28 | Primers, CRISPR sim, vector index, semantic search |

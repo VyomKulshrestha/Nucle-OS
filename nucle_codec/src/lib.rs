@@ -11,6 +11,7 @@
 //!
 //! - **Ternary Rotating Cipher** (Goldman et al.) — ~1.58 bits/nt
 //! - **DNA Fountain** (Erlich & Zielinski) — ~1.57 bits/nt, rateless
+//! - **Yin-Yang** (Ping et al.) — ~2.0 bits/nt, GC-balanced by construction
 //!
 //! ## Example
 //!
@@ -25,4 +26,5 @@ pub mod base;
 pub mod constraints;
 pub mod ternary;
 pub mod fountain;
+pub mod yinyang;
 pub mod benchmark;
