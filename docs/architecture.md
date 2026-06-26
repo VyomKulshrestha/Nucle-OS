@@ -38,15 +38,34 @@ NucleScript source (.nsl)
     → lexer
     → parser / AST
     → semantic + biological constraint checks
-    → VFS backend
-    → NucleOS syscalls
+    → bio-aware MIR
+    → redundancy/profile optimizer
+    → VFS backend or simulation backend
+    → NucleOS syscalls or no-hardware plan
 ```
 
 The compiler currently supports declarative pool definitions, store/retrieve
-operations, simulation options, pipeline programs, and DNA-native `Sequence`
-literals such as `seq"ATCGATCG-GCTAGCTA"`. Sequence literals are validated at
-compile time for DNA alphabet, GC balance, homopolymer length, and
-hairpin-prone palindromes.
+operations, simulation options, pipeline programs, DNA-native `Sequence`
+literals such as `seq"ATCGATCG-GCTAGCTA"`, and probabilistic pool annotations
+such as `Pool<Illumina, 0.35%>`. Sequence literals are validated at compile
+time for DNA alphabet, GC balance, homopolymer length, and hairpin-prone
+palindromes. Probabilistic pool bindings are checked for profile/state
+compatibility and propagate an error budget through consensus recovery.
+Effect checking classifies operations as `Pure`, `Synthesis`, `Sequencing`, or
+`Destructive`; hardware effects require `confirm hardware`, and destructive
+effects require `confirm physical_key`. The MIR optimizer raises insufficient
+redundancy for the selected profile and coverage before either executable VFS
+lowering or no-hardware simulation planning.
+
+The language layer now exposes ecosystem-facing integration points:
+
+- `import { ... } from "nuclescript/presets"` validates built-in presets with
+  the same resolver shape a package registry can extend.
+- `analyze_source` returns serializable diagnostics, optimizer notes, simulation
+  steps, and VFS call counts for browser playgrounds.
+- `collect_hardware_requests` extracts synthesis, sequencing, and destructive
+  requests from effectful MIR so a hardware bridge can submit them without
+  changing NucleScript source syntax.
 
 ## Biological Constraints
 

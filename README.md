@@ -256,6 +256,45 @@ seq primer_p0: Sequence = "ATCGATCGGCTAGCTA"
 let primer_p1 = seq"ATCGATCG-GCTAGCTA"
 ```
 
+NucleScript also tracks probabilistic pool types through simulation and
+consensus recovery. `Pool<P, E>` carries the hardware profile or recovery state
+plus an optional compiler-checked error budget:
+
+```nuclescript
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+```
+
+Effectful biological operations are explicit in the type system. Hardware-backed
+synthesis and sequencing require `confirm hardware`; destructive operations
+require `confirm physical_key`. The compiler lowers programs through a
+bio-aware MIR, optimizes redundancy for the selected profile and coverage, and
+can emit a no-hardware simulation plan:
+
+```nuclescript
+let strands: Pool<Twist, 0.03%> = synthesise archive via Twist confirm hardware
+let reads: Pool<Illumina, 0.35%> = sequence strands via Illumina confirm hardware
+delete "old_archive.bin" from archive confirm physical_key
+```
+
+For ecosystem growth, the compiler also exposes stable integration surfaces:
+built-in preset imports, a serializable playground analysis API, and hardware
+bridge request extraction for effectful plans.
+
+```nuclescript
+import {
+    medical_archive,
+    reliable_store as store_recipe,
+    illumina_recovery
+} from "nuclescript/presets"
+```
+
 Current NucleScript result summary:
 
 | Program | Payload | Data strands | Parity strands | Total strands | Nucleotides | Avg strand | Redundancy | Result |
@@ -263,6 +302,9 @@ Current NucleScript result summary:
 | `docs/examples/store.nsl` | 31 B | 2 | 4 | 6 | 828 nt | 138 nt | 3.00× | Stored via VFS |
 | `docs/examples/pipeline_backup.nsl` | 31 B | 2 | 4 | 6 | 828 nt | 138 nt | 3.00× | Exact roundtrip |
 | `docs/examples/sequence_literals.nsl` | — | — | — | — | — | — | — | Compile-time DNA validation |
+| `docs/examples/probabilistic_recovery.nsl` | - | - | - | - | - | - | - | Compile-time error-budget propagation |
+| `docs/examples/effect_confirmations.nsl` | - | - | - | - | - | - | - | Effect confirmation and planning |
+| `docs/examples/preset_imports.nsl` | - | - | - | - | - | - | - | Built-in preset import validation |
 
 Compiler diagnostics are surfaced before execution. For example,
 `docs/examples/critical_redundancy_warning.nsl` warns when critical data uses
@@ -306,6 +348,9 @@ nucle pipeline -f 100 -s 1024 -p illumina -c 10 -r 4
 # Run a NucleScript source file
 nucle run docs/examples/store.nsl
 
+# Show an optimized no-hardware NucleScript plan
+nucle plan docs/examples/probabilistic_recovery.nsl
+
 # Natural language agent
 nucle agent "store readme.txt with 3x redundancy"
 nucle agent "search for text files"
@@ -324,8 +369,8 @@ nucle agent "pool status"
 | `nucle_index` | 28 | Primers, CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 31 | Pool, file, catalog, syscall API (full stack roundtrip) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 9 | NucleScript lexer, parser, biological checks, sequence literals, VFS lowering |
-| **Total** | **199+** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| `nucle_lang` | 26 | NucleScript lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects, MIR optimizer, simulation backend, preset imports, playground API, hardware bridge requests, VFS lowering |
+| **Total** | **216+** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
@@ -338,7 +383,7 @@ nucle_ecc/       — Error correction (Reed-Solomon, fountain, consensus)
 nucle_index/     — Retrieval & indexing (CRISPR-sim, vector index)
 nucle_vfs/       — Virtual file system (syscall-style API)
 nucle_agent/     — Agent interface (ReAct planner)
-nucle_lang/      — NucleScript compiler and VFS backend
+nucle_lang/      — NucleScript compiler, MIR optimizer, ecosystem APIs, simulation backend, and VFS backend
 nucle_cli/       — Command-line interface
 docs/            — Architecture notes & paper references
 ```
