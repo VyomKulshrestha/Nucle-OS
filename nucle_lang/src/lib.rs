@@ -6,8 +6,15 @@
 
 pub mod ast;
 pub mod codegen;
+pub mod effects;
+pub mod hardware;
 pub mod lexer;
+pub mod middle;
+pub mod package;
 pub mod parser;
+pub mod playground;
+pub mod probabilistic;
+pub mod sim_backend;
 pub mod typeck;
 
 use std::fmt;
@@ -17,6 +24,8 @@ pub use ast::*;
 pub use codegen::{execute_program, CompiledPlan, ExecutionReport, VfsCall};
 pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
+pub use playground::{analyze_source, PlaygroundDiagnostic, PlaygroundReport};
+pub use sim_backend::{compile_simulation, SimulationPlan, SimulationStep};
 pub use typeck::{Diagnostic, DiagnosticLevel, TypeReport};
 
 /// Compile source text through lexer, parser, type checker, and VFS codegen.
@@ -28,6 +37,17 @@ pub fn compile(source: &str) -> Result<CompiledPlan, CompileError> {
         return Err(CompileError::Type(report));
     }
     Ok(codegen::compile_program(program, report))
+}
+
+/// Compile source text into a no-hardware simulation plan.
+pub fn compile_for_simulation(source: &str) -> Result<SimulationPlan, CompileError> {
+    let tokens = Lexer::new(source).tokenize()?;
+    let program = Parser::new(tokens).parse_program()?;
+    let report = typeck::check_program(&program);
+    if report.has_errors() {
+        return Err(CompileError::Type(report));
+    }
+    Ok(sim_backend::compile_simulation(program, report))
 }
 
 /// Compile and execute a NucleScript source file against a fresh in-memory NucleOS instance.
@@ -121,5 +141,28 @@ mod tests {
         let src = r#"let bad = seq"AAAAAAATTTTTTT""#;
         let err = compile(src).unwrap_err();
         assert!(matches!(err, CompileError::Type(_)));
+    }
+
+    #[test]
+    fn compiles_probabilistic_pool_types() {
+        let src = r#"
+            pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+            let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+            let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+        "#;
+        let plan = compile(src).unwrap();
+        assert!(plan.calls.is_empty());
+        assert!(!plan.type_report.has_errors());
+    }
+
+    #[test]
+    fn compiles_simulation_plan() {
+        let src = r#"
+            pool archive: DnaPool { codec: Ternary, redundancy: 1x, profile: Nanopore }
+            simulate store "README.md" into archive { coverage: 1x }
+        "#;
+        let plan = compile_for_simulation(src).unwrap();
+        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.optimiser_notes.len(), 1);
     }
 }

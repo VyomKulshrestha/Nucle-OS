@@ -26,7 +26,9 @@ impl Parser {
     }
 
     fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
-        if self.check_ident("pool") {
+        if self.check_ident("import") {
+            self.parse_import().map(Declaration::Import)
+        } else if self.check_ident("pool") {
             self.parse_pool().map(Declaration::Pool)
         } else if self.check_ident("strand") {
             self.parse_strand().map(Declaration::Strand)
@@ -38,11 +40,36 @@ impl Parser {
             self.parse_store().map(|op| Declaration::Operation(Operation::Store(op)))
         } else if self.check_ident("retrieve") {
             self.parse_retrieve().map(|op| Declaration::Operation(Operation::Retrieve(op)))
+        } else if self.check_ident("delete") {
+            self.parse_delete().map(|op| Declaration::Operation(Operation::Delete(op)))
         } else if self.check_ident("pipeline") {
             self.parse_pipeline().map(Declaration::Pipeline)
         } else {
-            Err(self.error_here("expected declaration: pool, strand, seq, let, store, retrieve, simulate, or pipeline"))
+            Err(self.error_here("expected declaration: import, pool, strand, seq, let, store, retrieve, delete, simulate, or pipeline"))
         }
+    }
+
+    fn parse_import(&mut self) -> Result<ImportDecl, ParseError> {
+        self.expect_ident_text("import")?;
+        self.expect(TokenKind::LBrace, "'{' after import")?;
+        let mut items = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            let name = self.expect_ident_any("import item")?;
+            let alias = if self.check_ident("as") {
+                self.advance();
+                Some(self.expect_ident_any("import alias")?)
+            } else {
+                None
+            };
+            items.push(ImportItem { name, alias });
+            if !self.consume_comma() && !self.check(TokenKind::RBrace) {
+                return Err(self.error_here("expected ',' or '}' in import list"));
+            }
+        }
+        self.expect(TokenKind::RBrace, "'}' after import list")?;
+        self.expect_ident_text("from")?;
+        let source = self.expect_string("import source")?;
+        Ok(ImportDecl { source, items })
     }
 
     fn parse_pool(&mut self) -> Result<PoolDecl, ParseError> {
@@ -108,12 +135,92 @@ impl Parser {
         let name = self.expect_ident_any("binding name")?;
         if self.check(TokenKind::Colon) {
             self.advance();
-            self.expect_ident_text("Sequence")?;
+            if self.check_ident("Sequence") {
+                self.advance();
+                self.expect(TokenKind::Eq, "'=' before binding expression")?;
+                self.expect_ident_text("seq")?;
+                let sequence = self.expect_string("sequence literal")?;
+                return Ok(Declaration::Sequence(SequenceDecl { name, sequence }));
+            }
+            let annotation = self.parse_type_expr()?;
+            self.expect(TokenKind::Eq, "'=' before binding expression")?;
+            let expr = self.parse_expr()?;
+            return Ok(Declaration::Let(LetDecl { name, annotation, expr }));
         }
         self.expect(TokenKind::Eq, "'=' before binding expression")?;
         self.expect_ident_text("seq")?;
         let sequence = self.expect_string("sequence literal")?;
         Ok(Declaration::Sequence(SequenceDecl { name, sequence }))
+    }
+
+    fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
+        if self.check_ident("Pool") {
+            self.advance();
+            self.expect(TokenKind::Lt, "'<' after Pool")?;
+            let state_name = self.expect_ident_any("pool profile or state")?;
+            let state = PoolState::parse(&state_name)
+                .ok_or_else(|| self.error_previous(format!("unknown pool profile or state '{}'", state_name)))?;
+            let error_rate_percent = if self.consume_comma() {
+                Some(self.expect_percent("pool error rate")?)
+            } else {
+                None
+            };
+            self.expect(TokenKind::Gt, "'>' after Pool type")?;
+            Ok(TypeExpr::Pool(PoolType { state, error_rate_percent }))
+        } else {
+            Err(self.error_here("expected type annotation"))
+        }
+    }
+
+    fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+        if self.check_ident("simulate") {
+            self.advance();
+            let pool = self.expect_ident_any("pool name")?;
+            self.expect_ident_text("under")?;
+            let profile_name = self.expect_ident_any("profile")?;
+            let profile = Profile::parse(&profile_name)
+                .ok_or_else(|| self.error_previous(format!("unknown profile '{}'", profile_name)))?;
+            Ok(Expr::SimulatePool { pool, profile })
+        } else if self.check_ident("synthesise") || self.check_ident("synthesize") {
+            self.advance();
+            let source = self.expect_ident_any("source pool binding")?;
+            self.expect_ident_text("via")?;
+            let profile_name = self.expect_ident_any("profile")?;
+            let profile = Profile::parse(&profile_name)
+                .ok_or_else(|| self.error_previous(format!("unknown profile '{}'", profile_name)))?;
+            let confirmed = self.consume_confirmation("hardware")?;
+            Ok(Expr::SynthesizePool { source, profile, confirmed })
+        } else if self.check_ident("sequence") {
+            self.advance();
+            let source = self.expect_ident_any("source pool binding")?;
+            self.expect_ident_text("via")?;
+            let profile_name = self.expect_ident_any("profile")?;
+            let profile = Profile::parse(&profile_name)
+                .ok_or_else(|| self.error_previous(format!("unknown profile '{}'", profile_name)))?;
+            let confirmed = self.consume_confirmation("hardware")?;
+            Ok(Expr::SequencePool { source, profile, confirmed })
+        } else if self.check_ident("consensus_vote") {
+            self.advance();
+            self.expect(TokenKind::LParen, "'(' after consensus_vote")?;
+            let source = self.expect_ident_any("source pool binding")?;
+            self.expect(TokenKind::Comma, "',' after source pool binding")?;
+            self.expect_ident_text("coverage")?;
+            self.expect(TokenKind::Colon, "':' after coverage")?;
+            let coverage = self.expect_multiplier("coverage multiplier")?;
+            self.expect(TokenKind::RParen, "')' after consensus_vote")?;
+            Ok(Expr::ConsensusVote { source, coverage })
+        } else {
+            Err(self.error_here("expected expression"))
+        }
+    }
+
+    fn consume_confirmation(&mut self, marker: &str) -> Result<bool, ParseError> {
+        if !self.check_ident("confirm") {
+            return Ok(false);
+        }
+        self.advance();
+        self.expect_ident_text(marker)?;
+        Ok(true)
     }
 
     fn parse_store(&mut self) -> Result<StoreOp, ParseError> {
@@ -176,6 +283,15 @@ impl Parser {
             self.expect(TokenKind::RBrace, "'}' after query")?;
         }
         Ok(RetrieveOp { pool, query })
+    }
+
+    fn parse_delete(&mut self) -> Result<DeleteOp, ParseError> {
+        self.expect_ident_text("delete")?;
+        let file = self.expect_string("file path")?;
+        self.expect_ident_text("from")?;
+        let pool = self.expect_ident_any("pool name")?;
+        let confirmed = self.consume_confirmation("physical_key")?;
+        Ok(DeleteOp { file, pool, confirmed })
     }
 
     fn parse_query_predicate(&mut self) -> Result<QueryPredicate, ParseError> {
@@ -421,5 +537,43 @@ mod tests {
         let program = parse(src);
         assert_eq!(program.declarations.len(), 3);
         assert!(matches!(program.declarations[0], Declaration::Sequence(_)));
+    }
+
+    #[test]
+    fn parses_probabilistic_pool_bindings() {
+        let src = r#"
+            pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+            let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+            let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+        "#;
+        let program = parse(src);
+        assert_eq!(program.declarations.len(), 3);
+        assert!(matches!(program.declarations[1], Declaration::Let(_)));
+        assert!(matches!(program.declarations[2], Declaration::Let(_)));
+    }
+
+    #[test]
+    fn parses_effectful_operations() {
+        let src = r#"
+            pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist }
+            let strands: Pool<Twist, 0.03%> = synthesise archive via Twist confirm hardware
+            delete "old.bin" from archive confirm physical_key
+        "#;
+        let program = parse(src);
+        assert_eq!(program.declarations.len(), 3);
+        assert!(matches!(program.declarations[1], Declaration::Let(_)));
+        assert!(matches!(program.declarations[2], Declaration::Operation(Operation::Delete(_))));
+    }
+
+    #[test]
+    fn parses_package_imports() {
+        let src = r#"import { medical_archive, reliable_store as store_recipe } from "nuclescript/presets""#;
+        let program = parse(src);
+        assert_eq!(program.declarations.len(), 1);
+        let Declaration::Import(import) = &program.declarations[0] else {
+            panic!("expected import declaration");
+        };
+        assert_eq!(import.items.len(), 2);
+        assert_eq!(import.items[1].alias.as_deref(), Some("store_recipe"));
     }
 }

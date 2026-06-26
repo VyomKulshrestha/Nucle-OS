@@ -18,6 +18,8 @@ pub enum TokenKind {
     RBrace,
     LBracket,
     RBracket,
+    LParen,
+    RParen,
     Colon,
     Comma,
     Eq,
@@ -61,6 +63,8 @@ impl<'a> Lexer<'a> {
                 '}' => { self.bump(); TokenKind::RBrace }
                 '[' => { self.bump(); TokenKind::LBracket }
                 ']' => { self.bump(); TokenKind::RBracket }
+                '(' => { self.bump(); TokenKind::LParen }
+                ')' => { self.bump(); TokenKind::RParen }
                 ':' => { self.bump(); TokenKind::Colon }
                 ',' => { self.bump(); TokenKind::Comma }
                 '=' => { self.bump(); TokenKind::Eq }

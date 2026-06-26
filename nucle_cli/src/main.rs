@@ -131,6 +131,12 @@ enum Commands {
         source: String,
     },
 
+    /// Compile a NucleScript source file into a no-hardware simulation plan
+    Plan {
+        /// NucleScript source file to compile
+        source: String,
+    },
+
     /// Run a natural language command via the agent
     Agent {
         /// Natural language command
@@ -158,6 +164,7 @@ fn main() {
             cmd_pipeline(files, size, &profile, coverage, redundancy)
         }
         Commands::Run { source } => cmd_run(&source),
+        Commands::Plan { source } => cmd_plan(&source),
         Commands::Agent { command } => cmd_agent(&command.join(" ")),
         Commands::Tools => cmd_help(),
     }
@@ -408,6 +415,23 @@ fn cmd_run(source: &str) {
     }
 }
 
+fn cmd_plan(source: &str) {
+    let text = match fs::read_to_string(source) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("Error reading '{}': {}", source, e);
+            std::process::exit(1);
+        }
+    };
+    match nucle_lang::compile_for_simulation(&text) {
+        Ok(plan) => println!("{}", plan),
+        Err(e) => {
+            eprintln!("NucleScript failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn cmd_agent(command: &str) {
     if command.is_empty() {
         println!("Usage: nucle agent <natural language command>");
@@ -440,6 +464,7 @@ fn cmd_help() {
     println!("  nucle stress [-s size]                    Stress test all codecs");
     println!("  nucle pipeline [-f N] [-s size] [-p prof]  Full-pipeline stress test");
     println!("  nucle run <source.nsl>                    Run NucleScript source file");
+    println!("  nucle plan <source.nsl>                   Show no-hardware NucleScript plan");
     println!("  nucle agent <command>                     Natural language agent");
     println!("\n{}", tools::tools_help());
 }

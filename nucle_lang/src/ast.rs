@@ -9,11 +9,25 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Declaration {
+    Import(ImportDecl),
     Pool(PoolDecl),
     Strand(StrandDecl),
     Sequence(SequenceDecl),
+    Let(LetDecl),
     Operation(Operation),
     Pipeline(PipelineDecl),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportDecl {
+    pub source: String,
+    pub items: Vec<ImportItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportItem {
+    pub name: String,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,9 +51,94 @@ pub struct SequenceDecl {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LetDecl {
+    pub name: String,
+    pub annotation: TypeExpr,
+    pub expr: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TypeExpr {
+    Pool(PoolType),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PoolType {
+    pub state: PoolState,
+    pub error_rate_percent: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PoolState {
+    Profile(Profile),
+    Amplified,
+    Recovered,
+}
+
+impl PoolState {
+    pub fn parse(value: &str) -> Option<Self> {
+        if let Some(profile) = Profile::parse(value) {
+            return Some(Self::Profile(profile));
+        }
+        match value.to_ascii_lowercase().as_str() {
+            "amplified" => Some(Self::Amplified),
+            "recovered" => Some(Self::Recovered),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for PoolState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Profile(profile) => write!(f, "{}", profile),
+            Self::Amplified => write!(f, "Amplified"),
+            Self::Recovered => write!(f, "Recovered"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Expr {
+    SimulatePool { pool: String, profile: Profile },
+    SynthesizePool {
+        source: String,
+        profile: Profile,
+        confirmed: bool,
+    },
+    SequencePool {
+        source: String,
+        profile: Profile,
+        confirmed: bool,
+    },
+    ConsensusVote { source: String, coverage: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Effect {
+    Pure,
+    Synthesis,
+    Sequencing,
+    Destructive,
+}
+
+impl std::fmt::Display for Effect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Pure => "Pure",
+            Self::Synthesis => "Synthesis",
+            Self::Sequencing => "Sequencing",
+            Self::Destructive => "Destructive",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Operation {
     Store(StoreOp),
     Retrieve(RetrieveOp),
+    Delete(DeleteOp),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,6 +161,13 @@ pub struct StoreOptions {
 pub struct RetrieveOp {
     pub pool: String,
     pub query: Vec<QueryPredicate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeleteOp {
+    pub file: String,
+    pub pool: String,
+    pub confirmed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
