@@ -1,0 +1,13 @@
+// Declarative pipeline lowered to VFS write + roundtrip verify
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+pipeline backup {
+    encode "sample_a.txt" using Ternary,
+    protect with redundancy 4x,
+    store into archive,
+    verify roundtrip
+}

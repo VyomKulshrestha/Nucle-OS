@@ -1,0 +1,11 @@
+// Emits a warning: critical data with only 1x redundancy
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 1x,
+    profile: Illumina
+}
+
+store "sample_a.txt" into archive {
+    redundancy: 1x,
+    tag: ["critical"]
+}

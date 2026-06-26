@@ -1,0 +1,11 @@
+// Simulate sequencing coverage before storing
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+simulate store "sample_a.txt" into archive {
+    coverage: 10x,
+    expect recovery > 99.5%
+}

@@ -1,0 +1,9 @@
+// Minimal executable NucleScript source file
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+store "sample_a.txt" into archive
+retrieve from archive

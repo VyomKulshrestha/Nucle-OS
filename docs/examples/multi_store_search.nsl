@@ -1,0 +1,18 @@
+// Multiple stores followed by a broad retrieval/search query
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+store "sample_a.txt" into archive {
+    tag: ["readme", "docs"]
+}
+
+store "sample_b.txt" into archive {
+    tag: ["license", "docs"]
+}
+
+retrieve from archive where {
+    name contains "README"
+}

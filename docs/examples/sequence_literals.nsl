@@ -1,0 +1,5 @@
+// DNA-native sequence literals are validated by the compiler.
+seq primer_p0: Sequence = "ATCGATCGGCTAGCTA"
+
+let primer_p1 = seq"ATCGATCG-GCTAGCTA"
+let primer_p2: Sequence = seq"GCTAGCTA-ATCGATCG"

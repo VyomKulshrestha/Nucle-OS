@@ -1,0 +1,11 @@
+// Schema accepts future codecs; current executable backend warns and maps to VFS
+pool archive: DnaPool {
+    codec: YinYang,
+    redundancy: 3x,
+    profile: Twist
+}
+
+store "sample_a.txt" into archive {
+    redundancy: 3x,
+    tag: ["future-codec"]
+}
