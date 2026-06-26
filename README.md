@@ -197,6 +197,79 @@ $ nucle store README.md -r 4
 
 ---
 
+## NucleScript — Declarative DNA Operations Language
+
+NucleScript is a domain-specific programming language for DNA storage
+operations. NucleScript source files use the `.nsl` extension. A program
+describes pools, storage operations, retrieval queries, simulations, and
+pipelines; the compiler validates syntax, pool schemas, and hardcoded DNA strand
+constraints before lowering operations to NucleOS VFS calls.
+
+```nuclescript
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+store "sample_a.txt" into archive {
+    redundancy: 4x,
+    tag: ["docs", "demo", "nuclescript"]
+}
+```
+
+Run it with:
+
+```bash
+$ nucle run docs/examples/store.nsl
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       6               ║
+║ Data strands:        2               ║
+║ Parity strands:      4               ║
+║ Nucleotides:       828               ║
+║ Avg strand len:    138 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+```
+
+NucleScript pipeline programs can also verify a full roundtrip:
+
+```bash
+$ nucle run docs/examples/pipeline_backup.nsl
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ verify roundtrip: 'sample_a.txt' recovered exactly
+```
+
+DNA-native `Sequence` literals are also part of the language and are validated at
+compile time:
+
+```nuclescript
+seq primer_p0: Sequence = "ATCGATCGGCTAGCTA"
+let primer_p1 = seq"ATCGATCG-GCTAGCTA"
+```
+
+Current NucleScript result summary:
+
+| Program | Payload | Data strands | Parity strands | Total strands | Nucleotides | Avg strand | Redundancy | Result |
+|---------|--------:|-------------:|---------------:|--------------:|------------:|-----------:|-----------:|--------|
+| `docs/examples/store.nsl` | 31 B | 2 | 4 | 6 | 828 nt | 138 nt | 3.00× | Stored via VFS |
+| `docs/examples/pipeline_backup.nsl` | 31 B | 2 | 4 | 6 | 828 nt | 138 nt | 3.00× | Exact roundtrip |
+| `docs/examples/sequence_literals.nsl` | — | — | — | — | — | — | — | Compile-time DNA validation |
+
+Compiler diagnostics are surfaced before execution. For example,
+`docs/examples/critical_redundancy_warning.nsl` warns when critical data uses
+only `1x` redundancy.
+
+---
+
 ## CLI Usage
 
 ```bash
@@ -230,6 +303,9 @@ nucle stress -s 256
 # Full-pipeline stress test: encode → noise → ECC → recover across N files
 nucle pipeline -f 100 -s 1024 -p illumina -c 10 -r 4
 
+# Run a NucleScript source file
+nucle run docs/examples/store.nsl
+
 # Natural language agent
 nucle agent "store readme.txt with 3x redundancy"
 nucle agent "search for text files"
@@ -248,7 +324,8 @@ nucle agent "pool status"
 | `nucle_index` | 28 | Primers, CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 31 | Pool, file, catalog, syscall API (full stack roundtrip) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| **Total** | **190+** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| `nucle_lang` | 9 | NucleScript lexer, parser, biological checks, sequence literals, VFS lowering |
+| **Total** | **199+** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
@@ -261,6 +338,7 @@ nucle_ecc/       — Error correction (Reed-Solomon, fountain, consensus)
 nucle_index/     — Retrieval & indexing (CRISPR-sim, vector index)
 nucle_vfs/       — Virtual file system (syscall-style API)
 nucle_agent/     — Agent interface (ReAct planner)
+nucle_lang/      — NucleScript compiler and VFS backend
 nucle_cli/       — Command-line interface
 docs/            — Architecture notes & paper references
 ```

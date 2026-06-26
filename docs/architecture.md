@@ -8,16 +8,45 @@ Nucle-OS follows the same bottom-up layered architecture as FerrumOS(https://git
 
 ```
 nucle_cli
-    └── nucle_agent
-            └── nucle_vfs
-                    └── nucle_index
-                            └── nucle_ecc
-                                    ├── nucle_codec
-                                    └── nucle_synth
-                                            └── nucle_codec
+    ├── nucle_agent
+    │       └── nucle_vfs
+    │               └── nucle_index
+    │                       └── nucle_ecc
+    │                               ├── nucle_codec
+    │                               └── nucle_synth
+    │                                       └── nucle_codec
+    └── nucle_lang
+            ├── nucle_vfs
+            │       └── nucle_index
+            │               └── nucle_ecc
+            │                       ├── nucle_codec
+            │                       └── nucle_synth
+            │                               └── nucle_codec
+            ├── nucle_codec
+            └── nucle_synth
 ```
 
 Dependencies flow strictly downward. No layer ever imports from a layer above it.
+
+## NucleScript Language Layer
+
+`nucle_lang` is the NucleScript compiler crate. It sits above the VFS and turns
+`.nsl` source files into NucleOS operations:
+
+```text
+NucleScript source (.nsl)
+    → lexer
+    → parser / AST
+    → semantic + biological constraint checks
+    → VFS backend
+    → NucleOS syscalls
+```
+
+The compiler currently supports declarative pool definitions, store/retrieve
+operations, simulation options, pipeline programs, and DNA-native `Sequence`
+literals such as `seq"ATCGATCG-GCTAGCTA"`. Sequence literals are validated at
+compile time for DNA alphabet, GC balance, homopolymer length, and
+hairpin-prone palindromes.
 
 ## Biological Constraints
 
