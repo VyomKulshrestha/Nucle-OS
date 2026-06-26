@@ -2,7 +2,7 @@
   "schema": "https://nucle-os.dev/schemas/nuclescript-registry.v1.json",
   "packages": [
     {
-      "name": "@nuclescript/presets",
+      "name": "@vyomkulshrestha/nuclescript-presets",
       "import": "nuclescript/presets",
       "version": "0.1.0",
       "description": "Reference NucleScript pool, recovery, and pipeline presets.",

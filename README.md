@@ -295,10 +295,10 @@ import {
 } from "nuclescript/presets"
 ```
 
-The first NucleScript package release is bundled in this repository:
-`@nuclescript/presets` version `0.1.0`. Its manifest, source, and changelog live
-under `packages/nuclescript-presets/`, with a registry index at
-`packages/registry.json`. List released packages with:
+The first NucleScript package is `@vyomkulshrestha/nuclescript-presets`
+version `0.1.0`, imported in source as `nuclescript/presets`. Its manifest,
+source, and changelog live under `packages/nuclescript-presets/`, with a
+registry index at `packages/registry.json`. List packages with:
 
 ```bash
 nucle packages

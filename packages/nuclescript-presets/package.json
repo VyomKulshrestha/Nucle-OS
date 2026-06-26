@@ -1,10 +1,19 @@
 {
-  "name": "@nuclescript/presets",
+  "name": "@vyomkulshrestha/nuclescript-presets",
   "import": "nuclescript/presets",
   "version": "0.1.0",
   "license": "MIT",
   "description": "Reference NucleScript pool, recovery, and pipeline presets.",
   "repository": "https://github.com/VyomKulshrestha/Nucle-OS",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
   "exports": [
     {
       "name": "medical_archive",

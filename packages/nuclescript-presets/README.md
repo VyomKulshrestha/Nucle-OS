@@ -1,4 +1,4 @@
-# @nuclescript/presets
+# @vyomkulshrestha/nuclescript-presets
 
 Reference NucleScript presets for archive-oriented DNA storage programs.
 
@@ -22,9 +22,9 @@ import {
 | `reliable_store` | Pipeline | Encode, protect, store, and verify with optimizer-visible redundancy |
 | `illumina_recovery` | Recovery profile | Illumina consensus recovery defaults for planning and simulation |
 
-## Release
+## Package
 
-- Package: `@nuclescript/presets`
+- GitHub package: `@vyomkulshrestha/nuclescript-presets`
 - Import source: `nuclescript/presets`
 - Version: `0.1.0`
 - Source: `src/presets.nsl`
