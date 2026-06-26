@@ -1,0 +1,15 @@
+// Built-in presets are validated by the compiler and ready for package registry expansion.
+import {
+    medical_archive,
+    reliable_store as store_recipe,
+    illumina_recovery
+} from "nuclescript/presets"
+
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
