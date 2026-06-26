@@ -1,0 +1,14 @@
+[package]
+name = "nucle_lang"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "NucleScript compiler for declarative DNA storage operations"
+
+[dependencies]
+nucle_codec = { path = "../nucle_codec" }
+nucle_synth = { path = "../nucle_synth" }
+nucle_vfs = { path = "../nucle_vfs" }
+thiserror = { workspace = true }
+serde = { workspace = true }

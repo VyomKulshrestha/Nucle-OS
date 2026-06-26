@@ -125,6 +125,12 @@ enum Commands {
         redundancy: usize,
     },
 
+    /// Run a NucleScript source file (.nsl)
+    Run {
+        /// NucleScript source file to compile and execute
+        source: String,
+    },
+
     /// Run a natural language command via the agent
     Agent {
         /// Natural language command
@@ -151,6 +157,7 @@ fn main() {
         Commands::Pipeline { files, size, profile, coverage, redundancy } => {
             cmd_pipeline(files, size, &profile, coverage, redundancy)
         }
+        Commands::Run { source } => cmd_run(&source),
         Commands::Agent { command } => cmd_agent(&command.join(" ")),
         Commands::Tools => cmd_help(),
     }
@@ -391,6 +398,16 @@ fn cmd_bench(file: Option<&str>) {
     println!("{}", report);
 }
 
+fn cmd_run(source: &str) {
+    match nucle_lang::run_source_file(source) {
+        Ok(report) => println!("{}", report),
+        Err(e) => {
+            eprintln!("NucleScript failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
 fn cmd_agent(command: &str) {
     if command.is_empty() {
         println!("Usage: nucle agent <natural language command>");
@@ -422,6 +439,7 @@ fn cmd_help() {
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle stress [-s size]                    Stress test all codecs");
     println!("  nucle pipeline [-f N] [-s size] [-p prof]  Full-pipeline stress test");
+    println!("  nucle run <source.nsl>                    Run NucleScript source file");
     println!("  nucle agent <command>                     Natural language agent");
     println!("\n{}", tools::tools_help());
 }

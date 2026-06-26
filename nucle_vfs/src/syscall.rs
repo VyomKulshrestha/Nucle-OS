@@ -43,7 +43,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// 3. **ECC** — Reed-Solomon strand-level erasure recovery
 /// 4. **Index** — primer addressing + CRISPR retrieval + vector search
 /// 5. **VFS** — pool, catalog, file metadata
-/// 6. **Agent** — (Phase 5)
+/// 6. **Agent** — natural-language operation planning
 pub struct NucleOS {
     /// DNA strand storage pool.
     pub pool: DnaPool,

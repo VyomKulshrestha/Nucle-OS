@@ -389,6 +389,7 @@ dependencies = [
  "nucle_codec",
  "nucle_ecc",
  "nucle_index",
+ "nucle_lang",
  "nucle_synth",
  "nucle_vfs",
  "rand",
@@ -445,6 +446,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "nucle_lang"
+version = "0.1.0"
+dependencies = [
+ "nucle_codec",
+ "nucle_synth",
+ "nucle_vfs",
+ "serde",
  "thiserror",
 ]
 

@@ -7,6 +7,7 @@ members = [
     "nucle_index",
     "nucle_vfs",
     "nucle_agent",
+    "nucle_lang",
     "nucle_cli",
 ]
 
