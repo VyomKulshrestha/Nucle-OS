@@ -12,3 +12,4 @@ nucle_synth = { path = "../nucle_synth" }
 nucle_vfs = { path = "../nucle_vfs" }
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }

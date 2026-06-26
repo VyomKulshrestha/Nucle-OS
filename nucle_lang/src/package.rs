@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 pub const PRESETS_PACKAGE: &str = "nuclescript/presets";
+pub const PRESETS_PACKAGE_NAME: &str = "@nuclescript/presets";
+pub const PRESETS_PACKAGE_VERSION: &str = "0.1.0";
+const PRESETS_MANIFEST_JSON: &str = include_str!("../../packages/nuclescript-presets/package.json");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PresetKind {
@@ -18,6 +21,27 @@ pub struct Preset {
     pub description: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageManifest {
+    pub name: String,
+    #[serde(rename = "import")]
+    pub import_source: String,
+    pub version: String,
+    pub license: String,
+    pub description: String,
+    pub repository: String,
+    pub exports: Vec<PackageExport>,
+    pub source: String,
+    pub readme: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageExport {
+    pub name: String,
+    pub kind: String,
+    pub description: String,
+}
+
 pub fn resolve_import(source: &str, item: &str) -> Option<Preset> {
     if source != PRESETS_PACKAGE {
         return None;
@@ -27,6 +51,11 @@ pub fn resolve_import(source: &str, item: &str) -> Option<Preset> {
 
 pub fn package_exists(source: &str) -> bool {
     source == PRESETS_PACKAGE
+}
+
+pub fn presets_manifest() -> PackageManifest {
+    serde_json::from_str(PRESETS_MANIFEST_JSON)
+        .expect("@nuclescript/presets manifest must be valid JSON")
 }
 
 pub fn presets() -> Vec<Preset> {
@@ -54,3 +83,22 @@ pub fn presets() -> Vec<Preset> {
     ]
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_manifest_matches_builtin_resolver() {
+        let manifest = presets_manifest();
+        assert_eq!(manifest.name, PRESETS_PACKAGE_NAME);
+        assert_eq!(manifest.import_source, PRESETS_PACKAGE);
+        assert_eq!(manifest.version, PRESETS_PACKAGE_VERSION);
+        for export in &manifest.exports {
+            assert!(
+                resolve_import(&manifest.import_source, &export.name).is_some(),
+                "manifest export '{}' must resolve",
+                export.name
+            );
+        }
+    }
+}

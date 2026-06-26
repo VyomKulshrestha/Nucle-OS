@@ -1,0 +1,32 @@
+{
+  "name": "@nuclescript/presets",
+  "import": "nuclescript/presets",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Reference NucleScript pool, recovery, and pipeline presets.",
+  "repository": "https://github.com/VyomKulshrestha/Nucle-OS",
+  "exports": [
+    {
+      "name": "medical_archive",
+      "kind": "pool_schema",
+      "description": "Ternary Illumina archive defaults with conservative redundancy."
+    },
+    {
+      "name": "twist_archive",
+      "kind": "pool_schema",
+      "description": "Twist synthesis defaults for low-error archival pools."
+    },
+    {
+      "name": "reliable_store",
+      "kind": "pipeline",
+      "description": "Encode, protect, store, and verify with optimizer-visible redundancy."
+    },
+    {
+      "name": "illumina_recovery",
+      "kind": "recovery_profile",
+      "description": "Illumina consensus defaults for simulation and planning."
+    }
+  ],
+  "source": "src/presets.nsl",
+  "readme": "README.md"
+}

@@ -137,6 +137,9 @@ enum Commands {
         source: String,
     },
 
+    /// List released NucleScript packages bundled with this repository
+    Packages,
+
     /// Run a natural language command via the agent
     Agent {
         /// Natural language command
@@ -165,6 +168,7 @@ fn main() {
         }
         Commands::Run { source } => cmd_run(&source),
         Commands::Plan { source } => cmd_plan(&source),
+        Commands::Packages => cmd_packages(),
         Commands::Agent { command } => cmd_agent(&command.join(" ")),
         Commands::Tools => cmd_help(),
     }
@@ -432,6 +436,17 @@ fn cmd_plan(source: &str) {
     }
 }
 
+fn cmd_packages() {
+    let manifest = nucle_lang::package::presets_manifest();
+    println!("NucleScript packages\n");
+    println!("{} {} ({})", manifest.name, manifest.version, manifest.import_source);
+    println!("{}", manifest.description);
+    println!("\nExports:");
+    for export in manifest.exports {
+        println!("  - {} [{}] {}", export.name, export.kind, export.description);
+    }
+}
+
 fn cmd_agent(command: &str) {
     if command.is_empty() {
         println!("Usage: nucle agent <natural language command>");
@@ -465,6 +480,7 @@ fn cmd_help() {
     println!("  nucle pipeline [-f N] [-s size] [-p prof]  Full-pipeline stress test");
     println!("  nucle run <source.nsl>                    Run NucleScript source file");
     println!("  nucle plan <source.nsl>                   Show no-hardware NucleScript plan");
+    println!("  nucle packages                            List released NucleScript packages");
     println!("  nucle agent <command>                     Natural language agent");
     println!("\n{}", tools::tools_help());
 }

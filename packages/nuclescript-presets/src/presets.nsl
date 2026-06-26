@@ -1,0 +1,27 @@
+// Reference presets for DNA archive programs.
+//
+// Current NucleScript imports validate exported preset names at compile time.
+// Registry-backed expansion will lower these exported names into reusable pool
+// schemas, recovery profiles, and pipeline templates.
+
+pool medical_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+pool twist_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Twist
+}
+
+let illumina_noisy: Pool<Illumina, 0.35%> = simulate medical_archive under Illumina
+let illumina_recovery: Pool<Recovered> = consensus_vote(illumina_noisy, coverage: 10x)
+
+pipeline reliable_store {
+    encode "sample_a.txt" using Ternary,
+    protect with redundancy 4x,
+    store into medical_archive,
+    verify roundtrip
+}

@@ -295,6 +295,15 @@ import {
 } from "nuclescript/presets"
 ```
 
+The first NucleScript package release is bundled in this repository:
+`@nuclescript/presets` version `0.1.0`. Its manifest, source, and changelog live
+under `packages/nuclescript-presets/`, with a registry index at
+`packages/registry.json`. List released packages with:
+
+```bash
+nucle packages
+```
+
 Current NucleScript result summary:
 
 | Program | Payload | Data strands | Parity strands | Total strands | Nucleotides | Avg strand | Redundancy | Result |
@@ -351,6 +360,9 @@ nucle run docs/examples/store.nsl
 # Show an optimized no-hardware NucleScript plan
 nucle plan docs/examples/probabilistic_recovery.nsl
 
+# List released NucleScript packages
+nucle packages
+
 # Natural language agent
 nucle agent "store readme.txt with 3x redundancy"
 nucle agent "search for text files"
@@ -369,8 +381,8 @@ nucle agent "pool status"
 | `nucle_index` | 28 | Primers, CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 31 | Pool, file, catalog, syscall API (full stack roundtrip) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 26 | NucleScript lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects, MIR optimizer, simulation backend, preset imports, playground API, hardware bridge requests, VFS lowering |
-| **Total** | **216+** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| `nucle_lang` | 27 | NucleScript lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects, MIR optimizer, simulation backend, preset imports, package manifest validation, playground API, hardware bridge requests, VFS lowering |
+| **Total** | **217+** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
@@ -386,6 +398,7 @@ nucle_agent/     — Agent interface (ReAct planner)
 nucle_lang/      — NucleScript compiler, MIR optimizer, ecosystem APIs, simulation backend, and VFS backend
 nucle_cli/       — Command-line interface
 docs/            — Architecture notes & paper references
+packages/        — NucleScript package registry seed and package releases
 ```
 
 ---
