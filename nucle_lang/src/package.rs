@@ -29,7 +29,7 @@ pub struct PackageManifest {
     pub version: String,
     pub license: String,
     pub description: String,
-    pub repository: String,
+    pub repository: PackageRepository,
     pub exports: Vec<PackageExport>,
     pub source: String,
     pub readme: String,
@@ -40,6 +40,14 @@ pub struct PackageExport {
     pub name: String,
     pub kind: String,
     pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PackageRepository {
+    #[serde(rename = "type")]
+    pub repository_type: String,
+    pub url: String,
+    pub directory: Option<String>,
 }
 
 pub fn resolve_import(source: &str, item: &str) -> Option<Preset> {
