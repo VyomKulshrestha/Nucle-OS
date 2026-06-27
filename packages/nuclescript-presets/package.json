@@ -1,5 +1,5 @@
 {
-  "name": "@vyomkulshrestha/nuclescript-presets",
+  "name": "@nuclescript/presets",
   "import": "nuclescript/presets",
   "version": "0.1.0",
   "license": "MIT",

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const PRESETS_PACKAGE: &str = "nuclescript/presets";
-pub const PRESETS_PACKAGE_NAME: &str = "@vyomkulshrestha/nuclescript-presets";
+pub const PRESETS_PACKAGE_NAME: &str = "@nuclescript/presets";
 pub const PRESETS_PACKAGE_VERSION: &str = "0.1.0";
 const PRESETS_MANIFEST_JSON: &str = include_str!("../../packages/nuclescript-presets/package.json");
 
@@ -63,7 +63,7 @@ pub fn package_exists(source: &str) -> bool {
 
 pub fn presets_manifest() -> PackageManifest {
     serde_json::from_str(PRESETS_MANIFEST_JSON)
-        .expect("@vyomkulshrestha/nuclescript-presets manifest must be valid JSON")
+        .expect("@nuclescript/presets manifest must be valid JSON")
 }
 
 pub fn presets() -> Vec<Preset> {

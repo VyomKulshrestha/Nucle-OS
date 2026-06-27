@@ -295,8 +295,8 @@ import {
 } from "nuclescript/presets"
 ```
 
-The first NucleScript package is `@vyomkulshrestha/nuclescript-presets`
-version `0.1.0`, imported in source as `nuclescript/presets`. Its manifest,
+The first NucleScript package is `@nuclescript/presets` version `0.1.0`,
+imported in source as `nuclescript/presets`. Its manifest,
 source, and changelog live under `packages/nuclescript-presets/`, with a
 registry index at `packages/registry.json`. List packages with:
 
