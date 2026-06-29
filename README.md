@@ -200,7 +200,7 @@ $ nucle store README.md -r 4
 ## NucleScript — Declarative DNA Operations Language
 
 > [!NOTE]
-> **Official Language & Preset Ecosystem:** Visit the [**@Nuclescript GitHub Organization**](https://github.com/orgs/Nuclescript) for standard biological presets, playground modules, community packages, and language tooling.
+> **Official Language & Preset Ecosystem:** Visit the [**@Nuclescript Organization**](https://github.com/orgs/Nuclescript) or install built-in presets directly from our [**Official Packages Registry (`presets`)**](https://github.com/orgs/Nuclescript/packages/npm/package/presets).
 
 NucleScript is a domain-specific programming language for DNA storage
 operations. NucleScript source files use the `.nsl` extension. A program
