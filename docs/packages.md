@@ -6,9 +6,9 @@ files.
 
 The first released package is bundled with this repository.
 
-## @vyomkulshrestha/nuclescript-presets 0.1.0
+## @nuclescript/presets 0.1.0
 
-GitHub package: `@vyomkulshrestha/nuclescript-presets`
+GitHub package: `@nuclescript/presets`
 
 Import source:
 

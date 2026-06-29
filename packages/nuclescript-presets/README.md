@@ -1,4 +1,4 @@
-# @vyomkulshrestha/nuclescript-presets
+# @nuclescript/presets
 
 Reference NucleScript presets for archive-oriented DNA storage programs.
 
@@ -24,7 +24,7 @@ import {
 
 ## Package
 
-- GitHub package: `@vyomkulshrestha/nuclescript-presets`
+- GitHub package: `@nuclescript/presets`
 - Import source: `nuclescript/presets`
 - Version: `0.1.0`
 - Source: `src/presets.nsl`
