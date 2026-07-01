@@ -1,0 +1,11 @@
+// Failure mode: destructive delete without the required physical-key confirmation.
+// `nucle check`/`nucle run` should reject this with:
+//   delete 'old_archive.bin' from 'archive' has Destructive effect and requires
+//   explicit physical key confirmation
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Twist
+}
+
+delete "old_archive.bin" from archive

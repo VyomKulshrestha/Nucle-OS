@@ -19,3 +19,22 @@ When simulating imperfect hardware profiles (e.g. Oxford Nanopore or Illumina) w
 If primer design has cross-reactivity or melting temperature mismatch, CRISPR selective amplification can retrieve non-target strands or amplify nothing:
 - **Zero Amplification**: If target primers are not found or degraded:
   `CRISPR retrieval failed for file: no strands amplified`
+
+## 4. Runnable Failure-Mode Examples
+
+These `.nsl` programs are compiled by `nucle_lang`'s own test suite and are safe
+to run directly (`nucle run <path>`, `nucle check <path>` once available) to see
+the exact diagnostics a developer would hit:
+
+- [`missing_confirmation.nsl`](missing_confirmation.nsl) — a `Destructive`
+  delete without the required `confirm physical_key` token. Fails type
+  checking with: `delete 'old_archive.bin' from 'archive' has Destructive
+  effect and requires explicit physical key confirmation`.
+- [`../critical_redundancy_warning.nsl`](../critical_redundancy_warning.nsl) —
+  a pool tagged `critical` with only 1x redundancy. Compiles, but the
+  optimizer emits warnings: `pool 'archive' has 1x redundancy; critical files
+  should use at least 2x` and `store 'sample_a.txt' is tagged critical but
+  uses only 1x redundancy`.
+- [`../nanopore_recovery_warning.nsl`](../nanopore_recovery_warning.nsl) — a
+  Nanopore-profile pool at 1x coverage claiming `expect recovery > 99.9%`, a
+  guarantee the profile's error rate cannot support at that coverage depth.

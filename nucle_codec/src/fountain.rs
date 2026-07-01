@@ -324,6 +324,17 @@ impl FountainCodec {
         let payload_nucs = &bases[32..];
         let data = Self::nucleotides_to_bytes(payload_nucs)?;
 
+        // A noisy channel (deletion/truncation) can shorten the payload
+        // below the expected segment size — that's a corrupted strand,
+        // not a bug, so report it as a decoding error instead of panicking.
+        if data.len() < segment_size {
+            return Err(DnaError::DecodingError(format!(
+                "strand payload too short: expected {} bytes, got {}",
+                segment_size,
+                data.len()
+            )));
+        }
+
         // Reconstruct the segment indices using the same PRNG
         let mut rng = StdRng::seed_from_u64(seed);
         let degree = sample_degree(&mut rng, num_segments);
@@ -522,6 +533,11 @@ impl DnaCodec for FountainCodec {
         // Heuristic: use the first strand's payload size to determine segment_size,
         // then estimate num_segments from the total data.
         let first_strand = &strands.strands[0];
+        if first_strand.len() < 32 {
+            return Err(DnaError::DecodingError(
+                "strand too short for seed header".into(),
+            ));
+        }
         let payload_nt = first_strand.len() - 32; // minus seed
         let payload_bytes = payload_nt / 4;
         let segment_size = payload_bytes.min(self.config.segment_size);

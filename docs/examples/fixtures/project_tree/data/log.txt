@@ -1,0 +1,3 @@
+[2026-01-04T09:12:00Z] synthesis batch started
+[2026-01-04T09:47:00Z] synthesis batch completed, 3 dropouts flagged
+[2026-01-04T10:03:00Z] sequencing pass 1 complete

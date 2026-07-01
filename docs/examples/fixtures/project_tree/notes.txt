@@ -1,0 +1,2 @@
+Lab notes: sample batch 7, third resynthesis attempt after Nanopore dropout.
+Coverage bumped to 12x after the second failed retrieval.

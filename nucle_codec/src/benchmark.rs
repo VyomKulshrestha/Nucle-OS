@@ -39,6 +39,9 @@ pub struct BenchmarkResult {
     pub max_homopolymer: usize,
     /// Number of strands that violate default constraints.
     pub constraint_violations: usize,
+    /// Total number of homopolymer-run violations across all strands
+    /// (distinct from `max_homopolymer`, which is just the single longest run).
+    pub homopolymer_violation_count: usize,
     /// Whether encode → decode roundtrip succeeded.
     pub roundtrip_ok: bool,
     /// Encoding time in microseconds.
@@ -52,8 +55,15 @@ pub struct BenchmarkResult {
     /// GC content distribution (10 bins: 0-10%, 10-20%, ..., 90-100%).
     pub gc_distribution: Vec<usize>,
     /// Estimated recovery probability (0.0 to 1.0) under simulated noise.
+    /// Always `None` from [`benchmark_codec`] itself: computing this needs
+    /// `nucle_synth`'s noise model, and `nucle_codec` cannot depend on
+    /// `nucle_synth` (which depends on `nucle_codec`) without a cycle.
+    /// Callers with access to both crates (e.g. `nucle_cli`) should fill
+    /// this in after calling `benchmark_codec`.
     pub recovery_probability: Option<f64>,
-    /// Estimated synthesis cost in USD.
+    /// Estimated synthesis cost in USD. Same caveat as `recovery_probability`:
+    /// left `None` here, populated by callers that know the target hardware
+    /// profile's cost-per-base.
     pub estimated_cost_usd: Option<f64>,
 }
 
@@ -67,9 +77,16 @@ impl fmt::Display for BenchmarkResult {
         writeln!(f, "│ GC content:   {:.1}%", self.avg_gc_content * 100.0)?;
         writeln!(f, "│ Max homopoly: {}", self.max_homopolymer)?;
         writeln!(f, "│ Violations:   {}", self.constraint_violations)?;
+        writeln!(f, "│ Hpol viol:    {}", self.homopolymer_violation_count)?;
         writeln!(f, "│ Roundtrip:    {}", if self.roundtrip_ok { "✓ PASS" } else { "✗ FAIL" })?;
         writeln!(f, "│ Encode:       {} μs ({:.0} KB/s)", self.encode_time_us, self.encode_throughput / 1024.0)?;
         writeln!(f, "│ Decode:       {} μs ({:.0} KB/s)", self.decode_time_us, self.decode_throughput / 1024.0)?;
+        if let Some(p) = self.recovery_probability {
+            writeln!(f, "│ Recovery:     {:.1}%", p * 100.0)?;
+        }
+        if let Some(c) = self.estimated_cost_usd {
+            writeln!(f, "│ Est. cost:    ${:.4}", c)?;
+        }
         write!(f, "└────────────────────────────────────")
     }
 }
@@ -103,6 +120,11 @@ pub fn benchmark_codec(
         .iter()
         .filter(|s| !validator.is_valid(s))
         .count();
+    let homopolymer_violation_count: usize = encoded
+        .strands
+        .iter()
+        .map(|s| validator.check_homopolymers(s).len())
+        .sum();
 
     let encode_us = encode_time.as_micros();
     let decode_us = decode_time.as_micros();
@@ -135,6 +157,7 @@ pub fn benchmark_codec(
         avg_gc_content: encoded.avg_gc_content(),
         max_homopolymer: encoded.max_homopolymer(),
         constraint_violations,
+        homopolymer_violation_count,
         roundtrip_ok,
         encode_time_us: encode_us,
         decode_time_us: decode_us,

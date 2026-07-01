@@ -1,0 +1,6 @@
+{
+  "name": "nucleos-fixture-project",
+  "version": "0.1.0",
+  "profile": "illumina",
+  "redundancy": 2
+}
