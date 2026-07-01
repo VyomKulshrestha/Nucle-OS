@@ -17,6 +17,7 @@ pub mod playground;
 pub mod probabilistic;
 pub mod sim_backend;
 pub mod typeck;
+pub mod diagnostics;
 
 use std::fmt;
 use std::path::Path;

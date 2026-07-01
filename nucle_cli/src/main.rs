@@ -167,6 +167,12 @@ enum Commands {
         json: bool,
     },
 
+    /// Explain safety confirmations and optimizer notes for a NucleScript source file
+    Explain {
+        /// NucleScript source file to explain
+        source: String,
+    },
+
     /// Run a NucleScript source file (.nsl)
     Run {
         /// NucleScript source file to compile and execute
@@ -271,6 +277,7 @@ fn main() {
             cmd_pipeline(files, size, &profile, coverage, redundancy, cli.json)
         }
         Commands::Check { source, json } => cmd_check(&source, cli.json || json),
+        Commands::Explain { source } => cmd_explain(&source),
         Commands::Run { source } => cmd_run(&source),
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
@@ -845,6 +852,39 @@ fn cmd_check(source: &str, json: bool) {
     if !report.ok {
         std::process::exit(1);
     }
+}
+
+fn cmd_explain(source: &str) {
+    let source_content = match std::fs::read_to_string(source) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error reading file '{}': {}", source, e);
+            std::process::exit(1);
+        }
+    };
+
+    let tokens = match nucle_lang::lexer::Lexer::new(&source_content).tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Lex error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let program = match nucle_lang::parser::Parser::new(tokens).parse_program() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Parse error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let summary = nucle_lang::effects::effect_summary(&program);
+    let mir_program = nucle_lang::middle::lower_program(&program);
+    let notes = mir_program.notes;
+
+    let explanation = nucle_lang::diagnostics::generate_explanation(&notes, &summary);
+    println!("{}", explanation);
 }
 
 fn cmd_run(source: &str) {
