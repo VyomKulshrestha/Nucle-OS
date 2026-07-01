@@ -26,6 +26,10 @@ use std::time::Instant;
 #[command(long_about = "NucleOS provides encode/decode, error correction, primer-based \
     addressing, CRISPR random access, and a virtual filesystem for DNA storage.")]
 struct Cli {
+    /// Output in JSON format
+    #[arg(long, global = true)]
+    json: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -156,15 +160,15 @@ fn main() {
     match cli.command {
         Commands::Encode { file, output } => cmd_encode(&file, output.as_deref()),
         Commands::Decode { file, output, size } => cmd_decode(&file, output.as_deref(), size),
-        Commands::Store { file, redundancy } => cmd_store(&file, redundancy),
-        Commands::Retrieve { name } => cmd_retrieve(&name),
-        Commands::Search { query, top_k } => cmd_search(&query, top_k),
-        Commands::Pool => cmd_pool(),
-        Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage),
-        Commands::Bench { file } => cmd_bench(file.as_deref()),
-        Commands::Stress { size } => cmd_stress(size),
+        Commands::Store { file, redundancy } => cmd_store(&file, redundancy, cli.json),
+        Commands::Retrieve { name } => cmd_retrieve(&name, cli.json),
+        Commands::Search { query, top_k } => cmd_search(&query, top_k, cli.json),
+        Commands::Pool => cmd_pool(cli.json),
+        Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
+        Commands::Bench { file } => cmd_bench(file.as_deref(), cli.json),
+        Commands::Stress { size } => cmd_stress(size, cli.json),
         Commands::Pipeline { files, size, profile, coverage, redundancy } => {
-            cmd_pipeline(files, size, &profile, coverage, redundancy)
+            cmd_pipeline(files, size, &profile, coverage, redundancy, cli.json)
         }
         Commands::Run { source } => cmd_run(&source),
         Commands::Plan { source } => cmd_plan(&source),
@@ -273,7 +277,7 @@ fn cmd_decode(file: &str, output: Option<&str>, size: usize) {
     }
 }
 
-fn cmd_store(file: &str, redundancy: usize) {
+fn cmd_store(file: &str, redundancy: usize, json: bool) {
     let data = match fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -290,8 +294,12 @@ fn cmd_store(file: &str, redundancy: usize) {
     let mut os = NucleOS::new(100);
     match os.dna_write(filename, &data, redundancy) {
         Ok(result) => {
-            println!("✓ {}", result);
-            println!("\n{}", os.dna_stat());
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            } else {
+                println!("✓ {}", result);
+                println!("\n{}", os.dna_stat());
+            }
         }
         Err(e) => {
             eprintln!("Store failed: {}", e);
@@ -300,14 +308,28 @@ fn cmd_store(file: &str, redundancy: usize) {
     }
 }
 
-fn cmd_retrieve(name: &str) {
+fn cmd_retrieve(name: &str, json: bool) {
     let os = NucleOS::new(100);
     match os.dna_read(name) {
         Ok(data) => {
-            match String::from_utf8(data.clone()) {
-                Ok(text) => println!("{}", text),
-                Err(_) => {
-                    println!("Binary data ({} bytes)", data.len());
+            if json {
+                let (is_text, content) = match String::from_utf8(data.clone()) {
+                    Ok(text) => (true, text),
+                    Err(_) => (false, data.iter().map(|b| format!("{:02x}", b)).collect::<String>()),
+                };
+                let json_val = serde_json::json!({
+                    "filename": name,
+                    "size": data.len(),
+                    "is_text": is_text,
+                    "content": content
+                });
+                println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+            } else {
+                match String::from_utf8(data.clone()) {
+                    Ok(text) => println!("{}", text),
+                    Err(_) => {
+                        println!("Binary data ({} bytes)", data.len());
+                    }
                 }
             }
         }
@@ -318,25 +340,34 @@ fn cmd_retrieve(name: &str) {
     }
 }
 
-fn cmd_search(query: &str, top_k: usize) {
+fn cmd_search(query: &str, top_k: usize, json: bool) {
     let os = NucleOS::new(100);
     let results = os.dna_search(query, top_k);
-    if results.is_empty() {
-        println!("No matching files found.");
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results).unwrap());
     } else {
-        println!("Search results for '{}':", query);
-        for (i, r) in results.iter().enumerate() {
-            println!("  {}. {}", i + 1, r);
+        if results.is_empty() {
+            println!("No matching files found.");
+        } else {
+            println!("Search results for '{}':", query);
+            for (i, r) in results.iter().enumerate() {
+                println!("  {}. {}", i + 1, r);
+            }
         }
     }
 }
 
-fn cmd_pool() {
+fn cmd_pool(json: bool) {
     let os = NucleOS::new(100);
-    println!("{}", os.dna_stat());
+    let status = os.dna_stat();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&status).unwrap());
+    } else {
+        println!("{}", status);
+    }
 }
 
-fn cmd_simulate(file: &str, profile: &str, coverage: usize) {
+fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {
     let data = match fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -378,19 +409,31 @@ fn cmd_simulate(file: &str, profile: &str, coverage: usize) {
     let engine = NoiseEngine::new(config);
     let result = engine.simulate(&encoded);
 
-    println!("╔══════════════════════════════════════╗");
-    println!("║     Synthesis Simulation Results     ║");
-    println!("╠══════════════════════════════════════╣");
-    println!("║ Profile:    {:>24} ║", profile);
-    println!("║ Coverage:   {:>24}×║", coverage);
-    println!("║ Input:      {:>20} strands ║", encoded.strand_count());
-    println!("║ Output:     {:>20} strands ║", result.output_strand_count);
-    println!("║ Error rate: {:>23.4}% ║", result.avg_error_rate() * 100.0);
-    println!("║ Surviving:  {:>22.1}%  ║", result.survival_rate() * 100.0);
-    println!("╚══════════════════════════════════════╝");
+    if json {
+        let json_val = serde_json::json!({
+            "profile": profile,
+            "coverage": coverage,
+            "input_strands": encoded.strand_count(),
+            "output_strands": result.output_strand_count,
+            "error_rate": result.avg_error_rate(),
+            "survival_rate": result.survival_rate()
+        });
+        println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+    } else {
+        println!("╔══════════════════════════════════════╗");
+        println!("║     Synthesis Simulation Results     ║");
+        println!("╠══════════════════════════════════════╣");
+        println!("║ Profile:    {:>24} ║", profile);
+        println!("║ Coverage:   {:>24}×║", coverage);
+        println!("║ Input:      {:>20} strands ║", encoded.strand_count());
+        println!("║ Output:     {:>20} strands ║", result.output_strand_count);
+        println!("║ Error rate: {:>23.4}% ║", result.avg_error_rate() * 100.0);
+        println!("║ Surviving:  {:>22.1}%  ║", result.survival_rate() * 100.0);
+        println!("╚══════════════════════════════════════╝");
+    }
 }
 
-fn cmd_bench(file: Option<&str>) {
+fn cmd_bench(file: Option<&str>, json: bool) {
     let data = if let Some(f) = file {
         match fs::read(f) {
             Ok(d) => d,
@@ -404,9 +447,13 @@ fn cmd_bench(file: Option<&str>) {
           NucleOS benchmarks all available DNA codecs.".to_vec()
     };
 
-    println!("Benchmarking codecs on {} bytes of data...\n", data.len());
     let report = benchmark_all_codecs(&data);
-    println!("{}", report);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    } else {
+        println!("Benchmarking codecs on {} bytes of data...\n", data.len());
+        println!("{}", report);
+    }
 }
 
 fn cmd_run(source: &str) {
@@ -485,7 +532,7 @@ fn cmd_help() {
     println!("\n{}", tools::tools_help());
 }
 
-fn cmd_stress(size: usize) {
+fn cmd_stress(size: usize, json: bool) {
     // -----------------------------------------------------------------------
     // Data distributions
     // -----------------------------------------------------------------------
@@ -523,17 +570,19 @@ fn cmd_stress(size: usize) {
     let num_codecs = codecs.len();
     let num_dists = distributions.len();
 
-    println!(
-        "NucleOS Codec Stress Test — {} bytes × {} distributions × {} codecs\n",
-        size, num_dists, num_codecs
-    );
+    if !json {
+        println!(
+            "NucleOS Codec Stress Test — {} bytes × {} distributions × {} codecs\n",
+            size, num_dists, num_codecs
+        );
 
-    // -----------------------------------------------------------------------
-    // Table header
-    // -----------------------------------------------------------------------
-    println!("╔═══════════════════╤══════════════╤═════╤═════╤════════╤═══════╤══════╤══════╗");
-    println!("║ Codec             │ Distribution │ Enc │ R/T │ bits/nt│  GC%  │ Hpol │ Viol ║");
-    println!("╟───────────────────┼──────────────┼─────┼─────┼────────┼───────┼──────┼──────╢");
+        // -----------------------------------------------------------------------
+        // Table header
+        // -----------------------------------------------------------------------
+        println!("╔═══════════════════╤══════════════╤═════╤═════╤════════╤═══════╤══════╤══════╗");
+        println!("║ Codec             │ Distribution │ Enc │ R/T │ bits/nt│  GC%  │ Hpol │ Viol ║");
+        println!("╟───────────────────┼──────────────┼─────┼─────┼────────┼───────┼──────┼──────╢");
+    }
 
     let validator = ConstraintValidator::new(ConstraintConfig::default());
 
@@ -541,6 +590,7 @@ fn cmd_stress(size: usize) {
     let mut total_roundtrip_failures = 0usize;
     let mut total_violation_strands = 0usize;
     let mut violation_pairs = 0usize;
+    let mut json_results = Vec::new();
 
     // -----------------------------------------------------------------------
     // Run every (codec, distribution) combination
@@ -554,10 +604,23 @@ fn cmd_stress(size: usize) {
             match encode_result {
                 Err(_) => {
                     total_encode_failures += 1;
-                    println!(
-                        "║ {:<17} │ {:<12} │  ✗  │  —  │      — │     — │    — │    — ║",
-                        codec_name, dist_name
-                    );
+                    if json {
+                        json_results.push(serde_json::json!({
+                            "codec": codec_name,
+                            "distribution": dist_name,
+                            "encode_ok": false,
+                            "roundtrip_ok": false,
+                            "bits_per_nt": null,
+                            "gc_percent": null,
+                            "max_homopolymer": null,
+                            "violations": null
+                        }));
+                    } else {
+                        println!(
+                            "║ {:<17} │ {:<12} │  ✗  │  —  │      — │     — │    — │    — ║",
+                            codec_name, dist_name
+                        );
+                    }
                 }
                 Ok(ref collection) => {
                     // Roundtrip
@@ -587,39 +650,67 @@ fn cmd_stress(size: usize) {
                         violation_pairs += 1;
                     }
 
-                    println!(
-                        "║ {:<17} │ {:<12} │  {}  │  {}  │ {:>6.3} │ {:>4.1}% │ {:>4} │ {:>4} ║",
-                        codec_name,
-                        dist_name,
-                        if true { "✓" } else { "✗" },
-                        if roundtrip_ok { "✓" } else { "✗" },
-                        bpn,
-                        gc,
-                        hpol,
-                        strand_violations,
-                    );
+                    if json {
+                        json_results.push(serde_json::json!({
+                            "codec": codec_name,
+                            "distribution": dist_name,
+                            "encode_ok": true,
+                            "roundtrip_ok": roundtrip_ok,
+                            "bits_per_nt": bpn,
+                            "gc_percent": gc,
+                            "max_homopolymer": hpol,
+                            "violations": strand_violations
+                        }));
+                    } else {
+                        println!(
+                            "║ {:<17} │ {:<12} │  {}  │  {}  │ {:>6.3} │ {:>4.1}% │ {:>4} │ {:>4} ║",
+                            codec_name,
+                            dist_name,
+                            if true { "✓" } else { "✗" },
+                            if roundtrip_ok { "✓" } else { "✗" },
+                            bpn,
+                            gc,
+                            hpol,
+                            strand_violations,
+                        );
+                    }
                 }
             }
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Footer
-    // -----------------------------------------------------------------------
-    println!("╚═══════════════════╧══════════════╧═════╧═════╧════════╧═══════╧══════╧══════╝");
-    println!();
-    println!("Summary:");
-    println!("  Codecs tested: {}", num_codecs);
-    println!("  Distributions: {}", num_dists);
-    println!("  Total encode failures: {}", total_encode_failures);
-    println!("  Total roundtrip failures: {}", total_roundtrip_failures);
-    println!(
-        "  Total constraint violations: {} strands across {} codec/distribution pairs",
-        total_violation_strands, violation_pairs
-    );
+    if json {
+        let final_val = serde_json::json!({
+            "results": json_results,
+            "summary": {
+                "codecs_tested": num_codecs,
+                "distributions": num_dists,
+                "total_encode_failures": total_encode_failures,
+                "total_roundtrip_failures": total_roundtrip_failures,
+                "total_constraint_violations": total_violation_strands,
+                "violation_pairs": violation_pairs
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&final_val).unwrap());
+    } else {
+        // -----------------------------------------------------------------------
+        // Footer
+        // -----------------------------------------------------------------------
+        println!("╚═══════════════════╧══════════════╧═════╧═════╧════════╧═══════╧══════╧══════╝");
+        println!();
+        println!("Summary:");
+        println!("  Codecs tested: {}", num_codecs);
+        println!("  Distributions: {}", num_dists);
+        println!("  Total encode failures: {}", total_encode_failures);
+        println!("  Total roundtrip failures: {}", total_roundtrip_failures);
+        println!(
+            "  Total constraint violations: {} strands across {} codec/distribution pairs",
+            total_violation_strands, violation_pairs
+        );
+    }
 }
 
-fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redundancy: usize) {
+fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redundancy: usize, json: bool) {
     let hw_profile = match profile.to_lowercase().as_str() {
         "illumina" => HardwareProfile::Illumina,
         "nanopore" => HardwareProfile::OxfordNanopore,
@@ -631,13 +722,15 @@ fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redun
         }
     };
 
-    println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║           NucleOS Full-Pipeline Stress Test                 ║");
-    println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║ Files:      {:>6}   Size: {:>6} B   Profile: {:>12} ║", files, size, profile);
-    println!("║ Coverage:   {:>5}×   ECC parity: {:>2} strands               ║", coverage, redundancy);
-    println!("╚══════════════════════════════════════════════════════════════╝");
-    println!();
+    if !json {
+        println!("╔══════════════════════════════════════════════════════════════╗");
+        println!("║           NucleOS Full-Pipeline Stress Test                 ║");
+        println!("╠══════════════════════════════════════════════════════════════╣");
+        println!("║ Files:      {:>6}   Size: {:>6} B   Profile: {:>12} ║", files, size, profile);
+        println!("║ Coverage:   {:>5}×   ECC parity: {:>2} strands               ║", coverage, redundancy);
+        println!("╚══════════════════════════════════════════════════════════════╝");
+        println!();
+    }
 
     let mut rng = StdRng::seed_from_u64(42);
 
@@ -702,13 +795,17 @@ fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redun
         }
 
         // Progress bar
-        let done = i + 1;
-        let pct = done * 100 / files;
-        let filled = done * bar_width / files;
-        let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
-        eprint!("\r  [{}] {:>3}% ({}/{})", bar, pct, done, files);
+        if !json {
+            let done = i + 1;
+            let pct = done * 100 / files;
+            let filled = done * bar_width / files;
+            let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
+            eprint!("\r  [{}] {:>3}% ({}/{})", bar, pct, done, files);
+        }
     }
-    eprintln!(); // newline after progress bar
+    if !json {
+        eprintln!(); // newline after progress bar
+    }
 
     let elapsed = total_start.elapsed();
     let recovery_rate = if files > 0 { recovered as f64 / files as f64 * 100.0 } else { 0.0 };
@@ -718,29 +815,50 @@ fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redun
         0.0
     };
 
-    // Results
-    println!();
-    println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║                    Results                                  ║");
-    println!("╠══════════════════════════════════════════════════════════════╣");
-    println!("║ Files tested:     {:>6}                                    ║", files);
-    println!("║ Recovered:        {:>6}  ({:>5.1}%)                          ║", recovered, recovery_rate);
-    println!("║ Failed:           {:>6}                                    ║", failed);
-    println!("║ Total strands:    {:>6}                                    ║", total_strands);
-    println!("║ Total nucleotides:{:>6}                                    ║", total_nucleotides);
-    println!("║ Bytes stored:     {:>6}                                    ║", total_bytes_stored);
-    println!("║ Elapsed:          {:>5.2}s                                   ║", elapsed.as_secs_f64());
-    println!("║ Throughput:       {:>5.0} B/s                                ║", throughput_bps);
-    println!("╚══════════════════════════════════════════════════════════════╝");
-
-    if !failure_details.is_empty() {
+    if json {
+        let json_val = serde_json::json!({
+            "files_tested": files,
+            "recovered": recovered,
+            "recovery_rate": recovery_rate,
+            "failed": failed,
+            "total_strands": total_strands,
+            "total_nucleotides": total_nucleotides,
+            "bytes_stored": total_bytes_stored,
+            "elapsed_seconds": elapsed.as_secs_f64(),
+            "throughput_bytes_per_sec": throughput_bps,
+            "failures": failure_details.iter().map(|(idx, reason)| {
+                serde_json::json!({
+                    "file_index": idx,
+                    "reason": reason
+                })
+            }).collect::<Vec<_>>()
+        });
+        println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+    } else {
+        // Results
         println!();
-        println!("Failure details (first 10):");
-        for (idx, reason) in failure_details.iter().take(10) {
-            println!("  File {:>4}: {}", idx, reason);
-        }
-        if failure_details.len() > 10 {
-            println!("  ... and {} more", failure_details.len() - 10);
+        println!("╔══════════════════════════════════════════════════════════════╗");
+        println!("║                    Results                                  ║");
+        println!("╠══════════════════════════════════════════════════════════════╣");
+        println!("║ Files tested:     {:>6}                                    ║", files);
+        println!("║ Recovered:        {:>6}  ({:>5.1}%)                          ║", recovered, recovery_rate);
+        println!("║ Failed:           {:>6}                                    ║", failed);
+        println!("║ Total strands:    {:>6}                                    ║", total_strands);
+        println!("║ Total nucleotides:{:>6}                                    ║", total_nucleotides);
+        println!("║ Bytes stored:     {:>6}                                    ║", total_bytes_stored);
+        println!("║ Elapsed:          {:>5.2}s                                   ║", elapsed.as_secs_f64());
+        println!("║ Throughput:       {:>5.0} B/s                                ║", throughput_bps);
+        println!("╚══════════════════════════════════════════════════════════════╝");
+
+        if !failure_details.is_empty() {
+            println!();
+            println!("Failure details (first 10):");
+            for (idx, reason) in failure_details.iter().take(10) {
+                println!("  File {:>4}: {}", idx, reason);
+            }
+            if failure_details.len() > 10 {
+                println!("  ... and {} more", failure_details.len() - 10);
+            }
         }
     }
 
