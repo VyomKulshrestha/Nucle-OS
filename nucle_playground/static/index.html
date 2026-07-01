@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NucleScript Playground</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0b0f19 0%, #111827 50%, #1e1b4b 100%);
+            --panel-bg: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-color: #6366f1;
+            --accent-hover: #4f46e5;
+            --accent-glow: rgba(99, 102, 241, 0.4);
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --error-color: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        header {
+            padding: 2rem 4rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            backdrop-filter: blur(12px);
+            background: rgba(11, 15, 25, 0.5);
+        }
+
+        .logo-section h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            background: linear-gradient(to right, #a5b4fc, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.05em;
+        }
+
+        .logo-section p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 0.2rem;
+        }
+
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            padding: 2.5rem 4rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .editor-container, .results-container {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            backdrop-filter: blur(16px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+            transition: border-color 0.3s ease;
+        }
+
+        .editor-container:focus-within {
+            border-color: rgba(99, 102, 241, 0.4);
+        }
+
+        .panel-header {
+            padding: 1.2rem 1.5rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-header h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .textarea-wrapper {
+            flex: 1;
+            position: relative;
+            min-height: 450px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100%;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: #e5e7eb;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            padding: 1.5rem;
+            resize: none;
+            tab-size: 4;
+        }
+
+        .panel-footer {
+            padding: 1.2rem 1.5rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .btn-analyze {
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 0.8rem 1.8rem;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px var(--accent-glow);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-analyze:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px var(--accent-glow);
+        }
+
+        .btn-analyze:active {
+            transform: translateY(1px);
+        }
+
+        .btn-analyze:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .results-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            min-height: 450px;
+        }
+
+        .section-title {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 0.6rem;
+            font-weight: 600;
+        }
+
+        .diagnostics-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .diagnostic-item {
+            padding: 0.6rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6rem;
+            line-height: 1.4;
+        }
+
+        .diagnostic-item.error {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+        }
+
+        .diagnostic-item.warning {
+            background: rgba(245, 158, 11, 0.08);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            color: #fde047;
+        }
+
+        .empty-state {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            text-align: center;
+            padding: 2rem;
+            border: 1px dashed var(--border-color);
+            border-radius: 8px;
+        }
+
+        .step-list, .note-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .step-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--accent-color);
+            padding: 0.8rem 1rem;
+            border-radius: 0 6px 6px 0;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .note-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--warning-color);
+            padding: 0.8rem 1rem;
+            border-radius: 0 6px 6px 0;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+
+        .status-badge {
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .status-badge.ok {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--success-color);
+        }
+
+        .status-badge.fail {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--error-color);
+        }
+
+        .status-badge.idle {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-muted);
+        }
+
+        footer {
+            padding: 2rem;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border-color);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo-section">
+            <h1>NucleScript Playground</h1>
+            <p>Interactive compiler, validator, and simulator tool</p>
+        </div>
+        <div id="status-container">
+            <span class="status-badge idle">Ready</span>
+        </div>
+    </header>
+
+    <main>
+        <div class="editor-container">
+            <div class="panel-header">
+                <h2><span>📝</span> Source Code</h2>
+            </div>
+            <div class="textarea-wrapper">
+                <textarea id="editor" spellcheck="false">pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+
+fn process_pool(source: Pool<Illumina>) returns Pool<Recovered> {
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+    store recovered into archive
+}</textarea>
+            </div>
+            <div class="panel-footer">
+                <span style="font-size: 0.85rem; color: var(--text-muted)">NucleScript v0.1.0</span>
+                <button class="btn-analyze" id="btn-analyze">
+                    <span>⚡</span> Run Analysis
+                </button>
+            </div>
+        </div>
+
+        <div class="results-container">
+            <div class="panel-header">
+                <h2><span>🔍</span> Analysis Results</h2>
+            </div>
+            <div class="results-content" id="results-content">
+                <div class="empty-state">
+                    Write some code and run analysis to see compiler output, simulation steps, and optimizer notes.
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 NucleOS DNA Storage Engine</p>
+    </footer>
+
+    <script>
+        const editor = document.getElementById('editor');
+        const btnAnalyze = document.getElementById('btn-analyze');
+        const resultsContent = document.getElementById('results-content');
+        const statusContainer = document.getElementById('status-container');
+
+        btnAnalyze.addEventListener('click', async () => {
+            btnAnalyze.disabled = true;
+            btnAnalyze.innerText = 'Analyzing...';
+            statusContainer.innerHTML = '<span class="status-badge idle">Analyzing...</span>';
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ source: editor.value }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const report = await response.json();
+                renderResults(report);
+            } catch (err) {
+                resultsContent.innerHTML = `
+                    <div class="diagnostics-box">
+                        <div class="section-title">Connection Error</div>
+                        <div class="diagnostic-item error">
+                            Failed to contact the NucleScript compiler server: ${err.message}
+                        </div>
+                    </div>
+                `;
+                statusContainer.innerHTML = '<span class="status-badge fail">Error</span>';
+            } finally {
+                btnAnalyze.disabled = false;
+                btnAnalyze.innerHTML = '<span>⚡</span> Run Analysis';
+            }
+        });
+
+        function renderResults(report) {
+            let html = '';
+
+            // Update status badge
+            if (report.ok) {
+                statusContainer.innerHTML = '<span class="status-badge ok">Success</span>';
+            } else {
+                statusContainer.innerHTML = '<span class="status-badge fail">Failed</span>';
+            }
+
+            // Render Diagnostics
+            html += `
+                <div>
+                    <div class="section-title">Diagnostics</div>
+                    <div class="diagnostics-box">
+            `;
+            if (report.diagnostics.length === 0) {
+                html += `<div style="color: var(--success-color); font-size: 0.9rem; padding: 0.4rem 0.6rem;">No errors or warnings found.</div>`;
+            } else {
+                report.diagnostics.forEach(diag => {
+                    const cls = diag.level === 'error' ? 'error' : 'warning';
+                    const sign = diag.level === 'error' ? '❌' : '⚠️';
+                    html += `
+                        <div class="diagnostic-item ${cls}">
+                            <span>${sign}</span>
+                            <div>${diag.message}</div>
+                        </div>
+                    `;
+                });
+            }
+            html += `
+                    </div>
+                </div>
+            `;
+
+            // Render Simulation Steps
+            if (report.simulation_steps.length > 0) {
+                html += `
+                    <div>
+                        <div class="section-title">Simulation Plan Steps</div>
+                        <div class="step-list">
+                `;
+                report.simulation_steps.forEach(step => {
+                    html += `<div class="step-item">${escapeHtml(step)}</div>`;
+                });
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Render Optimizer Notes
+            if (report.optimiser_notes.length > 0) {
+                html += `
+                    <div>
+                        <div class="section-title">Optimizer Notes</div>
+                        <div class="note-list">
+                `;
+                report.optimiser_notes.forEach(note => {
+                    html += `<div class="note-item">${escapeHtml(note)}</div>`;
+                });
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Render Stats
+            html += `
+                <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-muted);">
+                    <span>VFS Call Count: <strong>${report.vfs_call_count}</strong></span>
+                    <span>Status: <strong>${report.ok ? 'Verified' : 'Invalid'}</strong></span>
+                </div>
+            `;
+
+            resultsContent.innerHTML = html;
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;")
+                      .replace(/</g, "&lt;")
+                      .replace(/>/g, "&gt;")
+                      .replace(/"/g, "&quot;")
+                      .replace(/'/g, "&#039;");
+        }
+    </script>
+</body>
+</html>

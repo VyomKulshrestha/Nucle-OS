@@ -71,6 +71,14 @@ The language layer now exposes ecosystem-facing integration points:
 
 > See [docs/grammar.md](grammar.md) for the full formal syntax reference.
 
+## NucleScript Playground
+
+`nucle_playground` is a thin, optional HTTP server built using `tiny_http`. It provides an interactive web-based playground interface to write, analyze, and test NucleScript code.
+
+- **Endpoint**: Exposes `POST /analyze` returning `PlaygroundReport` as JSON containing compiler diagnostics, simulator steps, and optimizer notes.
+- **Frontend**: Serves a modern, glassmorphic dark-themed single-page app containing a code editor, real-time status indicators, and collapsible output cards.
+- **Execution**: Self-contained and synchronous, compiling in seconds with zero heavy async runtimes.
+
 ## Biological Constraints
 
 All encoding must satisfy hard constraints imposed by DNA chemistry:
