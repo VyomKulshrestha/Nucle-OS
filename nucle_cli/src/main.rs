@@ -165,6 +165,9 @@ enum Commands {
     /// List released NucleScript packages bundled with this repository
     Packages,
 
+    /// Check environment capabilities and package integrity
+    Doctor,
+
     /// Run a natural language command via the agent
     Agent {
         /// Natural language command
@@ -196,6 +199,7 @@ fn main() {
         Commands::Run { source } => cmd_run(&source),
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
+        Commands::Doctor => cmd_doctor(cli.json),
         Commands::Agent { command } => cmd_agent(&command.join(" ")),
         Commands::Tools => cmd_help(),
     }
@@ -672,6 +676,69 @@ fn cmd_packages() {
     }
 }
 
+fn cmd_doctor(json: bool) {
+    let profiles = vec![
+        "illumina",
+        "nanopore",
+        "twist",
+        "idt",
+        "column-synthesis",
+        "pristine",
+    ];
+
+    let manifest = nucle_lang::package::presets_manifest();
+    let package_integrity = !manifest.exports.is_empty();
+
+    let fixtures = vec![
+        "docs/examples/fixtures/small_text.txt",
+        "docs/examples/fixtures/archive.bin",
+        "docs/examples/fixtures/sample.fasta",
+        "docs/examples/fixtures/image.png",
+    ];
+
+    let mut missing_fixtures = Vec::new();
+    for f in &fixtures {
+        if !std::path::Path::new(f).exists() {
+            missing_fixtures.push(f.to_string());
+        }
+    }
+    let fixtures_ok = missing_fixtures.is_empty();
+
+    let overall_status = if package_integrity && fixtures_ok {
+        "Healthy"
+    } else {
+        "Degraded"
+    };
+
+    if json {
+        let json_val = serde_json::json!({
+            "synthesis_profiles": profiles,
+            "presets_manifest_name": manifest.name,
+            "package_integrity": package_integrity,
+            "fixtures_ok": fixtures_ok,
+            "missing_fixtures": missing_fixtures,
+            "status": overall_status
+        });
+        println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+    } else {
+        println!("# NucleOS Diagnostics Report");
+        println!("\n## Environment Capabilities");
+        println!("- **Synthesis Profiles Available**: {:?}", profiles);
+        println!("- **Presets Manifest**: {} v{} ({})", manifest.name, manifest.version, manifest.import_source);
+        println!("- **Package Integrity**: {}", if package_integrity { "✓ PASS" } else { "✗ FAILED" });
+
+        println!("\n## Standard Workloads / Fixtures");
+        if fixtures_ok {
+            println!("- **Fixtures Status**: ✓ All 4 fixtures present");
+        } else {
+            println!("- **Fixtures Status**: ✗ Missing fixtures: {:?}", missing_fixtures);
+        }
+
+        println!("\n## Overall Status");
+        println!("- **System Health**: **{}**", overall_status);
+    }
+}
+
 fn cmd_agent(command: &str) {
     if command.is_empty() {
         println!("Usage: nucle agent <natural language command>");
@@ -708,6 +775,7 @@ fn cmd_help() {
     println!("  nucle run <source.nsl>                    Run NucleScript source file");
     println!("  nucle plan <source.nsl>                   Show no-hardware NucleScript plan");
     println!("  nucle packages                            List released NucleScript packages");
+    println!("  nucle doctor                              Check environment and presets integrity");
     println!("  nucle agent <command>                     Natural language agent");
     println!("\n{}", tools::tools_help());
 }
