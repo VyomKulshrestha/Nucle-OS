@@ -117,7 +117,7 @@ pub fn lower_program(program: &Program) -> MirProgram {
                     ops.push(op);
                 }
             }
-            Declaration::Import(_) | Declaration::Strand(_) | Declaration::Sequence(_) => {}
+            Declaration::Import(_) | Declaration::Strand(_) | Declaration::Sequence(_) | Declaration::Function(_) => {}
         }
     }
 
@@ -177,6 +177,8 @@ fn infer_binding(
                 consensus_error_rate_percent(*error_rate_percent, *coverage),
             ))
         }
+        Expr::Variable(name) => bindings.get(name).cloned(),
+        Expr::FunctionCall { .. } | Expr::Protect { .. } | Expr::StringLiteral(_) => None,
     }
 }
 

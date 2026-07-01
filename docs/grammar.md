@@ -14,6 +14,7 @@ Declaration         ::= ImportDecl
                       | StrandDecl
                       | SequenceDecl
                       | LetDecl
+                      | FunctionDecl
                       | Operation
                       | PipelineDecl
 
@@ -37,20 +38,30 @@ LetDecl             ::= 'let' Identifier ( ':' TypeExpr )? '=' Expr
                       | 'let' Identifier ':' 'Sequence' '=' 'seq' StringLiteral
                       | 'let' Identifier '=' 'seq' StringLiteral
 
+FunctionDecl        ::= 'fn' Identifier '(' FnParamList? ')' ( '->' | 'returns' ) TypeExpr? '{' Declaration* '}'
+FnParamList         ::= FnParam ( ',' FnParam )* ','?
+FnParam             ::= Identifier ':' TypeExpr
+
 TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
+                      | 'Strand' | 'Sequence' | 'File' | 'DnaFile' | 'Recovery' | 'Void'
 PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'Amplified' | 'Recovered'
 
 Expr                ::= 'simulate' Identifier 'under' ProfileLiteral
                       | ( 'synthesise' | 'synthesize' ) Identifier 'via' ProfileLiteral ( 'confirm' 'hardware' )?
                       | 'sequence' Identifier 'via' ProfileLiteral ( 'confirm' 'hardware' )?
                       | 'consensus_vote' '(' Identifier ',' 'coverage' ':' MultiplierLiteral ')'
+                      | 'protect' Identifier 'for' Identifier
+                      | Identifier '(' ExprList? ')'
+                      | Identifier
+                      | StringLiteral
+ExprList            ::= Expr ( ',' Expr )* ','?
 
 Operation           ::= StoreOp
                       | RetrieveOp
                       | DeleteOp
 
-StoreOp             ::= 'store' StringLiteral 'into' Identifier StoreOptions?
-                      | 'simulate' 'store' StringLiteral 'into' Identifier StoreOptions?
+StoreOp             ::= 'store' ( StringLiteral | Identifier ) 'into' Identifier StoreOptions?
+                      | 'simulate' 'store' ( StringLiteral | Identifier ) 'into' Identifier StoreOptions?
 StoreOptions        ::= '{' StoreOptionList '}'
 StoreOptionList     ::= StoreOption ( ',' StoreOption )* ','?
 StoreOption         ::= 'redundancy' ':' MultiplierLiteral
@@ -73,7 +84,7 @@ QueryValue          ::= StringLiteral
                       | SizeBytesLiteral
                       | NumberLiteral
 
-DeleteOp            ::= 'delete' StringLiteral 'from' Identifier ( 'confirm' 'physical_key' )?
+DeleteOp            ::= 'delete' ( StringLiteral | Identifier ) 'from' Identifier ( 'confirm' 'physical_key' )?
 
 PipelineDecl        ::= 'pipeline' Identifier '{' PipelineStepList '}'
 PipelineStepList    ::= PipelineStep ( ',' PipelineStep )* ','?

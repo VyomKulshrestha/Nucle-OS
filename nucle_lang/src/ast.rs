@@ -16,6 +16,7 @@ pub enum Declaration {
     Let(LetDecl),
     Operation(Operation),
     Pipeline(PipelineDecl),
+    Function(FunctionDecl),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,8 +59,28 @@ pub struct LetDecl {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FunctionDecl {
+    pub name: String,
+    pub params: Vec<FnParam>,
+    pub return_type: TypeExpr,
+    pub body: Vec<Declaration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FnParam {
+    pub name: String,
+    pub ty: TypeExpr,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TypeExpr {
     Pool(PoolType),
+    Strand,
+    Sequence,
+    File,
+    DnaFile,
+    Recovery,
+    Void,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -112,6 +133,10 @@ pub enum Expr {
         confirmed: bool,
     },
     ConsensusVote { source: String, coverage: usize },
+    FunctionCall { name: String, args: Vec<Expr> },
+    Protect { data: String, guarantee: String },
+    Variable(String),
+    StringLiteral(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

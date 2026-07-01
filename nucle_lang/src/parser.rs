@@ -36,6 +36,8 @@ impl Parser {
             self.parse_sequence_decl().map(Declaration::Sequence)
         } else if self.check_ident("let") {
             self.parse_let_decl()
+        } else if self.check_ident("fn") {
+            self.parse_function_decl().map(Declaration::Function)
         } else if self.check_ident("store") || self.check_ident("simulate") {
             self.parse_store().map(|op| Declaration::Operation(Operation::Store(op)))
         } else if self.check_ident("retrieve") {
@@ -45,8 +47,53 @@ impl Parser {
         } else if self.check_ident("pipeline") {
             self.parse_pipeline().map(Declaration::Pipeline)
         } else {
-            Err(self.error_here("expected declaration: import, pool, strand, seq, let, store, retrieve, delete, simulate, or pipeline"))
+            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, store, retrieve, delete, simulate, or pipeline"))
         }
+    }
+
+    fn parse_function_decl(&mut self) -> Result<FunctionDecl, ParseError> {
+        self.expect_ident_text("fn")?;
+        let name = self.expect_ident_any("function name")?;
+        self.expect(TokenKind::LParen, "'(' after function name")?;
+        let mut params = Vec::new();
+        while !self.check(TokenKind::RParen) {
+            let param_name = self.expect_ident_any("parameter name")?;
+            self.expect(TokenKind::Colon, "':' after parameter name")?;
+            let ty = self.parse_type_expr()?;
+            params.push(FnParam { name: param_name, ty });
+            if !self.consume_comma() && !self.check(TokenKind::RParen) {
+                return Err(self.error_here("expected ',' or ')' in parameter list"));
+            }
+        }
+        self.expect(TokenKind::RParen, "')' after parameter list")?;
+
+        // Return type can be specified with `->` or `returns`
+        let return_type = if self.check(TokenKind::Arrow) {
+            self.advance();
+            self.parse_type_expr()?
+        } else if self.check_ident("returns") {
+            self.advance();
+            self.parse_type_expr()?
+        } else {
+            TypeExpr::Void
+        };
+
+        self.expect(TokenKind::LBrace, "'{' to start function body")?;
+        let mut body = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            if self.consume_comma() {
+                continue;
+            }
+            body.push(self.parse_declaration()?);
+        }
+        self.expect(TokenKind::RBrace, "'}' to end function body")?;
+
+        Ok(FunctionDecl {
+            name,
+            params,
+            return_type,
+            body,
+        })
     }
 
     fn parse_import(&mut self) -> Result<ImportDecl, ParseError> {
@@ -167,8 +214,26 @@ impl Parser {
             };
             self.expect(TokenKind::Gt, "'>' after Pool type")?;
             Ok(TypeExpr::Pool(PoolType { state, error_rate_percent }))
+        } else if self.check_ident("Strand") {
+            self.advance();
+            Ok(TypeExpr::Strand)
+        } else if self.check_ident("Sequence") {
+            self.advance();
+            Ok(TypeExpr::Sequence)
+        } else if self.check_ident("File") {
+            self.advance();
+            Ok(TypeExpr::File)
+        } else if self.check_ident("DnaFile") {
+            self.advance();
+            Ok(TypeExpr::DnaFile)
+        } else if self.check_ident("Recovery") {
+            self.advance();
+            Ok(TypeExpr::Recovery)
+        } else if self.check_ident("Void") {
+            self.advance();
+            Ok(TypeExpr::Void)
         } else {
-            Err(self.error_here("expected type annotation"))
+            Err(self.error_here("expected type annotation: Pool<...>, Strand, Sequence, File, DnaFile, Recovery, or Void"))
         }
     }
 
@@ -209,6 +274,33 @@ impl Parser {
             let coverage = self.expect_multiplier("coverage multiplier")?;
             self.expect(TokenKind::RParen, "')' after consensus_vote")?;
             Ok(Expr::ConsensusVote { source, coverage })
+        } else if self.check_ident("protect") {
+            self.advance();
+            let data = self.expect_ident_any("data name")?;
+            self.expect_ident_text("for")?;
+            let guarantee = self.expect_ident_any("guarantee name")?;
+            Ok(Expr::Protect { data, guarantee })
+        } else if let TokenKind::Ident(name) = &self.peek().kind {
+            let name = name.clone();
+            if self.tokens.get(self.index + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
+                self.advance(); // consume ident
+                self.expect(TokenKind::LParen, "'(' after function name")?;
+                let mut args = Vec::new();
+                while !self.check(TokenKind::RParen) {
+                    args.push(self.parse_expr()?);
+                    if !self.consume_comma() && !self.check(TokenKind::RParen) {
+                        return Err(self.error_here("expected ',' or ')' in argument list"));
+                    }
+                }
+                self.expect(TokenKind::RParen, "')' after function arguments")?;
+                Ok(Expr::FunctionCall { name, args })
+            } else {
+                self.advance(); // consume ident
+                Ok(Expr::Variable(name))
+            }
+        } else if self.check(TokenKind::String(String::new())) {
+            let val = self.expect_string("string literal")?;
+            Ok(Expr::StringLiteral(val))
         } else {
             Err(self.error_here("expected expression"))
         }
@@ -232,7 +324,11 @@ impl Parser {
             self.expect_ident_text("store")?;
             false
         };
-        let file = self.expect_string("file path")?;
+        let file = if self.check(TokenKind::String(String::new())) {
+            self.expect_string("file path")?
+        } else {
+            self.expect_ident_any("file variable")?
+        };
         self.expect_ident_text("into")?;
         let pool = self.expect_ident_any("pool name")?;
         let options = if self.check(TokenKind::LBrace) {
@@ -287,7 +383,11 @@ impl Parser {
 
     fn parse_delete(&mut self) -> Result<DeleteOp, ParseError> {
         self.expect_ident_text("delete")?;
-        let file = self.expect_string("file path")?;
+        let file = if self.check(TokenKind::String(String::new())) {
+            self.expect_string("file path")?
+        } else {
+            self.expect_ident_any("file variable")?
+        };
         self.expect_ident_text("from")?;
         let pool = self.expect_ident_any("pool name")?;
         let confirmed = self.consume_confirmation("physical_key")?;

@@ -79,23 +79,29 @@ struct TypeChecker {
     pool_bindings: HashMap<String, ProbPoolType>,
     strands: HashSet<String>,
     sequences: HashSet<String>,
+    functions: HashMap<String, FunctionDecl>,
     report: TypeReport,
 }
 
 impl TypeChecker {
     fn check(&mut self, program: &Program) {
         for declaration in &program.declarations {
-            match declaration {
-                Declaration::Import(import) => self.check_import(import),
-                Declaration::Pool(pool) => self.check_pool(pool),
-                Declaration::Strand(strand) => self.check_strand(strand),
-                Declaration::Sequence(sequence) => self.check_sequence(sequence),
-                Declaration::Let(binding) => self.check_let(binding),
-                Declaration::Operation(Operation::Store(store)) => self.check_store(store),
-                Declaration::Operation(Operation::Retrieve(retrieve)) => self.check_retrieve(retrieve),
-                Declaration::Operation(Operation::Delete(delete)) => self.check_delete(delete),
-                Declaration::Pipeline(pipeline) => self.check_pipeline(pipeline),
-            }
+            self.check_declaration_single(declaration);
+        }
+    }
+
+    fn check_declaration_single(&mut self, declaration: &Declaration) {
+        match declaration {
+            Declaration::Import(import) => self.check_import(import),
+            Declaration::Pool(pool) => self.check_pool(pool),
+            Declaration::Strand(strand) => self.check_strand(strand),
+            Declaration::Sequence(sequence) => self.check_sequence(sequence),
+            Declaration::Let(binding) => self.check_let(binding),
+            Declaration::Operation(Operation::Store(store)) => self.check_store(store),
+            Declaration::Operation(Operation::Retrieve(retrieve)) => self.check_retrieve(retrieve),
+            Declaration::Operation(Operation::Delete(delete)) => self.check_delete(delete),
+            Declaration::Pipeline(pipeline) => self.check_pipeline(pipeline),
+            Declaration::Function(func) => self.check_function(func),
         }
     }
 
@@ -170,6 +176,7 @@ impl TypeChecker {
                     }
                 }
             }
+            _ => {}
         }
 
         self.pool_bindings.insert(binding.name.clone(), inferred);
@@ -223,7 +230,101 @@ impl TypeChecker {
                     consensus_error_rate_percent(source_type.error_rate_percent, *coverage),
                 ))
             }
+            Expr::FunctionCall { name, args } => {
+                let Some(func) = self.functions.get(name).cloned() else {
+                    self.report.error(format!("function '{}' is undeclared", name));
+                    return None;
+                };
+                if func.params.len() != args.len() {
+                    self.report.error(format!(
+                        "function '{}' expects {} arguments, but {} were provided",
+                        name, func.params.len(), args.len()
+                    ));
+                    return None;
+                }
+                for (param, arg) in func.params.iter().zip(args.iter()) {
+                    if let TypeExpr::Pool(expected_pool) = &param.ty {
+                        let Some(inferred_arg) = self.infer_expr(arg) else {
+                            self.report.error(format!(
+                                "argument for parameter '{}' must be a Pool type",
+                                param.name
+                            ));
+                            continue;
+                        };
+                        if expected_pool.state != inferred_arg.state {
+                            self.report.error(format!(
+                                "argument for parameter '{}' expects Pool<{}>, but got Pool<{}>",
+                                param.name, expected_pool.state, inferred_arg.state
+                            ));
+                        }
+                    }
+                }
+                match &func.return_type {
+                    TypeExpr::Pool(pool_type) => Some(ProbPoolType {
+                        state: pool_type.state.clone(),
+                        error_rate_percent: pool_type.error_rate_percent.unwrap_or(0.0),
+                    }),
+                    _ => None,
+                }
+            }
+            Expr::Protect { .. } => None,
+            Expr::Variable(name) => {
+                if let Some(pool) = self.pool_bindings.get(name).cloned() {
+                    Some(pool)
+                } else if self.strands.contains(name) || self.sequences.contains(name) || self.pools.contains_key(name) {
+                    None
+                } else {
+                    self.report.error(format!("variable '{}' is undeclared", name));
+                    None
+                }
+            }
+            Expr::StringLiteral(_) => None,
         }
+    }
+
+    fn check_function(&mut self, func: &FunctionDecl) {
+        if self.functions.contains_key(&func.name) {
+            self.report.error(format!("function '{}' is declared more than once", func.name));
+            return;
+        }
+        self.functions.insert(func.name.clone(), func.clone());
+
+        let mut param_names = HashSet::new();
+        for param in &func.params {
+            if !param_names.insert(&param.name) {
+                self.report.error(format!("duplicate parameter name '{}' in function '{}'", param.name, func.name));
+            }
+        }
+
+        let mut body_checker = TypeChecker::default();
+        body_checker.pools = self.pools.clone();
+        body_checker.functions = self.functions.clone();
+        for param in &func.params {
+            match &param.ty {
+                TypeExpr::Pool(pool_type) => {
+                    body_checker.pool_bindings.insert(
+                        param.name.clone(),
+                        ProbPoolType {
+                            state: pool_type.state.clone(),
+                            error_rate_percent: pool_type.error_rate_percent.unwrap_or(0.0),
+                        },
+                    );
+                }
+                TypeExpr::Sequence => {
+                    body_checker.sequences.insert(param.name.clone());
+                }
+                TypeExpr::Strand => {
+                    body_checker.strands.insert(param.name.clone());
+                }
+                _ => {}
+            }
+        }
+
+        for decl in &func.body {
+            body_checker.check_declaration_single(decl);
+        }
+
+        self.report.diagnostics.extend(body_checker.report.diagnostics);
     }
 
     fn check_strand(&mut self, strand: &StrandDecl) {
@@ -283,7 +384,20 @@ impl TypeChecker {
                 store.file
             ));
         }
-        let Some(pool) = self.pools.get(&store.pool).cloned() else {
+        let pool = if let Some(pool) = self.pools.get(&store.pool).cloned() {
+            pool
+        } else if let Some(binding) = self.pool_bindings.get(&store.pool).cloned() {
+            let profile = match binding.state {
+                PoolState::Profile(p) => p,
+                _ => Profile::Illumina,
+            };
+            PoolDecl {
+                name: store.pool.clone(),
+                codec: Codec::Ternary,
+                redundancy: store.options.redundancy.unwrap_or(2),
+                profile,
+            }
+        } else {
             self.report.error(format!("store target pool '{}' is not declared", store.pool));
             return;
         };
@@ -313,7 +427,7 @@ impl TypeChecker {
     }
 
     fn check_delete(&mut self, delete: &DeleteOp) {
-        if !self.pools.contains_key(&delete.pool) {
+        if !self.pools.contains_key(&delete.pool) && !self.pool_bindings.contains_key(&delete.pool) {
             self.report.error(format!("delete target pool '{}' is not declared", delete.pool));
         }
         if !delete_has_required_confirmation(delete) {
@@ -325,7 +439,7 @@ impl TypeChecker {
     }
 
     fn check_retrieve(&mut self, retrieve: &RetrieveOp) {
-        if !self.pools.contains_key(&retrieve.pool) {
+        if !self.pools.contains_key(&retrieve.pool) && !self.pool_bindings.contains_key(&retrieve.pool) {
             self.report.error(format!("retrieve source pool '{}' is not declared", retrieve.pool));
         }
         for predicate in &retrieve.query {

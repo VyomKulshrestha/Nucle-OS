@@ -25,6 +25,7 @@ pub enum TokenKind {
     Eq,
     Gt,
     Lt,
+    Arrow,
     Eof,
 }
 
@@ -70,6 +71,11 @@ impl<'a> Lexer<'a> {
                 '=' => { self.bump(); TokenKind::Eq }
                 '>' => { self.bump(); TokenKind::Gt }
                 '<' => { self.bump(); TokenKind::Lt }
+                '-' if self.peek_next() == Some('>') => {
+                    self.bump();
+                    self.bump();
+                    TokenKind::Arrow
+                }
                 '"' => TokenKind::String(self.lex_string(line, column)?),
                 c if c.is_ascii_digit() => TokenKind::Number(self.lex_number_like()),
                 c if is_ident_start(c) => TokenKind::Ident(self.lex_ident()),

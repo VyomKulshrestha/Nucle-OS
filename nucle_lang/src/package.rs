@@ -57,6 +57,7 @@ pub enum PresetKind {
     PoolSchema,
     Pipeline,
     RecoveryProfile,
+    Function,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +155,7 @@ pub fn resolve_import(source: &str, item: &str) -> Option<Preset> {
         "PoolSchema" | "pool_schema" => PresetKind::PoolSchema,
         "Pipeline" | "pipeline" => PresetKind::Pipeline,
         "RecoveryProfile" | "recovery_profile" => PresetKind::RecoveryProfile,
+        "Function" | "function" | "fn" => PresetKind::Function,
         _ => PresetKind::PoolSchema,
     };
     Some(Preset {
@@ -209,11 +211,11 @@ pub fn validate_manifest(manifest: &PackageManifest) -> Vec<String> {
             errors.push(format!("Export '{}' fails to resolve via resolve_import", export.name));
         }
         let kind_valid = match export.kind.as_str() {
-            "PoolSchema" | "pool_schema" | "Pipeline" | "pipeline" | "RecoveryProfile" | "recovery_profile" => true,
+            "PoolSchema" | "pool_schema" | "Pipeline" | "pipeline" | "RecoveryProfile" | "recovery_profile" | "Function" | "function" | "fn" => true,
             _ => false,
         };
         if !kind_valid {
-            errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile", export.name, export.kind));
+            errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile, function", export.name, export.kind));
         }
     }
 

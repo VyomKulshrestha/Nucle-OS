@@ -7,6 +7,7 @@ pub fn expr_effect(expr: &Expr) -> Effect {
         Expr::SimulatePool { .. } | Expr::ConsensusVote { .. } => Effect::Pure,
         Expr::SynthesizePool { .. } => Effect::Synthesis,
         Expr::SequencePool { .. } => Effect::Sequencing,
+        Expr::FunctionCall { .. } | Expr::Protect { .. } | Expr::Variable(_) | Expr::StringLiteral(_) => Effect::Pure,
     }
 }
 
@@ -23,6 +24,7 @@ pub fn expr_has_required_confirmation(expr: &Expr) -> bool {
     match expr {
         Expr::SimulatePool { .. } | Expr::ConsensusVote { .. } => true,
         Expr::SynthesizePool { confirmed, .. } | Expr::SequencePool { confirmed, .. } => *confirmed,
+        Expr::FunctionCall { .. } | Expr::Protect { .. } | Expr::Variable(_) | Expr::StringLiteral(_) => true,
     }
 }
 

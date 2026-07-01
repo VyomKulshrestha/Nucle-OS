@@ -1,0 +1,5 @@
+// Reusable function that encapsulates a store-with-recovery workflow.
+fn archive(data: File, target: Pool<Illumina>, guarantee: Recovery) returns DnaFile {
+    let plan: DnaFile = protect data for guarantee
+    store plan into target
+}
