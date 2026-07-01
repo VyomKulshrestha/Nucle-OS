@@ -18,6 +18,7 @@ nucle_index = { path = "../nucle_index" }
 nucle_vfs = { path = "../nucle_vfs" }
 nucle_agent = { path = "../nucle_agent" }
 nucle_lang = { path = "../nucle_lang" }
+nucle_hardware = { path = "../nucle_hardware" }
 clap = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }

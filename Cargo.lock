@@ -388,6 +388,7 @@ dependencies = [
  "nucle_agent",
  "nucle_codec",
  "nucle_ecc",
+ "nucle_hardware",
  "nucle_index",
  "nucle_lang",
  "nucle_synth",
@@ -430,6 +431,17 @@ dependencies = [
  "nucle_synth",
  "rand",
  "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "nucle_hardware"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "nucle_lang",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

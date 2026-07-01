@@ -161,3 +161,16 @@ The VFS is a **session-scoped in-memory abstraction**, not a persistent filesyst
 - **POSIX semantics** — no directories, no symlinks, no `seek()`. The API is flat key-value: name → blob.
 
 These boundaries are intentional. The VFS owns the question "how do I store and retrieve a named blob in DNA?" — everything else belongs to layers above it.
+
+## Hardware Bridge and Provider Boundaries
+
+The hardware boundary separates the high-level compiler planner from the physical/simulation hardware execution:
+
+```
+[NucleScript compilation] → [HardwareRequest batches] → [Provider implementation]
+                                                            ├── MockProvider (simulates)
+                                                            └── FileExportProvider (JSON export)
+```
+
+- **HardwareRequest**: Models a typed transaction representing a physical operation (Synthesis, Sequencing, or Destructive deletion).
+- **Provider Trait**: Standardizes the execution boundary. Other crates implement `Provider` to interface with lab synthesizers or custom sequencing hardware.

@@ -5,11 +5,27 @@ use crate::middle::{lower_program, MirOp};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RequestType {
+    Synthesis {
+        file_name: String,
+        profile: String,
+    },
+    Sequencing {
+        file_name: String,
+        profile: String,
+    },
+    Destructive {
+        file_name: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HardwareRequest {
     pub effect: Effect,
     pub target: String,
     pub profile: Option<String>,
     pub confirmation: String,
+    pub detail: RequestType,
 }
 
 pub trait HardwareBridge {
@@ -24,20 +40,28 @@ pub fn collect_hardware_requests(program: &Program) -> Vec<HardwareRequest> {
             MirOp::ProbabilisticBind {
                 name,
                 state,
-                effect: effect @ Effect::Synthesis,
-                ..
-            }
-            | MirOp::ProbabilisticBind {
-                name,
-                state,
-                effect: effect @ Effect::Sequencing,
-                ..
-            } => Some(HardwareRequest {
                 effect,
-                target: name,
-                profile: Some(state.to_string()),
-                confirmation: "hardware".into(),
-            }),
+                ..
+            } if effect == Effect::Synthesis || effect == Effect::Sequencing => {
+                let detail = if effect == Effect::Synthesis {
+                    RequestType::Synthesis {
+                        file_name: name.clone(),
+                        profile: state.to_string(),
+                    }
+                } else {
+                    RequestType::Sequencing {
+                        file_name: name.clone(),
+                        profile: state.to_string(),
+                    }
+                };
+                Some(HardwareRequest {
+                    effect,
+                    target: name,
+                    profile: Some(state.to_string()),
+                    confirmation: "hardware".into(),
+                    detail,
+                })
+            }
             MirOp::Store {
                 file,
                 profile,
@@ -45,9 +69,13 @@ pub fn collect_hardware_requests(program: &Program) -> Vec<HardwareRequest> {
                 ..
             } => Some(HardwareRequest {
                 effect: Effect::Synthesis,
-                target: file,
+                target: file.clone(),
                 profile: Some(profile.to_string()),
                 confirmation: "hardware".into(),
+                detail: RequestType::Synthesis {
+                    file_name: file,
+                    profile: profile.to_string(),
+                },
             }),
             MirOp::Delete {
                 file,
@@ -55,9 +83,12 @@ pub fn collect_hardware_requests(program: &Program) -> Vec<HardwareRequest> {
                 ..
             } => Some(HardwareRequest {
                 effect: Effect::Destructive,
-                target: file,
+                target: file.clone(),
                 profile: None,
                 confirmation: "physical_key".into(),
+                detail: RequestType::Destructive {
+                    file_name: file,
+                },
             }),
             _ => None,
         })

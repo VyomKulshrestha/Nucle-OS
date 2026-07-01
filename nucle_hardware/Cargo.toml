@@ -1,0 +1,14 @@
+[package]
+name = "nucle_hardware"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Hardware adapter interface and providers for NucleOS DNA synthesis/sequencing"
+
+[dependencies]
+nucle_lang = { path = "../nucle_lang" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

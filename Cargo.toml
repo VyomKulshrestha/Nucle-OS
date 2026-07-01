@@ -9,6 +9,7 @@ members = [
     "nucle_agent",
     "nucle_lang",
     "nucle_cli",
+    "nucle_hardware",
 ]
 
 [workspace.package]

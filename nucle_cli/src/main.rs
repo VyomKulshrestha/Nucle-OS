@@ -171,6 +171,12 @@ enum Commands {
         action: PackageAction,
     },
 
+    /// Manage laboratory DNA synthesis/sequencing hardware bridge
+    Hardware {
+        #[command(subcommand)]
+        subcommand: HardwareSubcommand,
+    },
+
     /// Check environment capabilities and package integrity
     Doctor,
 
@@ -198,6 +204,18 @@ enum PackageAction {
     },
 }
 
+#[derive(Subcommand, Debug, Clone)]
+enum HardwareSubcommand {
+    /// Export batch requests from a NucleScript file to a JSON file
+    Export {
+        /// NucleScript file to compile and extract requests from
+        source: String,
+        /// Output path for the exported JSON batch file
+        #[arg(short, long, default_value = "batch.json")]
+        output: String,
+    },
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -220,6 +238,7 @@ fn main() {
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
         Commands::Package { action } => cmd_package(action, cli.json),
+        Commands::Hardware { subcommand } => cmd_hardware(subcommand, cli.json),
         Commands::Doctor => cmd_doctor(cli.json),
         Commands::Agent { command } => cmd_agent(&command.join(" ")),
         Commands::Tools => cmd_help(),
@@ -787,6 +806,56 @@ fn cmd_package(action: PackageAction, json: bool) {
     }
 }
 
+fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
+    match subcommand {
+        HardwareSubcommand::Export { source, output } => {
+            let content = match fs::read_to_string(&source) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error reading source file '{}': {}", source, e);
+                    std::process::exit(1);
+                }
+            };
+
+            let tokens = match nucle_lang::Lexer::new(&content).tokenize() {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("Lexing error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let program = match nucle_lang::Parser::new(tokens).parse_program() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("Parsing error: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let requests = nucle_lang::hardware::collect_hardware_requests(&program);
+            let provider = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&output));
+            match nucle_hardware::Provider::execute_batch(&provider, &requests) {
+                Ok(msg) => {
+                    if json {
+                        let json_val = serde_json::json!({
+                            "status": "Success",
+                            "exported_file": output,
+                            "requests_count": requests.len()
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+                    } else {
+                        println!("✓ {}", msg);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Export failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
+
 fn cmd_doctor(json: bool) {
     let profiles = vec![
         "illumina",
@@ -886,6 +955,9 @@ fn cmd_help() {
     println!("  nucle run <source.nsl>                    Run NucleScript source file");
     println!("  nucle plan <source.nsl>                   Show no-hardware NucleScript plan");
     println!("  nucle packages                            List released NucleScript packages");
+    println!("  nucle package install <manifest_path>     Install a package from manifest");
+    println!("  nucle package verify <manifest_path>      Verify package manifest integrity");
+    println!("  nucle hardware export <src.nsl> [-o out]  Export batch requests to a JSON file");
     println!("  nucle doctor                              Check environment and presets integrity");
     println!("  nucle agent <command>                     Natural language agent");
     println!("\n{}", tools::tools_help());
