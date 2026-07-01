@@ -112,6 +112,18 @@ enum Commands {
         file: Option<String>,
     },
 
+    /// Run a full-pipeline benchmark on a file or standard fixtures
+    Benchmark {
+        /// Input file to benchmark (default: all standard fixtures)
+        file: Option<String>,
+        /// Hardware profile for noise simulation: illumina, nanopore, twist, pristine
+        #[arg(short, long, default_value = "illumina")]
+        profile: String,
+        /// Number of RS parity strands for ECC
+        #[arg(short, long, default_value = "4")]
+        redundancy: usize,
+    },
+
     /// Stress test all codecs against diverse data distributions
     Stress {
         /// Data size in bytes for stress testing
@@ -176,6 +188,7 @@ fn main() {
         Commands::Pool => cmd_pool(cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file } => cmd_bench(file.as_deref(), cli.json),
+        Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
         Commands::Stress { size } => cmd_stress(size, cli.json),
         Commands::Pipeline { files, size, profile, coverage, redundancy } => {
             cmd_pipeline(files, size, &profile, coverage, redundancy, cli.json)
@@ -487,6 +500,130 @@ fn cmd_bench(file: Option<&str>, json: bool) {
     }
 }
 
+fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: bool) {
+    let hw_profile = match profile.to_lowercase().as_str() {
+        "illumina" => HardwareProfile::Illumina,
+        "nanopore" => HardwareProfile::OxfordNanopore,
+        "twist" => HardwareProfile::TwistBioscience,
+        "pristine" => HardwareProfile::Pristine,
+        _ => {
+            eprintln!("Unknown profile: {}. Use: illumina, nanopore, twist, pristine", profile);
+            std::process::exit(1);
+        }
+    };
+
+    let files_to_bench: Vec<(String, Vec<u8>)> = if let Some(f) = file {
+        match fs::read(f) {
+            Ok(d) => vec![(f.to_string(), d)],
+            Err(e) => {
+                eprintln!("Error reading '{}': {}", f, e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        let paths = vec![
+            "docs/examples/fixtures/small_text.txt",
+            "docs/examples/fixtures/archive.bin",
+            "docs/examples/fixtures/sample.fasta",
+            "docs/examples/fixtures/image.png",
+        ];
+        let mut list = Vec::new();
+        for p in paths {
+            match fs::read(p) {
+                Ok(d) => list.push((p.to_string(), d)),
+                Err(_) => {
+                    list.push((p.to_string(), b"Fallback bench data".to_vec()));
+                }
+            }
+        }
+        list
+    };
+
+    let cost_per_base = match profile.to_lowercase().as_str() {
+        "twist" => 0.00015,
+        "illumina" => 0.0001,
+        "nanopore" => 0.00005,
+        _ => 0.00001,
+    };
+
+    let mut results = Vec::new();
+
+    for (name, data) in &files_to_bench {
+        let noise_cfg = SimulationConfig {
+            seed: 42,
+            coverage_depth: 10,
+            synthesis_profile: hw_profile,
+            sequencing_profile: hw_profile,
+            simulate_decay: false,
+            decay_rate: 0.0,
+            storage_time: 0.0,
+        };
+
+        let mut os = NucleOS::new(10);
+        if hw_profile != HardwareProfile::Pristine {
+            os = os.with_noise(noise_cfg);
+        }
+        let filename = std::path::Path::new(name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(name);
+
+        let write_result = match os.dna_write(filename, data, redundancy) {
+            Ok(res) => res,
+            Err(e) => {
+                eprintln!("Benchmark store failed for '{}': {}", filename, e);
+                continue;
+            }
+        };
+
+        let codec = TernaryCodec::new(TernaryConfig::no_overlap());
+        let encoded = codec.encode(data).unwrap();
+        let engine = NoiseEngine::new(os.noise_config.clone());
+        let sim_res = engine.simulate(&encoded);
+        let observed_error_rate = sim_res.avg_error_rate();
+
+        let read_result = os.dna_read(filename);
+        let recovery_ok = match read_result {
+            Ok(ref recovered) => recovered == data,
+            Err(_) => false,
+        };
+
+        let total_nt = write_result.total_strand_count * 150;
+        let estimated_cost = total_nt as f64 * cost_per_base;
+
+        results.push(serde_json::json!({
+            "file": filename,
+            "size_bytes": data.len(),
+            "strands": write_result.total_strand_count,
+            "observed_error_rate": observed_error_rate,
+            "recovery_ok": recovery_ok,
+            "estimated_cost_usd": estimated_cost,
+        }));
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&results).unwrap());
+    } else {
+        println!("╔══════════════════════════════════════════════════════════════════════════════════════╗");
+        println!("║                      NucleOS Full-Pipeline Benchmark                                 ║");
+        println!("╠══════════════════════════════════════════════════════════════════════════════════════╣");
+        println!("║ {:<20} │ {:>8} │ {:>8} │ {:>12} │ {:>8} │ {:>10} ║",
+            "File", "Size (B)", "Strands", "Error Rate", "Recover", "Cost (USD)");
+        println!("╟──────────────────────┼──────────┼──────────┼──────────────┼──────────┼──────────╢");
+        for r in &results {
+            println!("║ {:<20} │ {:>8} │ {:>8} │ {:>11.2}% │ {:^8} │ ${:>8.4} ║",
+                r["file"].as_str().unwrap(),
+                r["size_bytes"].as_u64().unwrap(),
+                r["strands"].as_u64().unwrap(),
+                r["observed_error_rate"].as_f64().unwrap() * 100.0,
+                if r["recovery_ok"].as_bool().unwrap() { "PASS" } else { "FAIL" },
+                r["estimated_cost_usd"].as_f64().unwrap(),
+            );
+        }
+        println!("╚══════════════════════════════════════════════════════════════════════════════════════╝");
+    }
+}
+
 fn cmd_run(source: &str) {
     match nucle_lang::run_source_file(source) {
         Ok(report) => println!("{}", report),
@@ -555,6 +692,7 @@ fn cmd_help() {
     println!("  nucle pool                                Show pool status");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
+    println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");
     println!("  nucle stress [-s size]                    Stress test all codecs");
     println!("  nucle pipeline [-f N] [-s size] [-p prof]  Full-pipeline stress test");
     println!("  nucle run <source.nsl>                    Run NucleScript source file");

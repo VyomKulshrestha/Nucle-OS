@@ -49,6 +49,12 @@ pub struct BenchmarkResult {
     pub encode_throughput: f64,
     /// Decoding throughput in bytes/second.
     pub decode_throughput: f64,
+    /// GC content distribution (10 bins: 0-10%, 10-20%, ..., 90-100%).
+    pub gc_distribution: Vec<usize>,
+    /// Estimated recovery probability (0.0 to 1.0) under simulated noise.
+    pub recovery_probability: Option<f64>,
+    /// Estimated synthesis cost in USD.
+    pub estimated_cost_usd: Option<f64>,
 }
 
 impl fmt::Display for BenchmarkResult {
@@ -113,6 +119,13 @@ pub fn benchmark_codec(
         f64::INFINITY
     };
 
+    let mut gc_distribution = vec![0; 10];
+    for strand in &encoded.strands {
+        let gc = strand.gc_content();
+        let bin = ((gc * 10.0).floor() as usize).min(9);
+        gc_distribution[bin] += 1;
+    }
+
     Ok(BenchmarkResult {
         codec_name: codec.name().to_string(),
         input_size: data.len(),
@@ -127,6 +140,9 @@ pub fn benchmark_codec(
         decode_time_us: decode_us,
         encode_throughput,
         decode_throughput,
+        gc_distribution,
+        recovery_probability: None,
+        estimated_cost_usd: None,
     })
 }
 
