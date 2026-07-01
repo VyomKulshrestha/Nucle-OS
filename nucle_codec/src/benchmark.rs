@@ -14,13 +14,14 @@ use crate::base::{DnaCodec, DnaError, StrandCollection};
 use crate::constraints::{ConstraintConfig, ConstraintValidator};
 use std::fmt;
 use std::time::Instant;
+use serde::Serialize;
 
 // ---------------------------------------------------------------------------
 // Benchmark Result
 // ---------------------------------------------------------------------------
 
 /// Results from benchmarking a single codec on a single dataset.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BenchmarkResult {
     /// Name of the codec.
     pub codec_name: String,
@@ -130,7 +131,7 @@ pub fn benchmark_codec(
 }
 
 /// Comparison report across multiple codecs.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ComparisonReport {
     pub results: Vec<BenchmarkResult>,
 }

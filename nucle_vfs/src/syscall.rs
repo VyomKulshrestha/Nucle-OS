@@ -450,7 +450,7 @@ impl NucleOS {
 // ---------------------------------------------------------------------------
 
 /// Result of a dna_write operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct WriteResult {
     pub file_id: String,
     pub filename: String,
@@ -480,7 +480,7 @@ impl fmt::Display for WriteResult {
 }
 
 /// Result of a dna_delete operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DeleteResult {
     pub filename: String,
     pub strands_removed: usize,
@@ -499,7 +499,7 @@ pub struct FileInfo {
 }
 
 /// Pool status report.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PoolStatus {
     pub file_count: usize,
     pub total_strands: usize,

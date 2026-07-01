@@ -195,7 +195,7 @@ impl Default for FileRegistry {
 // ---------------------------------------------------------------------------
 
 /// A unified search result combining similarity score and file metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
     /// File identifier.
     pub file_id: String,
