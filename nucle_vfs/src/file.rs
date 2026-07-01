@@ -7,6 +7,26 @@
 use serde::{Serialize, Deserialize};
 use std::fmt;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SimulationAssumptions {
+    pub seed: u64,
+    pub coverage_depth: u32,
+    pub synthesis_profile: String,
+    pub sequencing_profile: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StorageManifest {
+    pub archive_id: String,
+    pub codec: String,
+    pub profile: String,
+    pub redundancy: usize,
+    pub primer_set: String,
+    pub index_strategy: String,
+    pub simulation_assumptions: Option<SimulationAssumptions>,
+    pub created_at: i64,
+}
+
 /// Metadata for a single file stored in DNA.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnaFile {
@@ -30,6 +50,12 @@ pub struct DnaFile {
     pub codec: String,
     /// Redundancy level (e.g., 2.0 = 2× parity).
     pub redundancy: f64,
+    /// Storage manifest containing biological assumptions.
+    #[serde(default)]
+    pub manifest: Option<StorageManifest>,
+    /// History of manifests for audit log.
+    #[serde(default)]
+    pub manifest_history: Vec<StorageManifest>,
 }
 
 impl DnaFile {
@@ -113,6 +139,8 @@ mod tests {
             parity_strand_count: 4,
             codec: "ternary".into(),
             redundancy: 1.4,
+            manifest: None,
+            manifest_history: Vec::new(),
         }
     }
 

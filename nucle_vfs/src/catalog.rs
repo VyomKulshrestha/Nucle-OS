@@ -63,6 +63,12 @@ impl Catalog {
             .and_then(|id| self.files.get(id))
     }
 
+    /// Get file metadata mutably by filename.
+    pub fn get_by_name_mut(&mut self, filename: &str) -> Option<&mut DnaFile> {
+        let file_id = self.name_index.get(filename)?.clone();
+        self.files.get_mut(&file_id)
+    }
+
     /// Get file metadata by primer ID.
     pub fn get_by_primer(&self, primer_id: &str) -> Option<&DnaFile> {
         self.primer_index.get(primer_id)
@@ -150,6 +156,8 @@ mod tests {
             parity_strand_count: 4,
             codec: "ternary".into(),
             redundancy: 1.4,
+            manifest: None,
+            manifest_history: Vec::new(),
         }
     }
 

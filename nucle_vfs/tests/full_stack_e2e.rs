@@ -165,3 +165,29 @@ fn test_ten_files_stress() {
         assert_eq!(recovered, expected, "file {} data mismatch", name);
     }
 }
+
+/// Migration test: store a file, migrate it, check manifest history and new manifest.
+#[test]
+fn test_migrate_preserves_history() {
+    let mut os = NucleOS::new(10);
+    let original = b"Migration test data content.";
+
+    // 1. Store
+    let _write_result = os.dna_write("migrate_test.txt", original, 2).unwrap();
+    let initial_file = os.catalog.get_by_name("migrate_test.txt").unwrap().clone();
+    assert!(initial_file.manifest.is_some());
+    let initial_manifest = initial_file.manifest.clone().unwrap();
+
+    // 2. Migrate to new redundancy (4)
+    let new_manifest = nucle_vfs::migrate::migrate_object(&mut os, "migrate_test.txt", Some(4)).unwrap();
+    assert_eq!(new_manifest.redundancy, 4);
+
+    let updated_file = os.catalog.get_by_name("migrate_test.txt").unwrap();
+    assert_eq!(updated_file.manifest_history.len(), 1);
+    assert_eq!(updated_file.manifest_history[0].archive_id, initial_manifest.archive_id);
+    assert_eq!(updated_file.manifest_history[0].redundancy, 2);
+
+    // Verify roundtrip still works
+    let recovered = os.dna_read("migrate_test.txt").unwrap();
+    assert_eq!(recovered, original);
+}

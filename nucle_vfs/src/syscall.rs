@@ -17,7 +17,7 @@
 //! Full stack: VFS → Index → ECC → Codec → Synth
 
 use crate::pool::{DnaPool, PoolEntry};
-use crate::file::DnaFile;
+use crate::file::{DnaFile, StorageManifest, SimulationAssumptions};
 use crate::catalog::Catalog;
 use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
@@ -207,8 +207,21 @@ impl NucleOS {
             .unwrap_or_default()
             .as_secs();
 
-        // ── Generate file ID
-        let file_id = self.catalog.next_file_id();
+        // ── Generate file ID (archive ID)
+        // Hash of filename + content_hash + codec + profile + created_at
+        let mut id_hasher = Sha256::new();
+        id_hasher.update(filename.as_bytes());
+        id_hasher.update(&content_hash);
+        id_hasher.update(b"ternary-rotating-cipher");
+        let profile_str = if self.simulate_noise {
+            self.noise_config.synthesis_profile.name()
+        } else {
+            "pristine"
+        };
+        id_hasher.update(profile_str.as_bytes());
+        id_hasher.update(&created_at.to_be_bytes());
+        let id_hash = id_hasher.finalize();
+        let file_id = format!("archive-{}", &id_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>()[..16]);
 
         // ── Layer 5: VFS ── store in pool
         for (i, strand) in final_data.iter().enumerate() {
@@ -237,6 +250,28 @@ impl NucleOS {
             total_strands as f64 / final_data.len() as f64
         };
 
+        let simulation_assumptions = if self.simulate_noise {
+            Some(SimulationAssumptions {
+                seed: self.noise_config.seed,
+                coverage_depth: self.noise_config.coverage_depth,
+                synthesis_profile: self.noise_config.synthesis_profile.name().to_string(),
+                sequencing_profile: self.noise_config.sequencing_profile.name().to_string(),
+            })
+        } else {
+            None
+        };
+
+        let manifest = StorageManifest {
+            archive_id: file_id.clone(),
+            codec: "ternary-rotating-cipher".to_string(),
+            profile: profile_str.to_string(),
+            redundancy: parity_count,
+            primer_set: primer_pair.id.clone(),
+            index_strategy: "primer-addressing".to_string(),
+            simulation_assumptions,
+            created_at: created_at as i64,
+        };
+
         // ── Register in catalog
         let dna_file = DnaFile {
             file_id: file_id.clone(),
@@ -249,6 +284,8 @@ impl NucleOS {
             parity_strand_count: parity_count,
             codec: "ternary-rotating-cipher".into(),
             redundancy: redundancy_ratio,
+            manifest: Some(manifest),
+            manifest_history: Vec::new(),
         };
         self.catalog.register(dna_file);
 
@@ -410,6 +447,7 @@ impl NucleOS {
                 total_strands: f.total_strands(),
                 codec: f.codec.clone(),
                 redundancy: f.redundancy,
+                manifest: f.manifest.clone(),
             }).collect(),
         }
     }
@@ -496,6 +534,7 @@ pub struct FileInfo {
     pub total_strands: usize,
     pub codec: String,
     pub redundancy: f64,
+    pub manifest: Option<StorageManifest>,
 }
 
 /// Pool status report.
@@ -526,11 +565,20 @@ impl fmt::Display for PoolStatus {
         writeln!(f, "╟──────────────────────────────────────╢")?;
         writeln!(f, "║ Files:                               ║")?;
         for fi in &self.files {
-            writeln!(
-                f,
-                "║   {} ({} B, {}d+{}p strands, {:.1}×)",
-                fi.filename, fi.size, fi.data_strands, fi.parity_strands, fi.redundancy
-            )?;
+            if let Some(ref m) = fi.manifest {
+                let id_short = if m.archive_id.len() > 12 { &m.archive_id[..12] } else { &m.archive_id };
+                writeln!(
+                    f,
+                    "║   {} (ID: {}, {} B, {}d+{}p strands, {:.1}×)",
+                    fi.filename, id_short, fi.size, fi.data_strands, fi.parity_strands, fi.redundancy
+                )?;
+            } else {
+                writeln!(
+                    f,
+                    "║   {} ({} B, {}d+{}p strands, {:.1}×)",
+                    fi.filename, fi.size, fi.data_strands, fi.parity_strands, fi.redundancy
+                )?;
+            }
         }
         write!(f, "╚══════════════════════════════════════╝")
     }

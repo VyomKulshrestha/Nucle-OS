@@ -72,6 +72,15 @@ enum Commands {
         name: String,
     },
 
+    /// Migrate a file to new storage parameters (e.g. redundancy)
+    Migrate {
+        /// Filename to migrate
+        name: String,
+        /// New number of RS parity strands
+        #[arg(short, long)]
+        redundancy: Option<usize>,
+    },
+
     /// Search for files in the storage pool
     Search {
         /// Search query (supports name:, type:, size: filters)
@@ -162,6 +171,7 @@ fn main() {
         Commands::Decode { file, output, size } => cmd_decode(&file, output.as_deref(), size),
         Commands::Store { file, redundancy } => cmd_store(&file, redundancy, cli.json),
         Commands::Retrieve { name } => cmd_retrieve(&name, cli.json),
+        Commands::Migrate { name, redundancy } => cmd_migrate(&name, redundancy, cli.json),
         Commands::Search { query, top_k } => cmd_search(&query, top_k, cli.json),
         Commands::Pool => cmd_pool(cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
@@ -335,6 +345,27 @@ fn cmd_retrieve(name: &str, json: bool) {
         }
         Err(e) => {
             eprintln!("Retrieve failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_migrate(name: &str, redundancy: Option<usize>, json: bool) {
+    let mut os = NucleOS::new(100);
+    match nucle_vfs::migrate::migrate_object(&mut os, name, redundancy) {
+        Ok(manifest) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
+            } else {
+                println!("✓ Migrated file '{}' successfully.", name);
+                println!("New Archive ID: {}", manifest.archive_id);
+                println!("New Redundancy: {} parity strands", manifest.redundancy);
+                println!("Codec:          {}", manifest.codec);
+                println!("Profile:        {}", manifest.profile);
+            }
+        }
+        Err(e) => {
+            eprintln!("Migration failed: {}", e);
             std::process::exit(1);
         }
     }
@@ -519,6 +550,7 @@ fn cmd_help() {
     println!("  nucle decode <file> [-o output] -s <size> Decode DNA strands to binary");
     println!("  nucle store <file> [-r redundancy]        Store a file in DNA pool");
     println!("  nucle retrieve <name>                     Retrieve a file from DNA pool");
+    println!("  nucle migrate <name> [-r redundancy]      Migrate a file to new storage params");
     println!("  nucle search <query> [-k top_k]           Search for files");
     println!("  nucle pool                                Show pool status");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
