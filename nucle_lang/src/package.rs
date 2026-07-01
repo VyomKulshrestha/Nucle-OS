@@ -175,6 +175,61 @@ pub fn list_packages() -> Vec<PackageManifest> {
     get_registry().lock().unwrap().values().cloned().collect()
 }
 
+pub fn validate_manifest(manifest: &PackageManifest) -> Vec<String> {
+    let mut errors = Vec::new();
+    if manifest.name.is_empty() {
+        errors.push("Package name is empty".to_string());
+    }
+    if manifest.import_source.is_empty() {
+        errors.push("Package import source is empty".to_string());
+    }
+    if manifest.version.is_empty() {
+        errors.push("Package version is empty".to_string());
+    }
+    if manifest.exports.is_empty() {
+        errors.push("Package exports list is empty".to_string());
+    }
+    
+    // Temporarily register to check resolve_import
+    let original = {
+        let registry = get_registry().lock().unwrap();
+        registry.get(&manifest.import_source).cloned()
+    };
+    register_package(manifest.clone());
+
+    for (i, export) in manifest.exports.iter().enumerate() {
+        if export.name.is_empty() {
+            errors.push(format!("Export #{} name is empty", i));
+            continue;
+        }
+        if export.description.is_empty() {
+            errors.push(format!("Export '{}' description is empty", export.name));
+        }
+        if resolve_import(&manifest.import_source, &export.name).is_none() {
+            errors.push(format!("Export '{}' fails to resolve via resolve_import", export.name));
+        }
+        let kind_valid = match export.kind.as_str() {
+            "PoolSchema" | "pool_schema" | "Pipeline" | "pipeline" | "RecoveryProfile" | "recovery_profile" => true,
+            _ => false,
+        };
+        if !kind_valid {
+            errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile", export.name, export.kind));
+        }
+    }
+
+    // Restore registry
+    {
+        let mut registry = get_registry().lock().unwrap();
+        if let Some(orig) = original {
+            registry.insert(manifest.import_source.clone(), orig);
+        } else {
+            registry.remove(&manifest.import_source);
+        }
+    }
+
+    errors
+}
+
 pub fn presets_manifest() -> PackageManifest {
     serde_json::from_str(PRESETS_MANIFEST_JSON)
         .expect("@nuclescript/presets manifest must be valid JSON")
@@ -245,5 +300,23 @@ mod tests {
                 export.name
             );
         }
+        let errors = validate_manifest(&manifest);
+        assert!(errors.is_empty(), "Builtin manifest should have no validation errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn validate_manifest_catches_invalid_fields() {
+        let mut manifest = presets_manifest();
+        manifest.name = "".to_string();
+        manifest.version = "".to_string();
+        manifest.exports[0].description = "".to_string();
+        manifest.exports[0].kind = "invalid_kind".to_string();
+
+        let errors = validate_manifest(&manifest);
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| e.contains("name is empty")));
+        assert!(errors.iter().any(|e| e.contains("version is empty")));
+        assert!(errors.iter().any(|e| e.contains("description is empty")));
+        assert!(errors.iter().any(|e| e.contains("invalid kind")));
     }
 }

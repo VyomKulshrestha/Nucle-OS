@@ -72,12 +72,22 @@ registered package's manifest:
 nucle package lock
 ```
 
-Verify a package's manifest shape (non-empty name/exports, known export
-kinds) and, if `nucle.lock` exists, that its checksum still matches:
+Verify a package's manifest shape (non-empty name, version, and exports, with known export kinds) and, if `nucle.lock` exists, that its checksum still matches:
 
 ```bash
 nucle package verify "@nuclescript/presets"
 ```
+
+Inspect a package's details, version, repository, and exported items, returning manifest fields and exports:
+
+```bash
+nucle package inspect "@nuclescript/presets"
+```
+
+Manifest validation rules enforced:
+- **Core Fields**: Non-empty `name`, `version`, and `import` source.
+- **Export Entries**: Each export must specify a non-empty `name`, `description`, and a known `kind` (`PoolSchema`, `Pipeline`, or `RecoveryProfile`).
+- **Resolver Verification**: Each exported item must successfully resolve against the package's internal presets structure.
 
 Validate an import in a NucleScript program:
 

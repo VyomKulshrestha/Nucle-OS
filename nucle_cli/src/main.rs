@@ -221,6 +221,11 @@ enum PackageAction {
         /// Package name (e.g. @nuclescript/presets) or import source
         name: String,
     },
+    /// Inspect a package manifest and its exports
+    Inspect {
+        /// Package name (e.g. @nuclescript/presets) or import source
+        name: String,
+    },
     /// Write/update nucle.lock with checksums for every package in the registry
     Lock,
 }
@@ -879,31 +884,10 @@ fn cmd_packages() {
         println!("  - {} [{}] {}", export.name, export.kind, export.description);
     }
 }
-
 /// Structural validation shared by `nucle package verify` and `nucle doctor`.
 fn validate_package_manifest(manifest: &nucle_lang::package::PackageManifest) -> Vec<String> {
-    let mut errors = Vec::new();
-    if manifest.name.is_empty() {
-        errors.push("Package name is empty".to_string());
-    }
-    if manifest.import_source.is_empty() {
-        errors.push("Package import source is empty".to_string());
-    }
-    if manifest.exports.is_empty() {
-        errors.push("Package exports list is empty".to_string());
-    }
-    for (i, export) in manifest.exports.iter().enumerate() {
-        if export.name.is_empty() {
-            errors.push(format!("Export #{} name is empty", i));
-        }
-        if export.kind != "PoolSchema" && export.kind != "Pipeline" && export.kind != "RecoveryProfile" &&
-           export.kind != "pool_schema" && export.kind != "pipeline" && export.kind != "recovery_profile" {
-            errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile", export.name, export.kind));
-        }
-    }
-    errors
+    nucle_lang::package::validate_manifest(manifest)
 }
-
 fn load_lock_file() -> Option<nucle_lang::lockfile::LockFile> {
     let content = fs::read_to_string(nucle_lang::lockfile::LOCK_FILE_NAME).ok()?;
     match nucle_lang::lockfile::LockFile::from_json(&content) {
@@ -953,7 +937,7 @@ fn cmd_package(action: PackageAction, json: bool) {
                 std::process::exit(1);
             };
 
-            let mut errors = validate_package_manifest(&manifest);
+            let mut errors = nucle_lang::package::validate_manifest(&manifest);
 
             let checksum_status = match (load_lock_file(), nucle_lang::package::find_package_manifest_json(&name)) {
                 (Some(lock), Some(manifest_json)) => match lock.find(&manifest.import_source) {
@@ -994,6 +978,39 @@ fn cmd_package(action: PackageAction, json: bool) {
                         println!("  - {}", e);
                     }
                     std::process::exit(1);
+                }
+            }
+        }
+        PackageAction::Inspect { name } => {
+            let Some(manifest) = nucle_lang::package::find_package(&name) else {
+                eprintln!("Package '{}' not found in {}.", name, nucle_lang::package::REGISTRY_INDEX_PATH);
+                std::process::exit(1);
+            };
+            let errors = nucle_lang::package::validate_manifest(&manifest);
+            if json {
+                let json_val = serde_json::json!({
+                    "manifest": manifest,
+                    "validation_errors": errors,
+                    "valid": errors.is_empty()
+                });
+                println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+            } else {
+                if !errors.is_empty() {
+                    println!("⚠ Manifest validation errors found for '{}':", manifest.name);
+                    for e in &errors {
+                        println!("  - {}", e);
+                    }
+                    println!();
+                }
+                println!("Package:      {}", manifest.name);
+                println!("Version:      {}", manifest.version);
+                println!("Import:       {}", manifest.import_source);
+                println!("License:      {}", manifest.license);
+                println!("Description:  {}", manifest.description);
+                println!("Repository:   {}", manifest.repository.url);
+                println!("\nExports:");
+                for export in &manifest.exports {
+                    println!("  - {} [{}] {}", export.name, export.kind, export.description);
                 }
             }
         }
@@ -1158,7 +1175,7 @@ fn check_workspace_versions() -> DoctorCheck {
 
 fn check_package_manifest() -> DoctorCheck {
     let manifest = nucle_lang::package::presets_manifest();
-    let errors = validate_package_manifest(&manifest);
+    let errors = nucle_lang::package::validate_manifest(&manifest);
     DoctorCheck {
         name: "Presets package manifest",
         ok: errors.is_empty(),
