@@ -69,6 +69,8 @@ The language layer now exposes ecosystem-facing integration points:
   requests from effectful MIR so a hardware bridge can submit them without
   changing NucleScript source syntax.
 
+> See [docs/grammar.md](grammar.md) for the full formal syntax reference.
+
 ## Biological Constraints
 
 All encoding must satisfy hard constraints imposed by DNA chemistry:
