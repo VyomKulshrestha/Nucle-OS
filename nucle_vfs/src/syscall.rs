@@ -22,6 +22,7 @@ use crate::catalog::Catalog;
 use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
+use nucle_ecc::pipeline::RecoveryManifest;
 use nucle_index::primer::PrimerLibrary;
 use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
@@ -61,6 +62,8 @@ pub struct NucleOS {
     pub noise_config: SimulationConfig,
     /// Number of primer pairs used so far.
     primers_used: usize,
+    /// Recovery manifest from the last dna_read operation.
+    pub last_recovery: std::sync::Mutex<Option<RecoveryManifest>>,
 }
 
 impl NucleOS {
@@ -79,6 +82,7 @@ impl NucleOS {
             simulate_noise: false,
             noise_config: SimulationConfig::pristine(),
             primers_used: 0,
+            last_recovery: std::sync::Mutex::new(None),
         }
     }
 
@@ -404,6 +408,7 @@ impl NucleOS {
         }
 
         // ── Layer 1: Codec ── decode DNA → binary
+        let recovered_strands_count = decoded_strands.len();
         let collection = StrandCollection::from_strands(decoded_strands, dna_file.size);
         let codec = TernaryCodec::new(TernaryConfig::no_overlap());
         let decoded = codec.decode(&collection)
@@ -415,7 +420,32 @@ impl NucleOS {
         let hash = hasher.finalize();
         let recovered_hash = hash[..8].to_vec();
 
-        if recovered_hash != dna_file.content_hash {
+        let ecc_success = recovered_hash == dna_file.content_hash;
+        let observed_error = if self.simulate_noise {
+            let rates = self.noise_config.sequencing_profile.error_rates();
+            rates.substitution + rates.insertion + rates.deletion
+        } else {
+            0.0
+        };
+        let seq_profile = if self.simulate_noise {
+            self.noise_config.sequencing_profile.name().to_string()
+        } else {
+            "pristine".to_string()
+        };
+
+        let recovery_manifest = RecoveryManifest {
+            observed_error_rate: observed_error,
+            consensus_method: "majority-vote".to_string(),
+            sequencing_profile: seq_profile,
+            recovered_strands: recovered_strands_count,
+            ecc_success,
+        };
+
+        if let Ok(mut guard) = self.last_recovery.lock() {
+            *guard = Some(recovery_manifest);
+        }
+
+        if !ecc_success {
             return Err(format!(
                 "content hash mismatch: data may be corrupted (expected {:?}, got {:?})",
                 &dna_file.content_hash, &recovered_hash
@@ -431,6 +461,11 @@ impl NucleOS {
 
     /// Get comprehensive pool statistics.
     pub fn dna_stat(&self) -> PoolStatus {
+        let last_rec = if let Ok(guard) = self.last_recovery.lock() {
+            guard.clone()
+        } else {
+            None
+        };
         PoolStatus {
             file_count: self.catalog.len(),
             total_strands: self.pool.total_strands(),
@@ -449,6 +484,7 @@ impl NucleOS {
                 redundancy: f.redundancy,
                 manifest: f.manifest.clone(),
             }).collect(),
+            last_recovery: last_rec,
         }
     }
 
@@ -548,6 +584,7 @@ pub struct PoolStatus {
     pub avg_strand_length: f64,
     pub redundancy: f64,
     pub files: Vec<FileInfo>,
+    pub last_recovery: Option<RecoveryManifest>,
 }
 
 impl fmt::Display for PoolStatus {
@@ -580,7 +617,16 @@ impl fmt::Display for PoolStatus {
                 )?;
             }
         }
-        write!(f, "╚══════════════════════════════════════╝")
+        writeln!(f, "╚══════════════════════════════════════╝")?;
+        if let Some(ref r) = self.last_recovery {
+            writeln!(f, "\n--- Last Recovery Manifest ---")?;
+            writeln!(f, "Observed Error Rate: {:.4}%", r.observed_error_rate * 100.0)?;
+            writeln!(f, "Consensus Method:    {}", r.consensus_method)?;
+            writeln!(f, "Sequencing Profile:  {}", r.sequencing_profile)?;
+            writeln!(f, "Recovered Strands:   {}", r.recovered_strands)?;
+            writeln!(f, "ECC Success:         {}", r.ecc_success)?;
+        }
+        Ok(())
     }
 }
 

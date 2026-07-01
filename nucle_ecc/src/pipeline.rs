@@ -12,6 +12,7 @@
 use crate::reed_solomon::{ReedSolomon, RsConfig, RsError};
 use crate::consensus::{self, ConsensusResult};
 use nucle_codec::base::DnaStrand;
+use serde::Serialize;
 use std::fmt;
 
 /// Configuration for the repair pipeline.
@@ -39,8 +40,18 @@ impl Default for PipelineConfig {
     }
 }
 
+/// A recovery manifest tracking ECC and consensus details.
+#[derive(Debug, Clone, Serialize)]
+pub struct RecoveryManifest {
+    pub observed_error_rate: f64,
+    pub consensus_method: String,
+    pub sequencing_profile: String,
+    pub recovered_strands: usize,
+    pub ecc_success: bool,
+}
+
 /// Statistics from running the repair pipeline.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PipelineStats {
     /// Number of input read groups (or strands).
     pub input_count: usize,

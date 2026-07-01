@@ -191,3 +191,26 @@ fn test_migrate_preserves_history() {
     let recovered = os.dna_read("migrate_test.txt").unwrap();
     assert_eq!(recovered, original);
 }
+
+/// Recovery manifest test: verify that reading a file populates the last recovery manifest correctly.
+#[test]
+fn test_recovery_manifest_generation() {
+    let mut os = NucleOS::new(10);
+    let original = b"Recovery manifest generation test.";
+
+    os.dna_write("recovery_test.txt", original, 2).unwrap();
+    
+    // Recovery manifest should be None before read
+    assert!(os.last_recovery.lock().unwrap().is_none());
+
+    // Read file
+    let recovered = os.dna_read("recovery_test.txt").unwrap();
+    assert_eq!(recovered, original);
+
+    // Recovery manifest should be Some after read
+    let manifest_opt = os.last_recovery.lock().unwrap().clone();
+    assert!(manifest_opt.is_some());
+    let manifest = manifest_opt.unwrap();
+    assert_eq!(manifest.consensus_method, "majority-vote");
+    assert!(manifest.ecc_success);
+}

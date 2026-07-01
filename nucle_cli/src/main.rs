@@ -335,6 +335,7 @@ fn cmd_retrieve(name: &str, json: bool) {
     let os = NucleOS::new(100);
     match os.dna_read(name) {
         Ok(data) => {
+            let manifest_opt = os.last_recovery.lock().unwrap().clone();
             if json {
                 let (is_text, content) = match String::from_utf8(data.clone()) {
                     Ok(text) => (true, text),
@@ -344,7 +345,8 @@ fn cmd_retrieve(name: &str, json: bool) {
                     "filename": name,
                     "size": data.len(),
                     "is_text": is_text,
-                    "content": content
+                    "content": content,
+                    "recovery_manifest": manifest_opt
                 });
                 println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
             } else {
@@ -353,6 +355,14 @@ fn cmd_retrieve(name: &str, json: bool) {
                     Err(_) => {
                         println!("Binary data ({} bytes)", data.len());
                     }
+                }
+                if let Some(manifest) = manifest_opt {
+                    eprintln!("\n--- Recovery Manifest ---");
+                    eprintln!("Observed Error Rate: {:.4}%", manifest.observed_error_rate * 100.0);
+                    eprintln!("Consensus Method:    {}", manifest.consensus_method);
+                    eprintln!("Sequencing Profile:  {}", manifest.sequencing_profile);
+                    eprintln!("Recovered Strands:   {}", manifest.recovered_strands);
+                    eprintln!("ECC Success:         {}", manifest.ecc_success);
                 }
             }
         }
