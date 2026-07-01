@@ -75,12 +75,14 @@ The language layer now exposes ecosystem-facing integration points:
 
 ## NucleScript Playground
 
-`nucle_playground` is a thin, optional HTTP server built using `tiny_http`. It provides an interactive web-based playground interface to write, analyze, and test NucleScript code.
+`nucle_playground` is a thin, optional HTTP server built using `tiny_http`. It provides an interactive web-based playground with three tabs, each backed by the real engine rather than reimplemented or mocked logic.
 
-- **Endpoint**: Exposes `POST /analyze` returning `PlaygroundReport` as JSON containing compiler diagnostics, simulator steps, and optimizer notes.
-- **Frontend**: Serves a modern, glassmorphic dark-themed single-page app containing a code editor, real-time status indicators, and collapsible output cards.
+- **Write & Run** (`POST /analyze`): returns `PlaygroundReport` as JSON containing compiler diagnostics, simulator steps, and optimizer notes — the same `analyze_source` API `nucle check --json` uses.
+- **Benchmark Explorer** (`POST /benchmark`): accepts `{ codec, profile, redundancy, data }` and returns density, GC distribution, homopolymer violations, and an estimated cost — all from `nucle_codec::benchmark` — plus a `recovery_probability` computed by actually running Reed-Solomon parity + `NoiseEngine` simulation + decode across 20 trials. The frontend debounces control changes (codec/profile/redundancy sliders) and re-fetches live.
+- **Pipeline Visualizer** (`POST /pipeline-demo`): encodes real input via `TernaryCodec`, adds RS parity, runs it through `NoiseEngine`, and returns per-strand before/after sequences plus drop/corruption flags so the frontend can animate encode → noise → recovery. Recovery is attempted for real (RS-decode using surviving strands as input, then codec-decode) — a failure shown in the UI is a genuine failure of the current pipeline at that redundancy/profile, not a scripted outcome.
+- **Frontend**: A single glassmorphic dark-themed page with tab navigation between the three modes; plain HTML/JS, no build tooling.
 - **Execution**: Self-contained and synchronous, compiling in seconds with zero heavy async runtimes.
-- **Published standalone**: A self-contained snapshot of this workspace (verified to build independently from a fresh clone) is published at [github.com/Nuclescript/playground](https://github.com/Nuclescript/playground), so the playground can be run without cloning the full NucleOS source tree.
+- **Published standalone**: A self-contained snapshot of this workspace (verified to build independently from a fresh clone) is published at [github.com/Nuclescript/playground](https://github.com/Nuclescript/playground). For zero setup, prebuilt Linux/Windows/macOS binaries (frontend embedded via `include_str!`, no external files needed) are published on that repo's [Releases page](https://github.com/Nuclescript/playground/releases) via a tag-triggered GitHub Actions workflow — free to run and host, since public-repo Actions minutes and Release storage have no cost.
 
 ## Biological Constraints
 

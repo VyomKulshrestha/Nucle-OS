@@ -497,7 +497,10 @@ dependencies = [
 name = "nucle_playground"
 version = "0.1.0"
 dependencies = [
+ "nucle_codec",
+ "nucle_ecc",
  "nucle_lang",
+ "nucle_synth",
  "serde",
  "serde_json",
  "tiny_http",

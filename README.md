@@ -418,10 +418,20 @@ $ nucle explain docs/examples/critical_redundancy_warning.nsl
 
 ### Playground
 
-`nucle_playground` is a self-contained `tiny_http` server exposing
-`POST /analyze`, wired directly to the same `analyze_source` API `nucle
-check --json` uses internally, plus a plain HTML/JS frontend (no build
-tooling) for pasting and analyzing `.nsl` programs interactively:
+`nucle_playground` is a self-contained `tiny_http` server with three tabs,
+each backed by the real engine (no reimplemented math, no mocked data):
+
+- **Write & Run** — `POST /analyze`, the same `analyze_source` API `nucle
+  check --json` uses internally. Paste a `.nsl` program, get diagnostics,
+  simulation steps, and optimizer notes.
+- **Benchmark Explorer** — `POST /benchmark`. Pick a codec/profile, drag the
+  redundancy slider, and density/GC%/cost/recovery-probability update live —
+  computed by `nucle_codec::benchmark` plus a real Reed-Solomon-aware
+  Monte-Carlo recovery estimate, not a lookup table.
+- **Pipeline Visualizer** — `POST /pipeline-demo`. Encodes real input through
+  the actual codec/ECC/noise engine and animates each strand through
+  encode → synthesize/sequence (noise) → recover, including honest failures
+  when redundancy/profile can't reconstruct the data.
 
 ```bash
 cargo run -p nucle_playground
@@ -432,7 +442,11 @@ It's also published standalone at
 [**Nuclescript/playground**](https://github.com/Nuclescript/playground) — a
 self-contained snapshot of this workspace (verified to build independently
 from a fresh clone) for anyone who wants to run the playground without
-cloning this repo directly.
+cloning this repo directly. For zero setup at all (no `cargo`, no cloning),
+grab a prebuilt binary from its
+[**Releases**](https://github.com/Nuclescript/playground/releases) —
+Linux/Windows/macOS builds with the frontend embedded, so downloading and
+running the single file is enough.
 
 ---
 

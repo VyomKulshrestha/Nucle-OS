@@ -6,6 +6,9 @@ license.workspace = true
 
 [dependencies]
 nucle_lang = { path = "../nucle_lang" }
+nucle_codec = { path = "../nucle_codec" }
+nucle_synth = { path = "../nucle_synth" }
+nucle_ecc = { path = "../nucle_ecc" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tiny_http = "0.12"
