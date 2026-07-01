@@ -89,7 +89,7 @@ The execution boundary between compiled NucleScript plans and real lab hardware.
 # Build the entire workspace
 cargo build --workspace
 
-# Run all tests (250+ tests)
+# Run all tests (270+ tests)
 cargo test --workspace
 
 # Run the CLI
@@ -143,33 +143,35 @@ and a real Monte-Carlo recovery probability and cost estimate — not
 placeholders:
 
 ```
-$ nucle benchmark -p illumina -r 4
+$ nucle benchmark --profile pristine -r 4
 
 ╔══════════════════════════════════════════════════════════════════════════════════════════════════╗
 ║                              NucleOS Full-Pipeline Benchmark                                      ║
 ╠══════════════════════════════════════════════════════════════════════════════════════════════════╣
 ║ File               │ Size(B) │ Strands │ Error Rate │ Recover │ Cost(USD) │    GC% │  HpolV ║
 ╟────────────────────┼─────────┼─────────┼────────────┼─────────┼───────────┼────────┼────────╢
+║ small_text.txt     │      96 │       8 │      0.00% │    PASS │ $  0.0062 │  41.7% │      0 ║
+║ archive.bin        │     327 │      18 │      0.00% │    PASS │ $  0.0216 │  38.1% │      0 ║
+║ sample.fasta       │     176 │      12 │      0.00% │    PASS │ $  0.0123 │  34.7% │      0 ║
+║ image.png          │     294 │      16 │      0.00% │    PASS │ $  0.0185 │  39.0% │      0 ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+Under a noisy channel like Illumina, the same fixtures currently fail
+recovery — a known, documented limitation, not a bug in the benchmark: the
+ternary decoder is strict and rejects substitution-corrupted strands rather
+than soft-decoding them (see [docs/architecture.md](docs/architecture.md#current-status)
+for the fix path — consensus voting across coverage copies, already
+implemented in `nucle_ecc::consensus` but not yet wired into this decode path):
+
+```
+$ nucle benchmark -p illumina -r 4
+
 ║ small_text.txt     │      96 │      78 │      0.36% │    FAIL │ $  0.0616 │  41.7% │      0 ║
 ║ archive.bin        │     327 │     176 │      0.36% │    FAIL │ $  0.2156 │  38.1% │      0 ║
 ║ sample.fasta       │     176 │     118 │      0.36% │    FAIL │ $  0.1232 │  34.7% │      0 ║
 ║ image.png          │     294 │     156 │      0.35% │    FAIL │ $  0.1848 │  39.0% │      0 ║
-╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
 ```
-
-> **Why FAIL under Illumina?** This is a known, documented limitation, not a
-> bug in the benchmark: the ternary decoder is strict and rejects
-> substitution-corrupted strands rather than soft-decoding them — see
-> [docs/architecture.md](docs/architecture.md#current-status). Switch to a
-> pristine channel to see the same fixtures recover exactly:
->
-> ```
-> $ nucle benchmark --profile pristine -r 4
-> ║ small_text.txt     │      96 │       8 │      0.00% │    PASS │ $  0.0062 │  41.7% │      0 ║
-> ║ archive.bin        │     327 │      18 │      0.00% │    PASS │ $  0.0216 │  38.1% │      0 ║
-> ║ sample.fasta       │     176 │      12 │      0.00% │    PASS │ $  0.0123 │  34.7% │      0 ║
-> ║ image.png          │     294 │      16 │      0.00% │    PASS │ $  0.0185 │  39.0% │      0 ║
-> ```
 
 ### End-to-End Roundtrip: Encode → Noise → Recover
 
@@ -464,8 +466,8 @@ nucle agent "pool status"
 | `nucle_vfs` | 48 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
 | `nucle_lang` | 34 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects, MIR optimizer, simulation backend, table-driven package registry, lock file checksums, hardware request collection, VFS lowering |
-| `nucle_hardware` | 1 | Mock provider batch execution |
-| **Total** | **253 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
+| **Total** | **273 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

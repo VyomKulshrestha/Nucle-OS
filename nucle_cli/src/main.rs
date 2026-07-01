@@ -1014,20 +1014,16 @@ fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
             }
 
             let requests = nucle_lang::hardware::collect_hardware_requests(&program);
-            let effectful_count = requests.iter().filter(|r| r.effect != nucle_lang::Effect::Pure).count();
-            if effectful_count > 0 && !confirm {
-                eprintln!(
-                    "Refusing to export {} cost-bearing/destructive request(s) without --confirm.",
-                    effectful_count
-                );
-                std::process::exit(1);
-            }
+            let effectful_count = nucle_hardware::count_effectful(&requests);
 
+            // The confirmation gate lives in nucle_hardware::confirm, not
+            // here, so every consumer of Provider gets the same safety
+            // check — not just this CLI command.
             let (used_provider, result): (&str, Result<String, String>) = match provider.as_str() {
-                "mock" => ("mock", nucle_hardware::Provider::execute_batch(&nucle_hardware::MockProvider, &requests)),
+                "mock" => ("mock", nucle_hardware::submit_with_confirmation(&nucle_hardware::MockProvider, &requests, confirm)),
                 "file-export" => {
                     let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&output));
-                    ("file-export", nucle_hardware::Provider::execute_batch(&p, &requests))
+                    ("file-export", nucle_hardware::submit_with_confirmation(&p, &requests, confirm))
                 }
                 other => {
                     eprintln!(
@@ -1035,7 +1031,7 @@ fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
                         other
                     );
                     let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&output));
-                    ("file-export", nucle_hardware::Provider::execute_batch(&p, &requests))
+                    ("file-export", nucle_hardware::submit_with_confirmation(&p, &requests, confirm))
                 }
             };
 
