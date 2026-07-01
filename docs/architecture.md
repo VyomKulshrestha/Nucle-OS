@@ -15,6 +15,8 @@ nucle_cli
     │                               ├── nucle_codec
     │                               └── nucle_synth
     │                                       └── nucle_codec
+    ├── nucle_hardware
+    │       └── nucle_lang (below)
     └── nucle_lang
             ├── nucle_vfs
             │       └── nucle_index

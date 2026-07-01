@@ -12,6 +12,8 @@ The same way software-defined networking abstracts physical switches, Nucle-OS a
 ┌─────────────────────────────────────────┐
 │           Agent Interface Layer          │  ← AI agent for semantic file ops
 ├─────────────────────────────────────────┤
+│         Hardware Bridge / Provider       │  ← typed requests → mock/file-export/vendor
+├─────────────────────────────────────────┤
 │              VFS / File API              │  ← read(), write(), query() abstractions
 ├─────────────────────────────────────────┤
 │          Retrieval & Index Layer         │  ← vector index, CRISPR-sim random access
@@ -75,6 +77,10 @@ DNA storage needs a proper ABI. This layer provides it.
 
 A ReAct agent that takes natural-language file operations, plans across the VFS layer, and executes them. "Store last year's medical archive with 3x redundancy" becomes a full pipeline down to the encoding layer.
 
+### Layer 7 — Hardware Bridge (`nucle_hardware`)
+
+The execution boundary between compiled NucleScript plans and real lab hardware. `nucle_lang::hardware` only ever collects typed `HardwareRequest`s (Synthesis, Sequencing, Destructive) from an effect-checked program; `nucle_hardware::Provider` is the one trait that actually submits them — today via `MockProvider` (dry run) or `FileExportProvider` (writes a JSON batch for lab submission). No real vendor adapter (Twist, IDT, Illumina, Oxford Nanopore) exists yet by design — see [docs/architecture.md](docs/architecture.md#hardware-bridge-and-provider-boundaries).
+
 ---
 
 ## Building
@@ -83,7 +89,7 @@ A ReAct agent that takes natural-language file operations, plans across the VFS 
 # Build the entire workspace
 cargo build --workspace
 
-# Run all tests (190+ tests)
+# Run all tests (250+ tests)
 cargo test --workspace
 
 # Run the CLI
@@ -127,6 +133,43 @@ $ nucle bench
 > **Why ✗ for fountain?** The raw fountain codec uses a 2-bit mapping without constraint
 > awareness. With screening enabled (the default), invalid strands are rejected and
 > regenerated — the rateless property guarantees sufficient valid output.
+
+### Full-Pipeline Benchmark
+
+`nucle bench` benchmarks codecs in isolation; `nucle benchmark` runs the real
+write → simulate-noise → read pipeline against the standard fixtures in
+`docs/examples/fixtures/`, reporting GC distribution, homopolymer violations,
+and a real Monte-Carlo recovery probability and cost estimate — not
+placeholders:
+
+```
+$ nucle benchmark -p illumina -r 4
+
+╔══════════════════════════════════════════════════════════════════════════════════════════════════╗
+║                              NucleOS Full-Pipeline Benchmark                                      ║
+╠══════════════════════════════════════════════════════════════════════════════════════════════════╣
+║ File               │ Size(B) │ Strands │ Error Rate │ Recover │ Cost(USD) │    GC% │  HpolV ║
+╟────────────────────┼─────────┼─────────┼────────────┼─────────┼───────────┼────────┼────────╢
+║ small_text.txt     │      96 │      78 │      0.36% │    FAIL │ $  0.0616 │  41.7% │      0 ║
+║ archive.bin        │     327 │     176 │      0.36% │    FAIL │ $  0.2156 │  38.1% │      0 ║
+║ sample.fasta       │     176 │     118 │      0.36% │    FAIL │ $  0.1232 │  34.7% │      0 ║
+║ image.png          │     294 │     156 │      0.35% │    FAIL │ $  0.1848 │  39.0% │      0 ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+> **Why FAIL under Illumina?** This is a known, documented limitation, not a
+> bug in the benchmark: the ternary decoder is strict and rejects
+> substitution-corrupted strands rather than soft-decoding them — see
+> [docs/architecture.md](docs/architecture.md#current-status). Switch to a
+> pristine channel to see the same fixtures recover exactly:
+>
+> ```
+> $ nucle benchmark --profile pristine -r 4
+> ║ small_text.txt     │      96 │       8 │      0.00% │    PASS │ $  0.0062 │  41.7% │      0 ║
+> ║ archive.bin        │     327 │      18 │      0.00% │    PASS │ $  0.0216 │  38.1% │      0 ║
+> ║ sample.fasta       │     176 │      12 │      0.00% │    PASS │ $  0.0123 │  34.7% │      0 ║
+> ║ image.png          │     294 │      16 │      0.00% │    PASS │ $  0.0185 │  39.0% │      0 ║
+> ```
 
 ### End-to-End Roundtrip: Encode → Noise → Recover
 
@@ -301,10 +344,22 @@ import {
 The first NucleScript package is `@nuclescript/presets` version `0.1.0`,
 imported in source as `nuclescript/presets`. Its manifest,
 source, and changelog live under `packages/nuclescript-presets/`, with a
-registry index at `packages/registry.json`. List packages with:
+registry index at `packages/registry.json` — the CLI resolves packages by
+reading that file directly, so adding an entry there is what makes a new
+package discoverable. List or inspect bundled packages with:
 
 ```bash
-nucle packages
+nucle packages                          # quick listing of the bundled presets package
+nucle package list                      # full registry.json index
+```
+
+Install and verify packages by name (resolved against `packages/registry.json`,
+not a filesystem path):
+
+```bash
+nucle package install "@nuclescript/presets"
+nucle package lock                      # write/update nucle.lock with manifest checksums
+nucle package verify "@nuclescript/presets"   # checks manifest shape + checksum against nucle.lock
 ```
 
 Current NucleScript result summary:
@@ -326,6 +381,9 @@ only `1x` redundancy.
 
 ## CLI Usage
 
+Every command also accepts a global `--json` flag (e.g. `nucle --json pool`)
+for machine-readable output.
+
 ```bash
 # Encode a file to DNA strands
 nucle encode myfile.txt -o myfile.dna
@@ -339,6 +397,10 @@ nucle store myfile.txt -r 4
 # Retrieve a stored file
 nucle retrieve myfile.txt
 
+# Migrate a stored file to new parameters (redundancy and/or codec)
+nucle migrate myfile.txt -r 6
+nucle migrate myfile.txt --codec ternary-rotating-cipher
+
 # Search for files
 nucle search "name:readme type:txt"
 
@@ -348,8 +410,11 @@ nucle pool
 # Simulate synthesis noise (Illumina profile)
 nucle simulate myfile.txt -p illumina
 
-# Benchmark all codecs
-nucle bench
+# Benchmark all codecs in isolation (density, GC, homopolymers, recovery probability, cost)
+nucle bench --profile nanopore
+
+# Full-pipeline benchmark against standard fixtures (write → simulate → read)
+nucle benchmark -p illumina -r 4
 
 # Stress test: sweep all codecs across data distributions
 nucle stress -s 256
@@ -363,8 +428,22 @@ nucle run docs/examples/store.nsl
 # Show an optimized no-hardware NucleScript plan
 nucle plan docs/examples/probabilistic_recovery.nsl
 
-# List released NucleScript packages
+# List released NucleScript packages / inspect the full registry
 nucle packages
+nucle package list
+
+# Install, lock, and verify packages by name against packages/registry.json
+nucle package install "@nuclescript/presets"
+nucle package lock
+nucle package verify "@nuclescript/presets"
+
+# Export a compiled program's synthesis/sequencing/destructive requests.
+# Requires --confirm whenever the batch is cost-bearing or destructive.
+nucle hardware export docs/examples/effect_confirmations.nsl --confirm -o batch.json
+nucle hardware export docs/examples/effect_confirmations.nsl --confirm --provider mock
+
+# Environment and integrity diagnostics
+nucle doctor
 
 # Natural language agent
 nucle agent "store readme.txt with 3x redundancy"
@@ -378,14 +457,15 @@ nucle agent "pool status"
 
 | Crate | Tests | What's Tested |
 |-------|------:|---------------|
-| `nucle_codec` | 58 | Nucleotide types, constraints, ternary codec, fountain codec, yin-yang codec, benchmarks |
-| `nucle_synth` | 10 | Error models, noise engine, hardware profiles |
-| `nucle_ecc` | 23 | Reed-Solomon, fountain erasure, consensus, repair pipeline |
+| `nucle_codec` | 58 (+3 doctests) | Nucleotide types, constraints, ternary codec, fountain codec, yin-yang codec, benchmarks incl. GC distribution and homopolymer violation counts |
+| `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
+| `nucle_ecc` | 25 | Reed-Solomon, fountain erasure, consensus, repair pipeline, per-position observed error distribution |
 | `nucle_index` | 28 | Primers, CRISPR sim, vector index, semantic search |
-| `nucle_vfs` | 31 | Pool, file, catalog, syscall API (full stack roundtrip) |
+| `nucle_vfs` | 48 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 27 | NucleScript lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects, MIR optimizer, simulation backend, preset imports, package manifest validation, playground API, hardware bridge requests, VFS lowering |
-| **Total** | **217+** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| `nucle_lang` | 34 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects, MIR optimizer, simulation backend, table-driven package registry, lock file checksums, hardware request collection, VFS lowering |
+| `nucle_hardware` | 1 | Mock provider batch execution |
+| **Total** | **253 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
@@ -396,12 +476,13 @@ nucle_codec/     — Encoding/Decoding engine (binary ↔ ATCG)
 nucle_synth/     — Synthesis simulator (hardware mock)
 nucle_ecc/       — Error correction (Reed-Solomon, fountain, consensus)
 nucle_index/     — Retrieval & indexing (CRISPR-sim, vector index)
-nucle_vfs/       — Virtual file system (syscall-style API)
+nucle_vfs/       — Virtual file system (syscall-style API, storage/recovery manifests, migration)
 nucle_agent/     — Agent interface (ReAct planner)
-nucle_lang/      — NucleScript compiler, MIR optimizer, ecosystem APIs, simulation backend, and VFS backend
+nucle_lang/      — NucleScript compiler, MIR optimizer, package registry, lock files, ecosystem APIs, simulation backend, and VFS backend
+nucle_hardware/  — Hardware provider adapters (Provider trait, MockProvider, FileExportProvider)
 nucle_cli/       — Command-line interface
-docs/            — Architecture notes & paper references
-packages/        — NucleScript package registry seed and package releases
+docs/            — Architecture notes, paper references, and runnable examples/fixtures
+packages/        — NucleScript package registry (packages/registry.json) and package releases
 ```
 
 ---

@@ -40,19 +40,43 @@ Exports:
 Inspect bundled packages:
 
 ```bash
-nucle packages
+nucle packages          # quick listing of the bundled presets package
+nucle package list      # full packages/registry.json index
 ```
 
-Install a package from a local `package.json` manifest:
+`packages/registry.json` is the actual source of truth the CLI resolves
+against — `nucle_lang::package::get_registry()` parses it at startup and
+looks up each listed entry's manifest by the path recorded there. Adding a
+package means adding both its manifest under `packages/<name>/package.json`
+*and* an entry in `packages/registry.json` pointing at it; a manifest that
+exists on disk but isn't listed in the registry is invisible to the CLI.
+
+Install a package **by name** (resolved against the registry, not a
+filesystem path):
 
 ```bash
-nucle package install packages/nuclescript-presets/package.json
+nucle package install "@nuclescript/presets"
 ```
 
-Verify a package manifest's integrity and exports:
+An unregistered name fails clearly instead of a generic parse error:
 
 ```bash
-nucle package verify packages/nuclescript-presets/package.json
+$ nucle package install "@nuclescript/does-not-exist"
+Package '@nuclescript/does-not-exist' not found in packages/registry.json.
+```
+
+Write or refresh `nucle.lock`, which records a SHA-256 checksum of every
+registered package's manifest:
+
+```bash
+nucle package lock
+```
+
+Verify a package's manifest shape (non-empty name/exports, known export
+kinds) and, if `nucle.lock` exists, that its checksum still matches:
+
+```bash
+nucle package verify "@nuclescript/presets"
 ```
 
 Validate an import in a NucleScript program:

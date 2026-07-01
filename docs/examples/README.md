@@ -29,3 +29,19 @@ nucle run docs/examples/store.nsl
 Use `nucle plan <source.nsl>` for examples that demonstrate compile-time
 analysis, probabilistic typing, effects, optimizer notes, or the simulation
 backend without touching hardware or executing VFS mutations.
+
+## `fixtures/`
+
+Standard benchmark/regression workloads, exercised by `nucle benchmark`,
+`nucle doctor`, and `nucle_vfs`'s regression test suite: `small_text.txt`,
+`archive.bin`, `sample.fasta`, `image.png`, and `project_tree/` (a small,
+metadata-heavy directory tree of multiple files with varied names/sizes,
+used to exercise multi-file storage as a single unit).
+
+## `failures/`
+
+Runnable programs that demonstrate real compiler diagnostics — see
+[failures/README.md](failures/README.md) for the exact expected output of
+each. These intentionally fail *type checking* (or emit warnings) by design,
+but must still be syntactically valid NucleScript; `nucle doctor` checks
+that invariant separately from the top-level examples above.
