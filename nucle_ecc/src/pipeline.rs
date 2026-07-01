@@ -12,7 +12,7 @@
 use crate::reed_solomon::{ReedSolomon, RsConfig, RsError};
 use crate::consensus::{self, ConsensusResult};
 use nucle_codec::base::DnaStrand;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Configuration for the repair pipeline.
@@ -41,13 +41,46 @@ impl Default for PipelineConfig {
 }
 
 /// A recovery manifest tracking ECC and consensus details.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecoveryManifest {
     pub observed_error_rate: f64,
     pub consensus_method: String,
     pub sequencing_profile: String,
     pub recovered_strands: usize,
     pub ecc_success: bool,
+    /// Per-strand-position observed mismatch rate: (strand index, fraction
+    /// of bases that differed between the pre-correction and post-correction
+    /// strand at that position). Empty when there was nothing to compare
+    /// (e.g. no parity strands were involved in recovery).
+    pub observed_error_distribution: Vec<(usize, f64)>,
+}
+
+/// Compare strands before and after ECC correction to derive a real,
+/// per-position observed error distribution — not a synthetic estimate.
+/// Positions present in both slices are compared base-by-base; a position
+/// only present in one slice (an erasure) is skipped, since there is no
+/// "before" state to diff against.
+pub fn compute_error_distribution(before: &[DnaStrand], after: &[DnaStrand]) -> Vec<(usize, f64)> {
+    before
+        .iter()
+        .zip(after.iter())
+        .enumerate()
+        .filter_map(|(i, (b, a))| {
+            let b_bases = b.bases();
+            let a_bases = a.bases();
+            let len = b_bases.len().min(a_bases.len());
+            if len == 0 {
+                return None;
+            }
+            let mismatches = b_bases
+                .iter()
+                .take(len)
+                .zip(a_bases.iter().take(len))
+                .filter(|(bb, ab)| bb != ab)
+                .count();
+            Some((i, mismatches as f64 / len as f64))
+        })
+        .collect()
 }
 
 /// Statistics from running the repair pipeline.
@@ -225,6 +258,25 @@ impl RepairPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_error_distribution_detects_mismatch() {
+        let before = vec![DnaStrand::from_str("ATCG").unwrap(), DnaStrand::from_str("GGGG").unwrap()];
+        let after = vec![DnaStrand::from_str("ATCC").unwrap(), DnaStrand::from_str("GGGG").unwrap()];
+        let dist = compute_error_distribution(&before, &after);
+        assert_eq!(dist.len(), 2);
+        assert_eq!(dist[0].0, 0);
+        assert!((dist[0].1 - 0.25).abs() < 1e-9); // 1 of 4 bases differs
+        assert_eq!(dist[1].0, 1);
+        assert_eq!(dist[1].1, 0.0); // identical strand
+    }
+
+    #[test]
+    fn test_error_distribution_empty_on_no_overlap() {
+        let before: Vec<DnaStrand> = vec![];
+        let after = vec![DnaStrand::from_str("ATCG").unwrap()];
+        assert!(compute_error_distribution(&before, &after).is_empty());
+    }
 
     #[test]
     fn test_consensus_pipeline() {

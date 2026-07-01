@@ -4,6 +4,7 @@
 //! carrying all metadata needed for retrieval, verification,
 //! and management.
 
+use nucle_ecc::pipeline::RecoveryManifest;
 use serde::{Serialize, Deserialize};
 use std::fmt;
 
@@ -25,6 +26,11 @@ pub struct StorageManifest {
     pub index_strategy: String,
     pub simulation_assumptions: Option<SimulationAssumptions>,
     pub created_at: i64,
+    /// Manifest from the most recent successful `dna_read` of this object,
+    /// stored per-object (keyed by this file's archive_id) rather than as
+    /// session-global state, so retrieving a different file never overwrites it.
+    #[serde(default)]
+    pub recovery_manifest: Option<RecoveryManifest>,
 }
 
 /// Metadata for a single file stored in DNA.

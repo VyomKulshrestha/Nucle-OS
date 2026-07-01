@@ -179,7 +179,7 @@ fn test_migrate_preserves_history() {
     let initial_manifest = initial_file.manifest.clone().unwrap();
 
     // 2. Migrate to new redundancy (4)
-    let new_manifest = nucle_vfs::migrate::migrate_object(&mut os, "migrate_test.txt", Some(4)).unwrap();
+    let new_manifest = nucle_vfs::migrate::migrate_object(&mut os, "migrate_test.txt", Some(4), None).unwrap();
     assert_eq!(new_manifest.redundancy, 4);
 
     let updated_file = os.catalog.get_by_name("migrate_test.txt").unwrap();
@@ -192,6 +192,27 @@ fn test_migrate_preserves_history() {
     assert_eq!(recovered, original);
 }
 
+/// Migrating to an unsupported codec must fail clearly, not silently no-op:
+/// NucleOS's storage pipeline only implements one codec end-to-end today.
+#[test]
+fn test_migrate_rejects_unsupported_codec() {
+    let mut os = NucleOS::new(10);
+    os.dna_write("codec_migrate.txt", b"codec migration test", 2).unwrap();
+
+    let result = nucle_vfs::migrate::migrate_object(&mut os, "codec_migrate.txt", None, Some("fountain"));
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("not supported"));
+
+    // Migrating to the one supported codec name should still work.
+    let result = nucle_vfs::migrate::migrate_object(
+        &mut os,
+        "codec_migrate.txt",
+        None,
+        Some(nucle_vfs::migrate::SUPPORTED_CODEC),
+    );
+    assert!(result.is_ok());
+}
+
 /// Recovery manifest test: verify that reading a file populates the last recovery manifest correctly.
 #[test]
 fn test_recovery_manifest_generation() {
@@ -199,18 +220,50 @@ fn test_recovery_manifest_generation() {
     let original = b"Recovery manifest generation test.";
 
     os.dna_write("recovery_test.txt", original, 2).unwrap();
-    
-    // Recovery manifest should be None before read
-    assert!(os.last_recovery.lock().unwrap().is_none());
+
+    // Recovery manifest should be None before any read of this object
+    let before = os.catalog.get_by_name("recovery_test.txt").unwrap().manifest.clone().unwrap();
+    assert!(before.recovery_manifest.is_none());
 
     // Read file
     let recovered = os.dna_read("recovery_test.txt").unwrap();
     assert_eq!(recovered, original);
 
-    // Recovery manifest should be Some after read
-    let manifest_opt = os.last_recovery.lock().unwrap().clone();
-    assert!(manifest_opt.is_some());
-    let manifest = manifest_opt.unwrap();
+    // Recovery manifest should be attached to this object's own manifest after read
+    let after = os.catalog.get_by_name("recovery_test.txt").unwrap().manifest.clone().unwrap();
+    let manifest = after.recovery_manifest.expect("recovery manifest should be set after read");
     assert_eq!(manifest.consensus_method, "majority-vote");
     assert!(manifest.ecc_success);
+}
+
+/// Recovery manifests are per-object: reading a second file must not
+/// clobber the first file's manifest (the old session-global design did).
+#[test]
+fn test_recovery_manifest_is_per_object_not_global() {
+    let mut os = NucleOS::new(10);
+    os.dna_write("first.txt", b"first file contents", 2).unwrap();
+    os.dna_write("second.txt", b"second file, different contents", 2).unwrap();
+
+    os.dna_read("first.txt").unwrap();
+    os.dna_read("second.txt").unwrap();
+
+    let first = os.catalog.get_by_name("first.txt").unwrap().manifest.clone().unwrap();
+    let second = os.catalog.get_by_name("second.txt").unwrap().manifest.clone().unwrap();
+    assert!(first.recovery_manifest.is_some(), "first.txt should keep its own recovery manifest");
+    assert!(second.recovery_manifest.is_some(), "second.txt should have its own recovery manifest");
+}
+
+/// Archive IDs are content-addressed, so re-reading the same object
+/// (without migrating it) must yield the same archive_id every time.
+#[test]
+fn test_archive_id_stable_across_repeated_reads() {
+    let mut os = NucleOS::new(10);
+    os.dna_write("stable.txt", b"stable archive id test", 1).unwrap();
+    let id_before = os.catalog.get_by_name("stable.txt").unwrap().manifest.clone().unwrap().archive_id;
+
+    os.dna_read("stable.txt").unwrap();
+    os.dna_read("stable.txt").unwrap();
+
+    let id_after = os.catalog.get_by_name("stable.txt").unwrap().manifest.clone().unwrap().archive_id;
+    assert_eq!(id_before, id_after, "archive_id must not change across repeated reads");
 }

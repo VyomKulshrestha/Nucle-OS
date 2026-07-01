@@ -23,8 +23,6 @@ pub struct Catalog {
     name_index: HashMap<String, String>,
     /// Map from primer_id to file_id.
     primer_index: HashMap<String, String>,
-    /// Next file ID counter.
-    next_id: u64,
 }
 
 impl Catalog {
@@ -34,15 +32,7 @@ impl Catalog {
             files: HashMap::new(),
             name_index: HashMap::new(),
             primer_index: HashMap::new(),
-            next_id: 0,
         }
-    }
-
-    /// Generate a new unique file ID.
-    pub fn next_file_id(&mut self) -> String {
-        let id = format!("dna-file-{:06}", self.next_id);
-        self.next_id += 1;
-        id
     }
 
     /// Register a file in the catalog.
@@ -203,13 +193,6 @@ mod tests {
     fn test_file_total_strands() {
         let file = make_file("f1", "test.txt", "P0000");
         assert_eq!(file.total_strands(), 14); // 10 data + 4 parity
-    }
-
-    #[test]
-    fn test_next_file_id() {
-        let mut catalog = Catalog::new();
-        assert_eq!(catalog.next_file_id(), "dna-file-000000");
-        assert_eq!(catalog.next_file_id(), "dna-file-000001");
     }
 
     #[test]

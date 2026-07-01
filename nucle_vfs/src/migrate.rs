@@ -6,15 +6,36 @@
 use crate::syscall::NucleOS;
 use crate::file::StorageManifest;
 
+/// The only codec `dna_write`/`dna_read` actually implement end-to-end.
+/// `migrate_object`'s `new_codec` parameter is checked against this so a
+/// migration request never silently no-ops on an unsupported target.
+pub const SUPPORTED_CODEC: &str = "ternary-rotating-cipher";
+
 /// Re-encodes a stored file under new parameters.
 ///
 /// Decodes the file, deletes the old strands/catalog entries, writes it again,
 /// and appends the old manifest to the file's manifest history.
+///
+/// `new_codec`, if given, must name a codec NucleOS's storage pipeline can
+/// actually produce ([`SUPPORTED_CODEC`]) — the pipeline hardcodes a single
+/// codec end-to-end today, so migrating *to* a different one is rejected
+/// with a clear error rather than silently ignored.
 pub fn migrate_object(
     os: &mut NucleOS,
     filename: &str,
     new_redundancy: Option<usize>,
+    new_codec: Option<&str>,
 ) -> Result<StorageManifest, String> {
+    if let Some(codec) = new_codec {
+        if codec != SUPPORTED_CODEC {
+            return Err(format!(
+                "codec migration to '{}' is not supported: NucleOS's storage \
+                 pipeline only implements '{}' end-to-end",
+                codec, SUPPORTED_CODEC
+            ));
+        }
+    }
+
     // 1. Read old file data and metadata
     let old_file = os.catalog.get_by_name(filename)
         .ok_or_else(|| format!("file '{}' not found", filename))?.clone();

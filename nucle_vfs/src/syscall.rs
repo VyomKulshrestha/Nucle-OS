@@ -22,7 +22,7 @@ use crate::catalog::Catalog;
 use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
-use nucle_ecc::pipeline::RecoveryManifest;
+use nucle_ecc::pipeline::{compute_error_distribution, RecoveryManifest};
 use nucle_index::primer::PrimerLibrary;
 use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
@@ -62,8 +62,6 @@ pub struct NucleOS {
     pub noise_config: SimulationConfig,
     /// Number of primer pairs used so far.
     primers_used: usize,
-    /// Recovery manifest from the last dna_read operation.
-    pub last_recovery: std::sync::Mutex<Option<RecoveryManifest>>,
 }
 
 impl NucleOS {
@@ -82,7 +80,6 @@ impl NucleOS {
             simulate_noise: false,
             noise_config: SimulationConfig::pristine(),
             primers_used: 0,
-            last_recovery: std::sync::Mutex::new(None),
         }
     }
 
@@ -274,6 +271,7 @@ impl NucleOS {
             index_strategy: "primer-addressing".to_string(),
             simulation_assumptions,
             created_at: created_at as i64,
+            recovery_manifest: None,
         };
 
         // ── Register in catalog
@@ -327,10 +325,13 @@ impl NucleOS {
     /// 3. **Primers**: untag strands (remove primer flanking regions)
     /// 4. **ECC**: RS decode to recover any missing strands
     /// 5. **Codec**: decode DNA → binary data
-    pub fn dna_read(&self, filename: &str) -> Result<Vec<u8>, String> {
+    pub fn dna_read(&mut self, filename: &str) -> Result<Vec<u8>, String> {
         // ── Layer 5: VFS ── look up file
+        // Cloned (not borrowed) so the catalog can be mutably re-borrowed
+        // below to persist the recovery manifest onto this object's entry.
         let dna_file = self.catalog.get_by_name(filename)
-            .ok_or(format!("file '{}' not found", filename))?;
+            .ok_or(format!("file '{}' not found", filename))?
+            .clone();
 
         // ── Layer 4: Index ── CRISPR selective retrieval
         let primer_pair = self.primers.get(&dna_file.primer_id)
@@ -372,6 +373,9 @@ impl NucleOS {
             .collect();
 
         // ── Layer 3: ECC ── RS decode (if parity strands exist)
+        // Kept so we can diff pre- vs. post-correction strands for a real
+        // observed error distribution, since `data_strands` is consumed below.
+        let pre_correction_strands = data_strands.clone();
         let decoded_strands = if !parity_strands.is_empty() && dna_file.parity_strand_count > 0 {
             let rs = ReedSolomon::new(RsConfig::new(dna_file.parity_strand_count));
 
@@ -407,6 +411,10 @@ impl NucleOS {
             return Err("no data strands after ECC decode".into());
         }
 
+        // Real per-position signal: where correction actually changed bases,
+        // derived from the strands themselves rather than a profile estimate.
+        let observed_error_distribution = compute_error_distribution(&pre_correction_strands, &decoded_strands);
+
         // ── Layer 1: Codec ── decode DNA → binary
         let recovered_strands_count = decoded_strands.len();
         let collection = StrandCollection::from_strands(decoded_strands, dna_file.size);
@@ -439,10 +447,16 @@ impl NucleOS {
             sequencing_profile: seq_profile,
             recovered_strands: recovered_strands_count,
             ecc_success,
+            observed_error_distribution,
         };
 
-        if let Ok(mut guard) = self.last_recovery.lock() {
-            *guard = Some(recovery_manifest);
+        // Persist onto this object's own storage manifest (keyed by its
+        // archive_id via the catalog entry), not session-global state — so
+        // reading a different file afterward can't clobber this one's history.
+        if let Some(file) = self.catalog.get_by_name_mut(filename) {
+            if let Some(manifest) = file.manifest.as_mut() {
+                manifest.recovery_manifest = Some(recovery_manifest);
+            }
         }
 
         if !ecc_success {
@@ -461,11 +475,6 @@ impl NucleOS {
 
     /// Get comprehensive pool statistics.
     pub fn dna_stat(&self) -> PoolStatus {
-        let last_rec = if let Ok(guard) = self.last_recovery.lock() {
-            guard.clone()
-        } else {
-            None
-        };
         PoolStatus {
             file_count: self.catalog.len(),
             total_strands: self.pool.total_strands(),
@@ -484,7 +493,6 @@ impl NucleOS {
                 redundancy: f.redundancy,
                 manifest: f.manifest.clone(),
             }).collect(),
-            last_recovery: last_rec,
         }
     }
 
@@ -584,7 +592,6 @@ pub struct PoolStatus {
     pub avg_strand_length: f64,
     pub redundancy: f64,
     pub files: Vec<FileInfo>,
-    pub last_recovery: Option<RecoveryManifest>,
 }
 
 impl fmt::Display for PoolStatus {
@@ -618,13 +625,19 @@ impl fmt::Display for PoolStatus {
             }
         }
         writeln!(f, "╚══════════════════════════════════════╝")?;
-        if let Some(ref r) = self.last_recovery {
-            writeln!(f, "\n--- Last Recovery Manifest ---")?;
-            writeln!(f, "Observed Error Rate: {:.4}%", r.observed_error_rate * 100.0)?;
-            writeln!(f, "Consensus Method:    {}", r.consensus_method)?;
-            writeln!(f, "Sequencing Profile:  {}", r.sequencing_profile)?;
-            writeln!(f, "Recovered Strands:   {}", r.recovered_strands)?;
-            writeln!(f, "ECC Success:         {}", r.ecc_success)?;
+        for fi in &self.files {
+            if let Some(r) = fi.manifest.as_ref().and_then(|m| m.recovery_manifest.as_ref()) {
+                writeln!(f, "\n--- Recovery Manifest: {} ---", fi.filename)?;
+                writeln!(f, "Observed Error Rate: {:.4}%", r.observed_error_rate * 100.0)?;
+                writeln!(f, "Consensus Method:    {}", r.consensus_method)?;
+                writeln!(f, "Sequencing Profile:  {}", r.sequencing_profile)?;
+                writeln!(f, "Recovered Strands:   {}", r.recovered_strands)?;
+                writeln!(f, "ECC Success:         {}", r.ecc_success)?;
+                if !r.observed_error_distribution.is_empty() {
+                    let flagged = r.observed_error_distribution.iter().filter(|(_, rate)| *rate > 0.0).count();
+                    writeln!(f, "Positions w/ errors: {} of {}", flagged, r.observed_error_distribution.len())?;
+                }
+            }
         }
         Ok(())
     }
@@ -736,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_read_nonexistent_error() {
-        let os = NucleOS::new(10);
+        let mut os = NucleOS::new(10);
         assert!(os.dna_read("missing.txt").is_err());
     }
 
