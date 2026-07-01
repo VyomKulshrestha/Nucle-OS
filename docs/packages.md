@@ -43,12 +43,22 @@ Inspect bundled packages:
 nucle packages
 ```
 
+Install a package from a local `package.json` manifest:
+
+```bash
+nucle package install packages/nuclescript-presets/package.json
+```
+
+Verify a package manifest's integrity and exports:
+
+```bash
+nucle package verify packages/nuclescript-presets/package.json
+```
+
 Validate an import in a NucleScript program:
 
 ```bash
 nucle plan docs/examples/preset_imports.nsl
 ```
 
-The current compiler validates package source names and exported symbols at
-compile time. Registry-backed package expansion can build on the manifest shape
-without changing NucleScript source syntax.
+The current compiler validates package source names and exported symbols at compile time against a registry initialized from all installed package manifests. Registry-backed package expansion can build on the manifest shape without changing NucleScript source syntax.

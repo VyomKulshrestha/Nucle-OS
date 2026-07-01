@@ -165,6 +165,12 @@ enum Commands {
     /// List released NucleScript packages bundled with this repository
     Packages,
 
+    /// Manage NucleScript packages (install, verify)
+    Package {
+        #[command(subcommand)]
+        action: PackageAction,
+    },
+
     /// Check environment capabilities and package integrity
     Doctor,
 
@@ -176,6 +182,20 @@ enum Commands {
 
     /// Show available agent tools
     Tools,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum PackageAction {
+    /// Install a package from a package.json manifest
+    Install {
+        /// Path to package.json manifest
+        manifest_path: String,
+    },
+    /// Verify package integrity and exports
+    Verify {
+        /// Path to package.json manifest
+        manifest_path: String,
+    },
 }
 
 fn main() {
@@ -199,6 +219,7 @@ fn main() {
         Commands::Run { source } => cmd_run(&source),
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
+        Commands::Package { action } => cmd_package(action, cli.json),
         Commands::Doctor => cmd_doctor(cli.json),
         Commands::Agent { command } => cmd_agent(&command.join(" ")),
         Commands::Tools => cmd_help(),
@@ -673,6 +694,96 @@ fn cmd_packages() {
     println!("\nExports:");
     for export in manifest.exports {
         println!("  - {} [{}] {}", export.name, export.kind, export.description);
+    }
+}
+
+fn cmd_package(action: PackageAction, json: bool) {
+    match action {
+        PackageAction::Install { manifest_path } => {
+            let content = match fs::read_to_string(&manifest_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error reading manifest '{}': {}", manifest_path, e);
+                    std::process::exit(1);
+                }
+            };
+            let manifest: nucle_lang::package::PackageManifest = match serde_json::from_str(&content) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Invalid package manifest JSON: {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let name = manifest.name.clone();
+            nucle_lang::package::register_package(manifest);
+
+            if json {
+                let json_val = serde_json::json!({
+                    "status": "Installed",
+                    "package": name
+                });
+                println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+            } else {
+                println!("✓ Installed package '{}' successfully.", name);
+            }
+        }
+        PackageAction::Verify { manifest_path } => {
+            let content = match fs::read_to_string(&manifest_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error reading manifest '{}': {}", manifest_path, e);
+                    std::process::exit(1);
+                }
+            };
+            let manifest: nucle_lang::package::PackageManifest = match serde_json::from_str(&content) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("Invalid package manifest JSON: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let mut errors = Vec::new();
+            if manifest.name.is_empty() {
+                errors.push("Package name is empty".to_string());
+            }
+            if manifest.import_source.is_empty() {
+                errors.push("Package import source is empty".to_string());
+            }
+            if manifest.exports.is_empty() {
+                errors.push("Package exports list is empty".to_string());
+            }
+            for (i, export) in manifest.exports.iter().enumerate() {
+                if export.name.is_empty() {
+                    errors.push(format!("Export #{} name is empty", i));
+                }
+                if export.kind != "PoolSchema" && export.kind != "Pipeline" && export.kind != "RecoveryProfile" &&
+                   export.kind != "pool_schema" && export.kind != "pipeline" && export.kind != "recovery_profile" {
+                    errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile", export.name, export.kind));
+                }
+            }
+
+            let verified = errors.is_empty();
+
+            if json {
+                let json_val = serde_json::json!({
+                    "verified": verified,
+                    "errors": errors,
+                    "package": manifest.name
+                });
+                println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+            } else {
+                if verified {
+                    println!("✓ Package '{}' verified successfully.", manifest.name);
+                } else {
+                    println!("✗ Package verification failed for '{}':", manifest.name);
+                    for e in &errors {
+                        println!("  - {}", e);
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 }
 

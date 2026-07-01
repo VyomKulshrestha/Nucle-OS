@@ -50,15 +50,49 @@ pub struct PackageRepository {
     pub directory: Option<String>,
 }
 
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+static REGISTRY: OnceLock<std::sync::Mutex<HashMap<String, PackageManifest>>> = OnceLock::new();
+
+pub fn get_registry() -> &'static std::sync::Mutex<HashMap<String, PackageManifest>> {
+    REGISTRY.get_or_init(|| {
+        let mut map = HashMap::new();
+        let manifest: PackageManifest = serde_json::from_str(PRESETS_MANIFEST_JSON)
+            .expect("@nuclescript/presets manifest must be valid JSON");
+        map.insert(manifest.import_source.clone(), manifest);
+        std::sync::Mutex::new(map)
+    })
+}
+
 pub fn resolve_import(source: &str, item: &str) -> Option<Preset> {
-    if source != PRESETS_PACKAGE {
-        return None;
-    }
-    presets().into_iter().find(|preset| preset.name == item)
+    let registry = get_registry().lock().unwrap();
+    let manifest = registry.get(source)?;
+    let export = manifest.exports.iter().find(|e| e.name == item)?;
+    let kind = match export.kind.as_str() {
+        "PoolSchema" | "pool_schema" => PresetKind::PoolSchema,
+        "Pipeline" | "pipeline" => PresetKind::Pipeline,
+        "RecoveryProfile" | "recovery_profile" => PresetKind::RecoveryProfile,
+        _ => PresetKind::PoolSchema,
+    };
+    Some(Preset {
+        name: Box::leak(export.name.clone().into_boxed_str()),
+        kind,
+        description: Box::leak(export.description.clone().into_boxed_str()),
+    })
 }
 
 pub fn package_exists(source: &str) -> bool {
-    source == PRESETS_PACKAGE
+    get_registry().lock().unwrap().contains_key(source)
+}
+
+pub fn register_package(manifest: PackageManifest) {
+    get_registry().lock().unwrap().insert(manifest.import_source.clone(), manifest);
+}
+
+pub fn list_packages() -> Vec<PackageManifest> {
+    get_registry().lock().unwrap().values().cloned().collect()
 }
 
 pub fn presets_manifest() -> PackageManifest {
