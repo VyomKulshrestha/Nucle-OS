@@ -9,8 +9,9 @@ use nucle_agent::tools;
 use nucle_codec::base::DnaCodec;
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::fountain::{FountainCodec, FountainConfig};
+use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_codec::constraints::{ConstraintValidator, ConstraintConfig};
-use nucle_codec::benchmark::benchmark_all_codecs;
+use nucle_codec::benchmark::{benchmark_codec, BenchmarkResult, ComparisonReport};
 use nucle_synth::noise::{NoiseEngine, SimulationConfig};
 use nucle_synth::profiles::HardwareProfile;
 use rand::rngs::StdRng;
@@ -72,13 +73,16 @@ enum Commands {
         name: String,
     },
 
-    /// Migrate a file to new storage parameters (e.g. redundancy)
+    /// Migrate a file to new storage parameters (e.g. redundancy, codec)
     Migrate {
         /// Filename to migrate
         name: String,
         /// New number of RS parity strands
         #[arg(short, long)]
         redundancy: Option<usize>,
+        /// New codec name (only 'ternary-rotating-cipher' is supported today)
+        #[arg(short, long)]
+        codec: Option<String>,
     },
 
     /// Search for files in the storage pool
@@ -110,6 +114,10 @@ enum Commands {
     Bench {
         /// Input file to benchmark (or use built-in test data)
         file: Option<String>,
+        /// Hardware profile used to estimate recovery probability and cost:
+        /// illumina, nanopore, twist, idt, column-synthesis, pristine
+        #[arg(short, long, default_value = "illumina")]
+        profile: String,
     },
 
     /// Run a full-pipeline benchmark on a file or standard fixtures
@@ -192,16 +200,20 @@ enum Commands {
 
 #[derive(Subcommand, Debug, Clone)]
 enum PackageAction {
-    /// Install a package from a package.json manifest
+    /// List every package known to packages/registry.json
+    List,
+    /// Install a package by name from packages/registry.json (e.g. @nuclescript/presets)
     Install {
-        /// Path to package.json manifest
-        manifest_path: String,
+        /// Package name (e.g. @nuclescript/presets) or import source (e.g. nuclescript/presets)
+        name: String,
     },
-    /// Verify package integrity and exports
+    /// Verify a registered package's manifest and, if nucle.lock exists, its checksum
     Verify {
-        /// Path to package.json manifest
-        manifest_path: String,
+        /// Package name (e.g. @nuclescript/presets) or import source
+        name: String,
     },
+    /// Write/update nucle.lock with checksums for every package in the registry
+    Lock,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -210,9 +222,19 @@ enum HardwareSubcommand {
     Export {
         /// NucleScript file to compile and extract requests from
         source: String,
-        /// Output path for the exported JSON batch file
+        /// Output path for the exported JSON batch file (used by the file-export provider)
         #[arg(short, long, default_value = "batch.json")]
         output: String,
+        /// Provider to submit the batch to: 'file-export' (default) or 'mock'.
+        /// Vendor names (e.g. 'twist') are accepted but no vendor-specific
+        /// adapter exists yet, so they fall back to file-export.
+        #[arg(short, long, default_value = "file-export")]
+        provider: String,
+        /// Required whenever the batch contains a Synthesis, Sequencing, or
+        /// Destructive request — acknowledges the operator reviewed a
+        /// cost-bearing or destructive submission before it proceeds.
+        #[arg(long)]
+        confirm: bool,
     },
 }
 
@@ -224,11 +246,11 @@ fn main() {
         Commands::Decode { file, output, size } => cmd_decode(&file, output.as_deref(), size),
         Commands::Store { file, redundancy } => cmd_store(&file, redundancy, cli.json),
         Commands::Retrieve { name } => cmd_retrieve(&name, cli.json),
-        Commands::Migrate { name, redundancy } => cmd_migrate(&name, redundancy, cli.json),
+        Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), cli.json),
         Commands::Search { query, top_k } => cmd_search(&query, top_k, cli.json),
         Commands::Pool => cmd_pool(cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
-        Commands::Bench { file } => cmd_bench(file.as_deref(), cli.json),
+        Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
         Commands::Stress { size } => cmd_stress(size, cli.json),
         Commands::Pipeline { files, size, profile, coverage, redundancy } => {
@@ -376,10 +398,12 @@ fn cmd_store(file: &str, redundancy: usize, json: bool) {
 }
 
 fn cmd_retrieve(name: &str, json: bool) {
-    let os = NucleOS::new(100);
+    let mut os = NucleOS::new(100);
     match os.dna_read(name) {
         Ok(data) => {
-            let manifest_opt = os.last_recovery.lock().unwrap().clone();
+            let manifest_opt = os.catalog.get_by_name(name)
+                .and_then(|f| f.manifest.as_ref())
+                .and_then(|m| m.recovery_manifest.clone());
             if json {
                 let (is_text, content) = match String::from_utf8(data.clone()) {
                     Ok(text) => (true, text),
@@ -407,6 +431,10 @@ fn cmd_retrieve(name: &str, json: bool) {
                     eprintln!("Sequencing Profile:  {}", manifest.sequencing_profile);
                     eprintln!("Recovered Strands:   {}", manifest.recovered_strands);
                     eprintln!("ECC Success:         {}", manifest.ecc_success);
+                    if !manifest.observed_error_distribution.is_empty() {
+                        let flagged = manifest.observed_error_distribution.iter().filter(|(_, r)| *r > 0.0).count();
+                        eprintln!("Positions w/ errors: {} of {}", flagged, manifest.observed_error_distribution.len());
+                    }
                 }
             }
         }
@@ -417,9 +445,9 @@ fn cmd_retrieve(name: &str, json: bool) {
     }
 }
 
-fn cmd_migrate(name: &str, redundancy: Option<usize>, json: bool) {
+fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, json: bool) {
     let mut os = NucleOS::new(100);
-    match nucle_vfs::migrate::migrate_object(&mut os, name, redundancy) {
+    match nucle_vfs::migrate::migrate_object(&mut os, name, redundancy, codec) {
         Ok(manifest) => {
             if json {
                 println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
@@ -531,7 +559,79 @@ fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {
     }
 }
 
-fn cmd_bench(file: Option<&str>, json: bool) {
+/// Parse a hardware profile name shared across bench/simulate/pipeline commands.
+fn parse_hw_profile(profile: &str) -> HardwareProfile {
+    match profile.to_lowercase().as_str() {
+        "illumina" => HardwareProfile::Illumina,
+        "nanopore" => HardwareProfile::OxfordNanopore,
+        "twist" => HardwareProfile::TwistBioscience,
+        "idt" => HardwareProfile::Idt,
+        "column-synthesis" => HardwareProfile::ColumnSynthesis,
+        "pristine" => HardwareProfile::Pristine,
+        _ => {
+            eprintln!("Unknown profile: {}. Use: illumina, nanopore, twist, idt, column-synthesis, pristine", profile);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Estimated synthesis cost per nucleotide (USD) for a hardware profile.
+/// A lookup, not a simulation output — cost isn't derivable from the noise
+/// model, but the function is profile-aware so callers stay centralized.
+fn profile_cost_per_base(profile: HardwareProfile) -> f64 {
+    match profile {
+        HardwareProfile::TwistBioscience => 0.00015,
+        HardwareProfile::Illumina => 0.0001,
+        HardwareProfile::OxfordNanopore => 0.00005,
+        HardwareProfile::Idt => 0.00012,
+        HardwareProfile::ColumnSynthesis => 0.00008,
+        HardwareProfile::Pristine => 0.00001,
+    }
+}
+
+/// Monte-Carlo estimate of encode→noise→decode roundtrip success under a
+/// hardware profile. Real signal (not a placeholder): each trial actually
+/// runs the noise engine and the codec's decoder.
+fn estimate_recovery_probability(codec: &dyn DnaCodec, data: &[u8], profile: HardwareProfile, trials: u64) -> f64 {
+    if profile == HardwareProfile::Pristine {
+        return 1.0;
+    }
+    let Ok(encoded) = codec.encode(data) else {
+        return 0.0;
+    };
+    let mut successes = 0u64;
+    for t in 0..trials {
+        let config = SimulationConfig {
+            seed: 9000 + t,
+            coverage_depth: 1,
+            synthesis_profile: profile,
+            sequencing_profile: profile,
+            simulate_decay: false,
+            decay_rate: 0.0,
+            storage_time: 0.0,
+        };
+        let engine = NoiseEngine::new(config);
+        let sim_result = engine.simulate(&encoded);
+        let noisy = sim_result.pool.to_strand_collection(data.len());
+        if let Ok(decoded) = codec.decode(&noisy) {
+            if decoded == data {
+                successes += 1;
+            }
+        }
+    }
+    successes as f64 / trials as f64
+}
+
+/// Fill in the `recovery_probability`/`estimated_cost_usd` fields that
+/// `nucle_codec::benchmark::benchmark_codec` intentionally leaves `None`
+/// (it can't depend on `nucle_synth`). This is the one place with access
+/// to codec + synth + ecc together, so it does the real computation.
+fn enrich_benchmark_result(result: &mut BenchmarkResult, codec: &dyn DnaCodec, data: &[u8], profile: HardwareProfile) {
+    result.recovery_probability = Some(estimate_recovery_probability(codec, data, profile, 20));
+    result.estimated_cost_usd = Some(result.total_nucleotides as f64 * profile_cost_per_base(profile));
+}
+
+fn cmd_bench(file: Option<&str>, profile: &str, json: bool) {
     let data = if let Some(f) = file {
         match fs::read(f) {
             Ok(d) => d,
@@ -545,26 +645,38 @@ fn cmd_bench(file: Option<&str>, json: bool) {
           NucleOS benchmarks all available DNA codecs.".to_vec()
     };
 
-    let report = benchmark_all_codecs(&data);
+    let hw_profile = parse_hw_profile(profile);
+
+    let codecs: Vec<Box<dyn DnaCodec>> = vec![
+        Box::new(TernaryCodec::new(TernaryConfig::no_overlap())),
+        Box::new(TernaryCodec::new(TernaryConfig::default())),
+        Box::new(YinYangCodec::new(YinYangConfig::default())),
+        Box::new(FountainCodec::new(FountainConfig::default())),
+        Box::new(FountainCodec::new(FountainConfig {
+            overhead: 1.50,
+            ..FountainConfig::unscreened()
+        })),
+    ];
+
+    let mut results = Vec::new();
+    for codec in &codecs {
+        if let Ok(mut result) = benchmark_codec(codec.as_ref(), &data) {
+            enrich_benchmark_result(&mut result, codec.as_ref(), &data, hw_profile);
+            results.push(result);
+        }
+    }
+    let report = ComparisonReport::new(results);
+
     if json {
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else {
-        println!("Benchmarking codecs on {} bytes of data...\n", data.len());
+        println!("Benchmarking codecs on {} bytes of data (profile: {})...\n", data.len(), profile);
         println!("{}", report);
     }
 }
 
 fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: bool) {
-    let hw_profile = match profile.to_lowercase().as_str() {
-        "illumina" => HardwareProfile::Illumina,
-        "nanopore" => HardwareProfile::OxfordNanopore,
-        "twist" => HardwareProfile::TwistBioscience,
-        "pristine" => HardwareProfile::Pristine,
-        _ => {
-            eprintln!("Unknown profile: {}. Use: illumina, nanopore, twist, pristine", profile);
-            std::process::exit(1);
-        }
-    };
+    let hw_profile = parse_hw_profile(profile);
 
     let files_to_bench: Vec<(String, Vec<u8>)> = if let Some(f) = file {
         match fs::read(f) {
@@ -591,13 +703,6 @@ fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: boo
             }
         }
         list
-    };
-
-    let cost_per_base = match profile.to_lowercase().as_str() {
-        "twist" => 0.00015,
-        "illumina" => 0.0001,
-        "nanopore" => 0.00005,
-        _ => 0.00001,
     };
 
     let mut results = Vec::new();
@@ -642,8 +747,14 @@ fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: boo
             Err(_) => false,
         };
 
-        let total_nt = write_result.total_strand_count * 150;
-        let estimated_cost = total_nt as f64 * cost_per_base;
+        // Real codec-level metrics (GC distribution, homopolymer violations,
+        // density) instead of re-deriving them ad hoc — reuses the same
+        // benchmark_codec() the `bench` command uses, avoiding duplicate logic.
+        let codec_bench = benchmark_codec(&codec, data).ok();
+        let total_nt = codec_bench.as_ref()
+            .map(|b| b.total_nucleotides)
+            .unwrap_or(write_result.total_strand_count * 150);
+        let estimated_cost = total_nt as f64 * profile_cost_per_base(hw_profile);
 
         results.push(serde_json::json!({
             "file": filename,
@@ -652,29 +763,35 @@ fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: boo
             "observed_error_rate": observed_error_rate,
             "recovery_ok": recovery_ok,
             "estimated_cost_usd": estimated_cost,
+            "avg_gc_content": codec_bench.as_ref().map(|b| b.avg_gc_content),
+            "gc_distribution": codec_bench.as_ref().map(|b| b.gc_distribution.clone()),
+            "max_homopolymer": codec_bench.as_ref().map(|b| b.max_homopolymer),
+            "homopolymer_violation_count": codec_bench.as_ref().map(|b| b.homopolymer_violation_count),
         }));
     }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&results).unwrap());
     } else {
-        println!("╔══════════════════════════════════════════════════════════════════════════════════════╗");
-        println!("║                      NucleOS Full-Pipeline Benchmark                                 ║");
-        println!("╠══════════════════════════════════════════════════════════════════════════════════════╣");
-        println!("║ {:<20} │ {:>8} │ {:>8} │ {:>12} │ {:>8} │ {:>10} ║",
-            "File", "Size (B)", "Strands", "Error Rate", "Recover", "Cost (USD)");
-        println!("╟──────────────────────┼──────────┼──────────┼──────────────┼──────────┼──────────╢");
+        println!("╔══════════════════════════════════════════════════════════════════════════════════════════════════╗");
+        println!("║                              NucleOS Full-Pipeline Benchmark                                      ║");
+        println!("╠══════════════════════════════════════════════════════════════════════════════════════════════════╣");
+        println!("║ {:<18} │ {:>7} │ {:>7} │ {:>10} │ {:>7} │ {:>9} │ {:>6} │ {:>6} ║",
+            "File", "Size(B)", "Strands", "Error Rate", "Recover", "Cost(USD)", "GC%", "HpolV");
+        println!("╟────────────────────┼─────────┼─────────┼────────────┼─────────┼───────────┼────────┼────────╢");
         for r in &results {
-            println!("║ {:<20} │ {:>8} │ {:>8} │ {:>11.2}% │ {:^8} │ ${:>8.4} ║",
+            println!("║ {:<18} │ {:>7} │ {:>7} │ {:>9.2}% │ {:>7} │ ${:>8.4} │ {:>5.1}% │ {:>6} ║",
                 r["file"].as_str().unwrap(),
                 r["size_bytes"].as_u64().unwrap(),
                 r["strands"].as_u64().unwrap(),
                 r["observed_error_rate"].as_f64().unwrap() * 100.0,
                 if r["recovery_ok"].as_bool().unwrap() { "PASS" } else { "FAIL" },
                 r["estimated_cost_usd"].as_f64().unwrap(),
+                r["avg_gc_content"].as_f64().unwrap_or(0.0) * 100.0,
+                r["homopolymer_violation_count"].as_u64().unwrap_or(0),
             );
         }
-        println!("╚══════════════════════════════════════════════════════════════════════════════════════╝");
+        println!("╚══════════════════════════════════════════════════════════════════════════════════════════════════╝");
     }
 }
 
@@ -716,71 +833,99 @@ fn cmd_packages() {
     }
 }
 
+/// Structural validation shared by `nucle package verify` and `nucle doctor`.
+fn validate_package_manifest(manifest: &nucle_lang::package::PackageManifest) -> Vec<String> {
+    let mut errors = Vec::new();
+    if manifest.name.is_empty() {
+        errors.push("Package name is empty".to_string());
+    }
+    if manifest.import_source.is_empty() {
+        errors.push("Package import source is empty".to_string());
+    }
+    if manifest.exports.is_empty() {
+        errors.push("Package exports list is empty".to_string());
+    }
+    for (i, export) in manifest.exports.iter().enumerate() {
+        if export.name.is_empty() {
+            errors.push(format!("Export #{} name is empty", i));
+        }
+        if export.kind != "PoolSchema" && export.kind != "Pipeline" && export.kind != "RecoveryProfile" &&
+           export.kind != "pool_schema" && export.kind != "pipeline" && export.kind != "recovery_profile" {
+            errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile", export.name, export.kind));
+        }
+    }
+    errors
+}
+
+fn load_lock_file() -> Option<nucle_lang::lockfile::LockFile> {
+    let content = fs::read_to_string(nucle_lang::lockfile::LOCK_FILE_NAME).ok()?;
+    match nucle_lang::lockfile::LockFile::from_json(&content) {
+        Ok(lock) => Some(lock),
+        Err(e) => {
+            eprintln!("Warning: {} is not valid JSON: {}", nucle_lang::lockfile::LOCK_FILE_NAME, e);
+            None
+        }
+    }
+}
+
 fn cmd_package(action: PackageAction, json: bool) {
     match action {
-        PackageAction::Install { manifest_path } => {
-            let content = match fs::read_to_string(&manifest_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error reading manifest '{}': {}", manifest_path, e);
-                    std::process::exit(1);
+        PackageAction::List => {
+            let index = nucle_lang::package::registry_index();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&index).unwrap());
+            } else {
+                println!("Packages in {}:\n", nucle_lang::package::REGISTRY_INDEX_PATH);
+                for entry in &index.packages {
+                    println!("  {} {} ({})", entry.name, entry.version, entry.import);
+                    println!("    {}", entry.description);
                 }
+            }
+        }
+        PackageAction::Install { name } => {
+            let Some(manifest) = nucle_lang::package::find_package(&name) else {
+                eprintln!("Package '{}' not found in {}.", name, nucle_lang::package::REGISTRY_INDEX_PATH);
+                std::process::exit(1);
             };
-            let manifest: nucle_lang::package::PackageManifest = match serde_json::from_str(&content) {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("Invalid package manifest JSON: {}", e);
-                    std::process::exit(1);
-                }
-            };
-            let name = manifest.name.clone();
+            let resolved_name = manifest.name.clone();
             nucle_lang::package::register_package(manifest);
 
             if json {
                 let json_val = serde_json::json!({
                     "status": "Installed",
-                    "package": name
+                    "package": resolved_name
                 });
                 println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
             } else {
-                println!("✓ Installed package '{}' successfully.", name);
+                println!("✓ Installed package '{}' successfully.", resolved_name);
             }
         }
-        PackageAction::Verify { manifest_path } => {
-            let content = match fs::read_to_string(&manifest_path) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error reading manifest '{}': {}", manifest_path, e);
-                    std::process::exit(1);
-                }
-            };
-            let manifest: nucle_lang::package::PackageManifest = match serde_json::from_str(&content) {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("Invalid package manifest JSON: {}", e);
-                    std::process::exit(1);
-                }
+        PackageAction::Verify { name } => {
+            let Some(manifest) = nucle_lang::package::find_package(&name) else {
+                eprintln!("Package '{}' not found in {}.", name, nucle_lang::package::REGISTRY_INDEX_PATH);
+                std::process::exit(1);
             };
 
-            let mut errors = Vec::new();
-            if manifest.name.is_empty() {
-                errors.push("Package name is empty".to_string());
-            }
-            if manifest.import_source.is_empty() {
-                errors.push("Package import source is empty".to_string());
-            }
-            if manifest.exports.is_empty() {
-                errors.push("Package exports list is empty".to_string());
-            }
-            for (i, export) in manifest.exports.iter().enumerate() {
-                if export.name.is_empty() {
-                    errors.push(format!("Export #{} name is empty", i));
-                }
-                if export.kind != "PoolSchema" && export.kind != "Pipeline" && export.kind != "RecoveryProfile" &&
-                   export.kind != "pool_schema" && export.kind != "pipeline" && export.kind != "recovery_profile" {
-                    errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile", export.name, export.kind));
-                }
-            }
+            let mut errors = validate_package_manifest(&manifest);
+
+            let checksum_status = match (load_lock_file(), nucle_lang::package::find_package_manifest_json(&name)) {
+                (Some(lock), Some(manifest_json)) => match lock.find(&manifest.import_source) {
+                    Some(locked) => {
+                        let actual = nucle_lang::lockfile::compute_checksum(manifest_json);
+                        if actual == locked.checksum {
+                            "match".to_string()
+                        } else {
+                            errors.push(format!(
+                                "checksum mismatch against {}: locked={}, actual={}",
+                                nucle_lang::lockfile::LOCK_FILE_NAME, locked.checksum, actual
+                            ));
+                            "mismatch".to_string()
+                        }
+                    }
+                    None => format!("not present in {}", nucle_lang::lockfile::LOCK_FILE_NAME),
+                },
+                _ => format!("no {} found — run 'nucle package lock' to create one", nucle_lang::lockfile::LOCK_FILE_NAME),
+            };
 
             let verified = errors.is_empty();
 
@@ -788,10 +933,12 @@ fn cmd_package(action: PackageAction, json: bool) {
                 let json_val = serde_json::json!({
                     "verified": verified,
                     "errors": errors,
-                    "package": manifest.name
+                    "package": manifest.name,
+                    "checksum_status": checksum_status,
                 });
                 println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
             } else {
+                println!("Checksum: {}", checksum_status);
                 if verified {
                     println!("✓ Package '{}' verified successfully.", manifest.name);
                 } else {
@@ -803,12 +950,37 @@ fn cmd_package(action: PackageAction, json: bool) {
                 }
             }
         }
+        PackageAction::Lock => {
+            let mut lock = load_lock_file().unwrap_or_default();
+            let index = nucle_lang::package::registry_index();
+            for entry in &index.packages {
+                let Some(manifest_json) = nucle_lang::package::find_package_manifest_json(&entry.name) else {
+                    continue;
+                };
+                lock.upsert(nucle_lang::lockfile::LockedPackage {
+                    name: entry.name.clone(),
+                    version: entry.version.clone(),
+                    import_source: entry.import.clone(),
+                    checksum: nucle_lang::lockfile::compute_checksum(manifest_json),
+                });
+            }
+            let content = lock.to_json().unwrap();
+            if let Err(e) = fs::write(nucle_lang::lockfile::LOCK_FILE_NAME, &content) {
+                eprintln!("Failed to write {}: {}", nucle_lang::lockfile::LOCK_FILE_NAME, e);
+                std::process::exit(1);
+            }
+            if json {
+                println!("{}", content);
+            } else {
+                println!("✓ Wrote {} with {} package(s).", nucle_lang::lockfile::LOCK_FILE_NAME, lock.packages.len());
+            }
+        }
     }
 }
 
 fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
     match subcommand {
-        HardwareSubcommand::Export { source, output } => {
+        HardwareSubcommand::Export { source, output, provider, confirm } => {
             let content = match fs::read_to_string(&source) {
                 Ok(c) => c,
                 Err(e) => {
@@ -832,15 +1004,50 @@ fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
                 }
             };
 
+            // Reuse the compiler's own effect/confirmation check — a program
+            // missing `confirm hardware`/`confirm physical_key` in source
+            // must never reach the export step.
+            let report = nucle_lang::typeck::check_program(&program);
+            if report.has_errors() {
+                eprintln!("NucleScript type check failed:\n{}", report);
+                std::process::exit(1);
+            }
+
             let requests = nucle_lang::hardware::collect_hardware_requests(&program);
-            let provider = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&output));
-            match nucle_hardware::Provider::execute_batch(&provider, &requests) {
+            let effectful_count = requests.iter().filter(|r| r.effect != nucle_lang::Effect::Pure).count();
+            if effectful_count > 0 && !confirm {
+                eprintln!(
+                    "Refusing to export {} cost-bearing/destructive request(s) without --confirm.",
+                    effectful_count
+                );
+                std::process::exit(1);
+            }
+
+            let (used_provider, result): (&str, Result<String, String>) = match provider.as_str() {
+                "mock" => ("mock", nucle_hardware::Provider::execute_batch(&nucle_hardware::MockProvider, &requests)),
+                "file-export" => {
+                    let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&output));
+                    ("file-export", nucle_hardware::Provider::execute_batch(&p, &requests))
+                }
+                other => {
+                    eprintln!(
+                        "Note: no vendor adapter implemented for provider '{}' yet; falling back to file-export.",
+                        other
+                    );
+                    let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&output));
+                    ("file-export", nucle_hardware::Provider::execute_batch(&p, &requests))
+                }
+            };
+
+            match result {
                 Ok(msg) => {
                     if json {
                         let json_val = serde_json::json!({
                             "status": "Success",
+                            "provider": used_provider,
                             "exported_file": output,
-                            "requests_count": requests.len()
+                            "requests_count": requests.len(),
+                            "effectful_requests_confirmed": effectful_count > 0,
                         });
                         println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
                     } else {
@@ -856,47 +1063,184 @@ fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
     }
 }
 
-fn cmd_doctor(json: bool) {
-    let profiles = vec![
-        "illumina",
-        "nanopore",
-        "twist",
-        "idt",
-        "column-synthesis",
-        "pristine",
-    ];
+/// One named pass/warn/fail check in the doctor report. `detail` carries
+/// context (missing files, parse errors, etc.) — empty when the check passed
+/// clean. `skipped` marks a check that couldn't run at all (e.g. a directory
+/// doesn't exist from this cwd) so it degrades gracefully instead of
+/// pretending to have verified something it didn't.
+struct DoctorCheck {
+    name: &'static str,
+    ok: bool,
+    skipped: bool,
+    detail: Vec<String>,
+}
 
+/// Every crate whose `Cargo.toml` should inherit `version.workspace = true`
+/// rather than a hardcoded override — this is the actual mechanism keeping
+/// workspace crate versions consistent, so checking it is a real signal, not
+/// a tautological runtime comparison of already-guaranteed-equal values.
+const WORKSPACE_CRATE_MANIFESTS: &[&str] = &[
+    "nucle_codec/Cargo.toml",
+    "nucle_synth/Cargo.toml",
+    "nucle_ecc/Cargo.toml",
+    "nucle_index/Cargo.toml",
+    "nucle_vfs/Cargo.toml",
+    "nucle_agent/Cargo.toml",
+    "nucle_lang/Cargo.toml",
+    "nucle_hardware/Cargo.toml",
+    "nucle_cli/Cargo.toml",
+];
+
+fn check_workspace_versions() -> DoctorCheck {
+    let mut detail = Vec::new();
+    let mut found_any = false;
+    for path in WORKSPACE_CRATE_MANIFESTS {
+        match fs::read_to_string(path) {
+            Ok(content) => {
+                found_any = true;
+                if !content.contains("version.workspace = true") {
+                    detail.push(format!("{} does not inherit version.workspace = true", path));
+                }
+            }
+            Err(_) => detail.push(format!("{} not found (skipped)", path)),
+        }
+    }
+    DoctorCheck {
+        name: "Workspace crate versions",
+        ok: detail.is_empty(),
+        skipped: !found_any,
+        detail,
+    }
+}
+
+fn check_package_manifest() -> DoctorCheck {
     let manifest = nucle_lang::package::presets_manifest();
-    let package_integrity = !manifest.exports.is_empty();
+    let errors = validate_package_manifest(&manifest);
+    DoctorCheck {
+        name: "Presets package manifest",
+        ok: errors.is_empty(),
+        skipped: false,
+        detail: errors,
+    }
+}
 
-    let fixtures = vec![
+fn check_fixtures() -> DoctorCheck {
+    let fixtures = [
         "docs/examples/fixtures/small_text.txt",
         "docs/examples/fixtures/archive.bin",
         "docs/examples/fixtures/sample.fasta",
         "docs/examples/fixtures/image.png",
+        "docs/examples/fixtures/project_tree",
     ];
+    let missing: Vec<String> = fixtures.iter()
+        .filter(|f| !std::path::Path::new(f).exists())
+        .map(|f| f.to_string())
+        .collect();
+    DoctorCheck {
+        name: "Standard fixtures present",
+        ok: missing.is_empty(),
+        skipped: false,
+        detail: missing,
+    }
+}
 
-    let mut missing_fixtures = Vec::new();
-    for f in &fixtures {
-        if !std::path::Path::new(f).exists() {
-            missing_fixtures.push(f.to_string());
+/// Actually lexes and parses every `.nsl` file directly under docs/examples/
+/// (not a mere existence check) — a syntax error here means an example that
+/// ships with the repo is broken. Programs under docs/examples/failures/ are
+/// intentionally excluded from this: they're supposed to fail *type checking*,
+/// but must still be syntactically valid, so a separate check below covers them.
+fn check_examples_parse() -> DoctorCheck {
+    let dir = std::path::Path::new("docs/examples");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return DoctorCheck { name: "Example programs parse", ok: true, skipped: true, detail: vec![] };
+    };
+    let mut detail = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("nsl") {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(&path) else { continue };
+        let result = nucle_lang::Lexer::new(&source).tokenize()
+            .map_err(|e| e.to_string())
+            .and_then(|tokens| nucle_lang::Parser::new(tokens).parse_program().map_err(|e| e.to_string()));
+        if let Err(e) = result {
+            detail.push(format!("{}: {}", path.display(), e));
         }
     }
-    let fixtures_ok = missing_fixtures.is_empty();
+    DoctorCheck { name: "Example programs parse", ok: detail.is_empty(), skipped: false, detail }
+}
 
-    let overall_status = if package_integrity && fixtures_ok {
+/// docs/examples/failures/ programs are supposed to fail *type checking* by
+/// design, but must still be syntactically valid NucleScript — this checks
+/// exactly that, separately from check_examples_parse()'s exclusion of them.
+fn check_failure_examples_parse() -> DoctorCheck {
+    let dir = std::path::Path::new("docs/examples/failures");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return DoctorCheck { name: "Failure-mode examples parse", ok: true, skipped: true, detail: vec![] };
+    };
+    let mut detail = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("nsl") {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(&path) else { continue };
+        let result = nucle_lang::Lexer::new(&source).tokenize()
+            .map_err(|e| e.to_string())
+            .and_then(|tokens| nucle_lang::Parser::new(tokens).parse_program().map_err(|e| e.to_string()));
+        if let Err(e) = result {
+            detail.push(format!("{}: {}", path.display(), e));
+        }
+    }
+    DoctorCheck { name: "Failure-mode examples parse", ok: detail.is_empty(), skipped: false, detail }
+}
+
+/// Runs a real dna_write → dna_read roundtrip against an ephemeral in-memory
+/// NucleOS instance — NucleOS has no on-disk state, so this is the VFS
+/// pipeline's equivalent of a scratch read/write check.
+fn check_vfs_roundtrip() -> DoctorCheck {
+    let mut os = NucleOS::new(4);
+    let probe = b"nucle doctor VFS roundtrip probe";
+    let detail = match os.dna_write("__doctor_probe__.tmp", probe, 1) {
+        Ok(_) => match os.dna_read("__doctor_probe__.tmp") {
+            Ok(recovered) if recovered == probe => vec![],
+            Ok(_) => vec!["roundtrip data mismatch".to_string()],
+            Err(e) => vec![format!("read failed: {}", e)],
+        },
+        Err(e) => vec![format!("write failed: {}", e)],
+    };
+    DoctorCheck { name: "VFS write/read roundtrip", ok: detail.is_empty(), skipped: false, detail }
+}
+
+fn cmd_doctor(json: bool) {
+    let profiles = HardwareProfile::all().iter().map(|p| p.name().to_string()).collect::<Vec<_>>();
+
+    let checks = vec![
+        check_workspace_versions(),
+        check_package_manifest(),
+        check_fixtures(),
+        check_examples_parse(),
+        check_failure_examples_parse(),
+        check_vfs_roundtrip(),
+    ];
+
+    let overall_status = if checks.iter().all(|c| c.ok || c.skipped) {
         "Healthy"
     } else {
         "Degraded"
     };
 
     if json {
+        let checks_json: Vec<_> = checks.iter().map(|c| serde_json::json!({
+            "name": c.name,
+            "ok": c.ok,
+            "skipped": c.skipped,
+            "detail": c.detail,
+        })).collect();
         let json_val = serde_json::json!({
             "synthesis_profiles": profiles,
-            "presets_manifest_name": manifest.name,
-            "package_integrity": package_integrity,
-            "fixtures_ok": fixtures_ok,
-            "missing_fixtures": missing_fixtures,
+            "checks": checks_json,
             "status": overall_status
         });
         println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
@@ -904,14 +1248,14 @@ fn cmd_doctor(json: bool) {
         println!("# NucleOS Diagnostics Report");
         println!("\n## Environment Capabilities");
         println!("- **Synthesis Profiles Available**: {:?}", profiles);
-        println!("- **Presets Manifest**: {} v{} ({})", manifest.name, manifest.version, manifest.import_source);
-        println!("- **Package Integrity**: {}", if package_integrity { "✓ PASS" } else { "✗ FAILED" });
 
-        println!("\n## Standard Workloads / Fixtures");
-        if fixtures_ok {
-            println!("- **Fixtures Status**: ✓ All 4 fixtures present");
-        } else {
-            println!("- **Fixtures Status**: ✗ Missing fixtures: {:?}", missing_fixtures);
+        println!("\n## Checks");
+        for c in &checks {
+            let mark = if c.skipped { "⚠ SKIPPED" } else if c.ok { "✓ PASS" } else { "✗ FAILED" };
+            println!("- **{}**: {}", c.name, mark);
+            for line in &c.detail {
+                println!("    - {}", line);
+            }
         }
 
         println!("\n## Overall Status");

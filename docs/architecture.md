@@ -172,5 +172,35 @@ The hardware boundary separates the high-level compiler planner from the physica
                                                             └── FileExportProvider (JSON export)
 ```
 
-- **HardwareRequest**: Models a typed transaction representing a physical operation (Synthesis, Sequencing, or Destructive deletion).
-- **Provider Trait**: Standardizes the execution boundary. Other crates implement `Provider` to interface with lab synthesizers or custom sequencing hardware.
+- **HardwareRequest**: Models a typed transaction representing a physical operation (Synthesis, Sequencing, or Destructive deletion). Lives in `nucle_lang::hardware` — that module only ever defines and collects request *types*; it does not implement an execution trait itself. (An earlier `HardwareBridge` trait duplicated that concern with zero implementations and was removed in favor of `Provider` below, so there is exactly one execution-side trait, not two unrelated ones.)
+- **Provider Trait**: The sole execution boundary, defined in `nucle_hardware::provider`. Real vendor adapters (Twist, IDT, Illumina, Oxford Nanopore) would implement it in their own module under `nucle_hardware/src/`, once the request model has been exercised via `MockProvider`/`FileExportProvider` for a while — see the "Deferred" section of the NucleOS action plan for why this is intentionally not done yet.
+- **`nucle hardware export`**: The CLI entry point. It first runs the compiler's own effect/confirmation check (`nucle_lang::typeck::check_program`) — a `.nsl` program missing `confirm hardware`/`confirm physical_key` in source is rejected before its requests are ever collected. It then requires an explicit `--confirm` flag whenever the collected batch contains any non-`Pure` effect, as a second, operator-level acknowledgment distinct from the language-level one. `--provider` selects `file-export` (default, writes to `--output`) or `mock` (dry run, nothing persisted); an unrecognized name (e.g. a vendor like `twist`) is accepted but falls back to `file-export` with a printed notice, since no vendor-specific adapter exists yet.
+
+## `nucle doctor`
+
+Environment sanity check, run from the workspace root, so a confusing bug
+report can first be ruled out as "the environment isn't what we think it is."
+Each check reports pass/fail/skipped independently rather than a single
+opaque status:
+
+- **Workspace crate versions** — reads every crate's `Cargo.toml` and checks
+  it inherits `version.workspace = true` rather than a hardcoded override
+  (the actual mechanism that keeps workspace versions consistent, not a
+  runtime comparison of values Cargo already guarantees are equal).
+- **Presets package manifest** — runs the same manifest validation
+  `nucle package verify` uses (non-empty name/exports, known export kinds).
+- **Standard fixtures present** — checks `docs/examples/fixtures/` has the
+  expected text/binary/FASTA/image files and the `project_tree/` directory.
+- **Example programs parse** — actually lexes and parses every `.nsl` file
+  under `docs/examples/` (excluding `failures/`), not just checking they exist.
+- **Failure-mode examples parse** — same, but for `docs/examples/failures/`:
+  those programs are supposed to fail *type checking* by design, so this
+  only asserts they're still syntactically valid NucleScript.
+- **VFS write/read roundtrip** — since `NucleOS` holds no on-disk state, this
+  runs a real `dna_write`/`dna_read` roundtrip against an ephemeral in-memory
+  instance as the VFS pipeline's equivalent of a scratch read/write check.
+
+A check that can't run at all from the current directory (e.g. a directory
+genuinely doesn't exist) is reported `skipped`, not `failed` — it degrades
+gracefully rather than treating "couldn't check" the same as "checked and
+it's broken."

@@ -28,9 +28,11 @@ pub struct HardwareRequest {
     pub detail: RequestType,
 }
 
-pub trait HardwareBridge {
-    fn submit(&self, request: &HardwareRequest) -> Result<String, String>;
-}
+// The execution-side trait for submitting these requests to a provider
+// lives in `nucle_hardware::Provider`, not here — this module only ever
+// defines and collects request *types*. An earlier `HardwareBridge` trait
+// duplicated that concern with zero implementations; it was removed rather
+// than kept alongside `Provider` as a second, unrelated execution trait.
 
 pub fn collect_hardware_requests(program: &Program) -> Vec<HardwareRequest> {
     lower_program(program)
