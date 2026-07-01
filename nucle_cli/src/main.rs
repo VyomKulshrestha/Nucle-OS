@@ -158,6 +158,15 @@ enum Commands {
         redundancy: usize,
     },
 
+    /// Run compile-only validation on a NucleScript source file
+    Check {
+        /// NucleScript source file to check
+        source: String,
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Run a NucleScript source file (.nsl)
     Run {
         /// NucleScript source file to compile and execute
@@ -256,6 +265,7 @@ fn main() {
         Commands::Pipeline { files, size, profile, coverage, redundancy } => {
             cmd_pipeline(files, size, &profile, coverage, redundancy, cli.json)
         }
+        Commands::Check { source, json } => cmd_check(&source, cli.json || json),
         Commands::Run { source } => cmd_run(&source),
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
@@ -792,6 +802,43 @@ fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: boo
             );
         }
         println!("╚══════════════════════════════════════════════════════════════════════════════════════════════════╝");
+    }
+}
+
+fn cmd_check(source: &str, json: bool) {
+    let report = match nucle_lang::check_source_file(source) {
+        Ok(report) => report,
+        Err(e) => {
+            if json {
+                let err_report = serde_json::json!({
+                    "ok": false,
+                    "diagnostics": [{
+                        "level": "error",
+                        "message": e.to_string(),
+                    }]
+                });
+                println!("{}", serde_json::to_string_pretty(&err_report).unwrap());
+            } else {
+                eprintln!("NucleScript check failed: {}", e);
+            }
+            std::process::exit(1);
+        }
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    } else {
+        if report.ok {
+            println!("Check status: OK (no errors or warnings)");
+        } else {
+            for diagnostic in &report.diagnostics {
+                println!("{}: {}", diagnostic.level, diagnostic.message);
+            }
+        }
+    }
+
+    if !report.ok {
+        std::process::exit(1);
     }
 }
 

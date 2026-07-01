@@ -29,6 +29,57 @@ pub use playground::{analyze_source, PlaygroundDiagnostic, PlaygroundReport};
 pub use sim_backend::{compile_simulation, SimulationPlan, SimulationStep};
 pub use typeck::{Diagnostic, DiagnosticLevel, TypeReport};
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CheckReport {
+    pub ok: bool,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Run lex -> parse -> typeck -> effect-check on source text.
+pub fn check_source(source: &str) -> CheckReport {
+    let tokens = match Lexer::new(source).tokenize() {
+        Ok(tokens) => tokens,
+        Err(err) => {
+            return CheckReport {
+                ok: false,
+                diagnostics: vec![Diagnostic {
+                    level: DiagnosticLevel::Error,
+                    message: format!("lex error: {}", err),
+                }],
+            };
+        }
+    };
+
+    let program = match Parser::new(tokens).parse_program() {
+        Ok(program) => program,
+        Err(err) => {
+            return CheckReport {
+                ok: false,
+                diagnostics: vec![Diagnostic {
+                    level: DiagnosticLevel::Error,
+                    message: format!("parse error: {}", err),
+                }],
+            };
+        }
+    };
+
+    let report = typeck::check_program(&program);
+    CheckReport {
+        ok: !report.has_errors(),
+        diagnostics: report.diagnostics,
+    }
+}
+
+/// Run check on a source file.
+pub fn check_source_file(path: impl AsRef<Path>) -> Result<CheckReport, CompileError> {
+    let path = path.as_ref();
+    let source = std::fs::read_to_string(path).map_err(|source| CompileError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    Ok(check_source(&source))
+}
+
 /// Compile source text through lexer, parser, type checker, and VFS codegen.
 pub fn compile(source: &str) -> Result<CompiledPlan, CompileError> {
     let tokens = Lexer::new(source).tokenize()?;
