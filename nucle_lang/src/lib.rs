@@ -9,6 +9,7 @@ pub mod codegen;
 pub mod effects;
 pub mod hardware;
 pub mod lexer;
+pub mod lockfile;
 pub mod middle;
 pub mod package;
 pub mod parser;

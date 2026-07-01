@@ -1,0 +1,103 @@
+//! Package lock file: records the exact manifest checksum a package was
+//! resolved against, so `nucle package verify` can detect drift between a
+//! package's registry entry and what's actually installed.
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+pub const LOCK_FILE_NAME: &str = "nucle.lock";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LockedPackage {
+    pub name: String,
+    pub version: String,
+    pub import_source: String,
+    pub checksum: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LockFile {
+    pub packages: Vec<LockedPackage>,
+}
+
+/// SHA-256 checksum of a package manifest's raw JSON text.
+pub fn compute_checksum(manifest_json: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(manifest_json.as_bytes());
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+impl LockFile {
+    pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(s)
+    }
+
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub fn find(&self, import_source: &str) -> Option<&LockedPackage> {
+        self.packages.iter().find(|p| p.import_source == import_source)
+    }
+
+    /// Insert or replace the locked entry for a package.
+    pub fn upsert(&mut self, entry: LockedPackage) {
+        if let Some(existing) = self.packages.iter_mut().find(|p| p.import_source == entry.import_source) {
+            *existing = entry;
+        } else {
+            self.packages.push(entry);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checksum_is_deterministic() {
+        let a = compute_checksum("{\"name\":\"x\"}");
+        let b = compute_checksum("{\"name\":\"x\"}");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn checksum_changes_with_content() {
+        let a = compute_checksum("{\"name\":\"x\"}");
+        let b = compute_checksum("{\"name\":\"y\"}");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn lock_file_roundtrips_through_json() {
+        let mut lock = LockFile::default();
+        lock.upsert(LockedPackage {
+            name: "@nuclescript/presets".into(),
+            version: "0.1.0".into(),
+            import_source: "nuclescript/presets".into(),
+            checksum: "abc123".into(),
+        });
+        let json = lock.to_json().unwrap();
+        let restored = LockFile::from_json(&json).unwrap();
+        assert_eq!(restored.find("nuclescript/presets").unwrap().checksum, "abc123");
+    }
+
+    #[test]
+    fn upsert_replaces_existing_entry() {
+        let mut lock = LockFile::default();
+        lock.upsert(LockedPackage {
+            name: "a".into(),
+            version: "0.1.0".into(),
+            import_source: "a/pkg".into(),
+            checksum: "old".into(),
+        });
+        lock.upsert(LockedPackage {
+            name: "a".into(),
+            version: "0.2.0".into(),
+            import_source: "a/pkg".into(),
+            checksum: "new".into(),
+        });
+        assert_eq!(lock.packages.len(), 1);
+        assert_eq!(lock.find("a/pkg").unwrap().checksum, "new");
+    }
+}

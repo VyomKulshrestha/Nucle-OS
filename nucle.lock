@@ -1,0 +1,10 @@
+{
+  "packages": [
+    {
+      "name": "@nuclescript/presets",
+      "version": "0.1.0",
+      "import_source": "nuclescript/presets",
+      "checksum": "dbd176e9c940f52e1f7b4741c4d7973bf2e16ac43fcb389ec34c0606e2773446"
+    }
+  ]
+}
