@@ -4,7 +4,25 @@
       "name": "@nuclescript/presets",
       "version": "0.1.0",
       "import_source": "nuclescript/presets",
-      "checksum": "dbd176e9c940f52e1f7b4741c4d7973bf2e16ac43fcb389ec34c0606e2773446"
+      "checksum": "45259750b108693a0b8a08d1f87839152b66b62b620e34f3c5777c57ecdcd58b"
+    },
+    {
+      "name": "@nuclescript/profiles",
+      "version": "0.1.0",
+      "import_source": "nuclescript/profiles",
+      "checksum": "1b284c0717ac1f06488cc174f00e74fd913665352131d09f1ad9e6b380552b37"
+    },
+    {
+      "name": "@nuclescript/benchmarks",
+      "version": "0.1.0",
+      "import_source": "nuclescript/benchmarks",
+      "checksum": "ada07cdc1c2984216919e6c72890d1a37be030b98fcd47d2f723b1c8d9f95874"
+    },
+    {
+      "name": "@nuclescript/recovery",
+      "version": "0.1.0",
+      "import_source": "nuclescript/recovery",
+      "checksum": "19eb9b798838977c2583ac3f1b27bc927073860d16f1ce156e098913db5fe9ec"
     }
   ]
 }

@@ -6,6 +6,16 @@ pub const PRESETS_PACKAGE: &str = "nuclescript/presets";
 pub const PRESETS_PACKAGE_NAME: &str = "@nuclescript/presets";
 pub const PRESETS_PACKAGE_VERSION: &str = "0.1.0";
 const PRESETS_MANIFEST_JSON: &str = include_str!("../../packages/nuclescript-presets/package.json");
+const PRESETS_SOURCE_NSL: &str = include_str!("../../packages/nuclescript-presets/src/presets.nsl");
+
+const PROFILES_MANIFEST_JSON: &str = include_str!("../../packages/nuclescript-profiles/package.json");
+const PROFILES_SOURCE_NSL: &str = include_str!("../../packages/nuclescript-profiles/src/profiles.nsl");
+
+const BENCHMARKS_MANIFEST_JSON: &str = include_str!("../../packages/nuclescript-benchmarks/package.json");
+const BENCHMARKS_SOURCE_NSL: &str = include_str!("../../packages/nuclescript-benchmarks/src/benchmarks.nsl");
+
+const RECOVERY_MANIFEST_JSON: &str = include_str!("../../packages/nuclescript-recovery/package.json");
+const RECOVERY_SOURCE_NSL: &str = include_str!("../../packages/nuclescript-recovery/src/recovery.nsl");
 
 /// `packages/registry.json` — the index of every package the CLI knows
 /// about. This is genuinely parsed at startup (not just present on disk):
@@ -48,8 +58,38 @@ pub fn registry_index() -> RegistryIndex {
 fn embedded_manifest_for_path(path: &str) -> Option<&'static str> {
     match path {
         "packages/nuclescript-presets/package.json" => Some(PRESETS_MANIFEST_JSON),
+        "packages/nuclescript-profiles/package.json" => Some(PROFILES_MANIFEST_JSON),
+        "packages/nuclescript-benchmarks/package.json" => Some(BENCHMARKS_MANIFEST_JSON),
+        "packages/nuclescript-recovery/package.json" => Some(RECOVERY_MANIFEST_JSON),
         _ => None,
     }
+}
+
+/// Source files embedded for lock-checksum purposes, keyed by the same
+/// `RegistryEntry.manifest` path convention as [`embedded_manifest_for_path`]
+/// — a package's checksum covers its manifest *and* its `.nsl` source, so
+/// editing the source (not just the manifest) is enough to trip a mismatch.
+fn embedded_sources_for_manifest(manifest_path: &str) -> Vec<&'static str> {
+    match manifest_path {
+        "packages/nuclescript-presets/package.json" => vec![PRESETS_SOURCE_NSL],
+        "packages/nuclescript-profiles/package.json" => vec![PROFILES_SOURCE_NSL],
+        "packages/nuclescript-benchmarks/package.json" => vec![BENCHMARKS_SOURCE_NSL],
+        "packages/nuclescript-recovery/package.json" => vec![RECOVERY_SOURCE_NSL],
+        _ => vec![],
+    }
+}
+
+/// The source file contents that make up a package's lock checksum,
+/// resolved by name or import source against `packages/registry.json`.
+pub fn checksum_sources(name_or_import: &str) -> Vec<&'static str> {
+    let Some(entry) = registry_index()
+        .packages
+        .into_iter()
+        .find(|e| e.name == name_or_import || e.import == name_or_import)
+    else {
+        return Vec::new();
+    };
+    embedded_sources_for_manifest(&entry.manifest)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +316,28 @@ mod tests {
     }
 
     #[test]
+    fn every_registered_package_resolves_and_validates() {
+        // Every package.json listed in packages/registry.json — not just
+        // presets — must have an embedded manifest, a valid, non-empty
+        // manifest, and every export must actually resolve. This is what
+        // would catch a package added to the registry but never wired into
+        // embedded_manifest_for_path/embedded_sources_for_manifest.
+        let index = registry_index();
+        assert!(index.packages.len() >= 4, "expected presets, profiles, benchmarks, and recovery to be registered");
+        for entry in &index.packages {
+            let manifest_json = find_package_manifest_json(&entry.name)
+                .unwrap_or_else(|| panic!("no embedded manifest for '{}' — check embedded_manifest_for_path", entry.name));
+            let manifest: PackageManifest = serde_json::from_str(manifest_json)
+                .unwrap_or_else(|e| panic!("manifest for '{}' is not valid JSON: {}", entry.name, e));
+            let errors = validate_manifest(&manifest);
+            assert!(errors.is_empty(), "manifest for '{}' failed validation: {:?}", entry.name, errors);
+
+            let sources = checksum_sources(&entry.name);
+            assert!(!sources.is_empty(), "no embedded source for '{}' — check embedded_sources_for_manifest", entry.name);
+        }
+    }
+
+    #[test]
     fn find_package_resolves_by_name_or_import() {
         assert!(find_package(PRESETS_PACKAGE_NAME).is_some());
         assert!(find_package(PRESETS_PACKAGE).is_some());
@@ -287,6 +349,33 @@ mod tests {
         let json = find_package_manifest_json(PRESETS_PACKAGE_NAME).unwrap();
         assert_eq!(json, PRESETS_MANIFEST_JSON);
         assert!(find_package_manifest_json("@nuclescript/does-not-exist").is_none());
+    }
+
+    #[test]
+    fn presets_package_exports_a_function() {
+        // Closes a real gap: PresetKind::Function existed with nothing to
+        // back it — zero packages exported one, so it was untested end to
+        // end. `archive_with_guarantee` is a real `fn` in presets.nsl.
+        let preset = resolve_import(PRESETS_PACKAGE, "archive_with_guarantee")
+            .expect("presets package should export archive_with_guarantee");
+        assert_eq!(preset.kind, PresetKind::Function);
+    }
+
+    #[test]
+    fn importing_the_exported_function_type_checks() {
+        // The language validates import existence at compile time but does
+        // not yet bind imported symbols into scope for use (see
+        // docs/examples/preset_imports.nsl) — so this checks the same thing
+        // that example does: the import itself compiles cleanly, for a
+        // Function-kind export specifically rather than only pool/pipeline
+        // ones.
+        let src = r#"
+            import { archive_with_guarantee } from "nuclescript/presets"
+        "#;
+        let tokens = crate::Lexer::new(src).tokenize().unwrap();
+        let program = crate::Parser::new(tokens).parse_program().unwrap();
+        let report = crate::typeck::check_program(&program);
+        assert!(!report.has_errors(), "expected import to type-check, got: {:?}", report.diagnostics);
     }
 
     #[test]

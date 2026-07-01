@@ -38,6 +38,11 @@
       "name": "illumina_recovery",
       "kind": "recovery_profile",
       "description": "Illumina consensus defaults for simulation and planning."
+    },
+    {
+      "name": "archive_with_guarantee",
+      "kind": "function",
+      "description": "Reusable archive workflow: protect data for a recovery guarantee, then store the result into a target pool."
     }
   ],
   "source": "src/presets.nsl",

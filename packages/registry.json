@@ -7,6 +7,27 @@
       "version": "0.1.0",
       "description": "Reference NucleScript pool, recovery, and pipeline presets.",
       "manifest": "packages/nuclescript-presets/package.json"
+    },
+    {
+      "name": "@nuclescript/profiles",
+      "import": "nuclescript/profiles",
+      "version": "0.1.0",
+      "description": "Illumina, Nanopore, and Twist hardware profile presets with recommended redundancy and measured error rates.",
+      "manifest": "packages/nuclescript-profiles/package.json"
+    },
+    {
+      "name": "@nuclescript/benchmarks",
+      "import": "nuclescript/benchmarks",
+      "version": "0.1.0",
+      "description": "Standard benchmark workload pool schemas and pipelines matching NucleOS's own fixture set.",
+      "manifest": "packages/nuclescript-benchmarks/package.json"
+    },
+    {
+      "name": "@nuclescript/recovery",
+      "import": "nuclescript/recovery",
+      "version": "0.1.0",
+      "description": "Consensus and recovery templates for turning a noisy channel into a recovered pool.",
+      "manifest": "packages/nuclescript-recovery/package.json"
     }
   ]
 }

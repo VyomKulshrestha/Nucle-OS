@@ -67,7 +67,10 @@ impl Parser {
         }
         self.expect(TokenKind::RParen, "')' after parameter list")?;
 
-        // Return type can be specified with `->` or `returns`
+        // Return type must be given explicitly with `->` or `returns` —
+        // a function that truly has no return value still writes
+        // `returns Void` (see docs/examples/failures/), rather than
+        // silently defaulting, so a return-type typo can't compile.
         let return_type = if self.check(TokenKind::Arrow) {
             self.advance();
             self.parse_type_expr()?
@@ -75,7 +78,10 @@ impl Parser {
             self.advance();
             self.parse_type_expr()?
         } else {
-            TypeExpr::Void
+            return Err(self.error_here(format!(
+                "expected '->' or 'returns' followed by a return type after parameters of function '{}'",
+                name
+            )));
         };
 
         self.expect(TokenKind::LBrace, "'{' to start function body")?;

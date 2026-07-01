@@ -16,7 +16,7 @@ fn test_valid_function_compilation() {
 #[test]
 fn test_duplicate_parameter_names() {
     let src = r#"
-        fn process_pool(source: Pool<Illumina>, source: Pool<Illumina>) {
+        fn process_pool(source: Pool<Illumina>, source: Pool<Illumina>) returns Void {
             // empty
         }
     "#;
@@ -36,7 +36,7 @@ fn test_undeclared_variable_in_function() {
     let src = r#"
         pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
         
-        fn process_pool(source: Pool<Illumina>) {
+        fn process_pool(source: Pool<Illumina>) returns Pool<Recovered> {
             let recovered: Pool<Recovered> = consensus_vote(undeclared_var, coverage: 10x)
         }
     "#;
@@ -74,7 +74,7 @@ fn test_function_arity_mismatch() {
     let src = r#"
         pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
         
-        fn process(source: Pool<Illumina>) {
+        fn process(source: Pool<Illumina>) returns Void {
             // empty
         }
 
@@ -97,7 +97,7 @@ fn test_function_argument_type_mismatch() {
     let src = r#"
         pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
         
-        fn process(source: Pool<Twist>) {
+        fn process(source: Pool<Twist>) returns Void {
             // empty
         }
 
@@ -111,6 +111,93 @@ fn test_function_argument_type_mismatch() {
             d.level == DiagnosticLevel::Error && d.message.contains("expects Pool<Twist>, but got Pool<Illumina>")
         }),
         "Expected diagnostics to contain argument type mismatch error, got: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn test_calling_destructive_function_requires_confirmation() {
+    // Calling a function is not automatically Pure/pre-confirmed just
+    // because it's wrapped in a function — the join effect of its body
+    // (here, an unconfirmed destructive delete) must propagate to the call
+    // site, exactly like a literal Destructive operation would.
+    let src = r#"
+        pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist }
+
+        fn purge() returns Void {
+            delete "old_archive.bin" from archive
+        }
+
+        let result: Void = purge()
+    "#;
+    let report = check_source(src);
+    assert!(!report.ok, "Expected unconfirmed destructive function call to fail");
+    assert!(
+        report.diagnostics.iter().any(|d| {
+            d.level == DiagnosticLevel::Error
+                && d.message.contains("result")
+                && d.message.contains("Destructive")
+                && d.message.contains("confirmation")
+        }),
+        "Expected diagnostics to flag the call-site confirmation, got: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn test_calling_confirmed_destructive_function_passes() {
+    let src = r#"
+        pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist }
+
+        fn purge() returns Void {
+            delete "old_archive.bin" from archive confirm physical_key
+        }
+
+        let result: Void = purge()
+    "#;
+    let report = check_source(src);
+    assert!(report.ok, "Expected confirmed destructive function call to pass, got: {:?}", report.diagnostics);
+}
+
+#[test]
+fn test_return_type_mismatch_is_rejected() {
+    let src = r#"
+        pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+
+        fn process_pool(source: Pool<Illumina>) returns Pool<Recovered> {
+            let noisy: Pool<Illumina, 0.35%> = simulate source under Illumina
+        }
+    "#;
+    let report = check_source(src);
+    assert!(!report.ok, "Expected return-type mismatch to fail");
+    assert!(
+        report.diagnostics.iter().any(|d| {
+            d.level == DiagnosticLevel::Error
+                && d.message.contains("process_pool")
+                && d.message.contains("Recovered")
+                && d.message.contains("Illumina")
+        }),
+        "Expected diagnostics to flag the return-type mismatch, got: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn test_missing_return_type_is_a_parse_error() {
+    let src = r#"
+        fn process(source: Pool<Illumina>) {
+            // no '->' or 'returns' before the body — must be rejected,
+            // not silently defaulted to Void.
+        }
+    "#;
+    let report = check_source(src);
+    assert!(!report.ok, "Expected missing return type to fail");
+    assert!(
+        report.diagnostics.iter().any(|d| {
+            d.level == DiagnosticLevel::Error
+                && (d.message.contains("return type") || d.message.contains("'returns'") || d.message.contains("'->'"))
+        }),
+        "Expected diagnostics to flag the missing return type, got: {:?}",
         report.diagnostics
     );
 }

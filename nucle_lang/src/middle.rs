@@ -1,7 +1,7 @@
 //! Bio-aware mid-level IR and optimizer for NucleScript.
 
 use crate::ast::*;
-use crate::effects::{expr_effect, operation_effect};
+use crate::effects::{expr_effect, function_table, operation_effect};
 use crate::probabilistic::{consensus_error_rate_percent, profile_error_rate_percent};
 use std::collections::HashMap;
 
@@ -48,6 +48,7 @@ pub enum MirOp {
 }
 
 pub fn lower_program(program: &Program) -> MirProgram {
+    let funcs = function_table(program);
     let pools: HashMap<_, _> = program
         .declarations
         .iter()
@@ -80,7 +81,7 @@ pub fn lower_program(program: &Program) -> MirProgram {
                     name: binding.name.clone(),
                     state,
                     error_rate_percent,
-                    effect: expr_effect(&binding.expr),
+                    effect: expr_effect(&binding.expr, &funcs, &mut std::collections::HashSet::new()),
                 });
             }
             Declaration::Operation(Operation::Store(store)) => {

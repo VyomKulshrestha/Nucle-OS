@@ -38,7 +38,11 @@ LetDecl             ::= 'let' Identifier ( ':' TypeExpr )? '=' Expr
                       | 'let' Identifier ':' 'Sequence' '=' 'seq' StringLiteral
                       | 'let' Identifier '=' 'seq' StringLiteral
 
-FunctionDecl        ::= 'fn' Identifier '(' FnParamList? ')' ( '->' | 'returns' ) TypeExpr? '{' Declaration* '}'
+FunctionDecl        ::= 'fn' Identifier '(' FnParamList? ')' ( '->' | 'returns' ) TypeExpr '{' Declaration* '}'
+                      // the return type is mandatory — a function with no
+                      // meaningful return value still writes `returns Void`
+                      // rather than omitting it; the parser rejects a
+                      // missing '->'/'returns' clause instead of defaulting
 FnParamList         ::= FnParam ( ',' FnParam )* ','?
 FnParam             ::= Identifier ':' TypeExpr
 

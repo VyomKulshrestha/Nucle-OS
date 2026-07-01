@@ -1,0 +1,45 @@
+{
+  "name": "@nuclescript/recovery",
+  "import": "nuclescript/recovery",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Consensus and recovery templates: reusable pool schemas and a simulate-then-consensus-vote function for turning a noisy channel into a recovered pool.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VyomKulshrestha/Nucle-OS.git",
+    "directory": "packages/nuclescript-recovery"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
+  "exports": [
+    {
+      "name": "recovery_archive",
+      "kind": "pool_schema",
+      "description": "Illumina archive defaults at 4x redundancy, tuned for consensus recovery workflows."
+    },
+    {
+      "name": "recovery_consensus_10x",
+      "kind": "recovery_profile",
+      "description": "Consensus-recovered pool binding at 10x coverage over an Illumina channel."
+    },
+    {
+      "name": "recovery_consensus_20x",
+      "kind": "recovery_profile",
+      "description": "Consensus-recovered pool binding at 20x coverage over an Illumina channel."
+    },
+    {
+      "name": "recover_with_consensus",
+      "kind": "function",
+      "description": "Simulates a source pool under Illumina and consensus-votes it at 10x coverage into a recovered pool."
+    }
+  ],
+  "source": "src/recovery.nsl",
+  "readme": "README.md"
+}

@@ -69,7 +69,9 @@ The language layer now exposes ecosystem-facing integration points:
   requests from effectful MIR so a hardware bridge can submit them without
   changing NucleScript source syntax.
 
-> See [docs/grammar.md](grammar.md) for the full formal syntax reference.
+> See [docs/grammar.md](grammar.md) for the full formal syntax reference and
+> [docs/effects.md](effects.md) for the effect model — including how effects
+> propagate through function calls, not just literal operations.
 
 ## NucleScript Playground
 
@@ -78,6 +80,7 @@ The language layer now exposes ecosystem-facing integration points:
 - **Endpoint**: Exposes `POST /analyze` returning `PlaygroundReport` as JSON containing compiler diagnostics, simulator steps, and optimizer notes.
 - **Frontend**: Serves a modern, glassmorphic dark-themed single-page app containing a code editor, real-time status indicators, and collapsible output cards.
 - **Execution**: Self-contained and synchronous, compiling in seconds with zero heavy async runtimes.
+- **Published standalone**: A self-contained snapshot of this workspace (verified to build independently from a fresh clone) is published at [github.com/Nuclescript/playground](https://github.com/Nuclescript/playground), so the playground can be run without cloning the full NucleOS source tree.
 
 ## Biological Constraints
 

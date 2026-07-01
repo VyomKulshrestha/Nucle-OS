@@ -30,6 +30,13 @@ the exact diagnostics a developer would hit:
   delete without the required `confirm physical_key` token. Fails type
   checking with: `delete 'old_archive.bin' from 'archive' has Destructive
   effect and requires explicit physical key confirmation`.
+- [`unconfirmed_function_delete.nsl`](unconfirmed_function_delete.nsl) — the
+  same unconfirmed delete, but wrapped inside a function and invoked via a
+  call site (`let result: Void = purge()`). Demonstrates that calling a
+  function is not automatically `Pure`/pre-confirmed: the join effect of the
+  function's body propagates to the call site, producing both the delete's
+  own error and a second `binding 'result' has Destructive effect and
+  requires explicit hardware confirmation` error.
 - [`../critical_redundancy_warning.nsl`](../critical_redundancy_warning.nsl) —
   a pool tagged `critical` with only 1x redundancy. Compiles, but the
   optimizer emits warnings: `pool 'archive' has 1x redundancy; critical files

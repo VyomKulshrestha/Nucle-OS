@@ -1,0 +1,20 @@
+// Consensus and recovery templates: reusable pool schemas and a function
+// that wraps the simulate -> consensus_vote workflow used throughout NucleOS
+// for turning a noisy channel into a recovered, error-budgeted pool.
+
+pool recovery_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+let recovery_noisy_10x: Pool<Illumina, 0.35%> = simulate recovery_archive under Illumina
+let recovery_consensus_10x: Pool<Recovered> = consensus_vote(recovery_noisy_10x, coverage: 10x)
+
+let recovery_noisy_20x: Pool<Illumina, 0.35%> = simulate recovery_archive under Illumina
+let recovery_consensus_20x: Pool<Recovered> = consensus_vote(recovery_noisy_20x, coverage: 20x)
+
+fn recover_with_consensus(source: Pool<Illumina>, guarantee: Recovery) returns Pool<Recovered> {
+    let noisy: Pool<Illumina, 0.35%> = simulate source under Illumina
+    let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+}

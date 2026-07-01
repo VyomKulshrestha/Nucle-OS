@@ -817,7 +817,51 @@ fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: boo
     }
 }
 
+/// Warn (never hard-fail) if any package a `.nsl` source file imports has
+/// drifted from what `nucle.lock` recorded. Best-effort: if the source
+/// can't be read/parsed, or there's no lock file, this silently does
+/// nothing — the real compile step reports the actual error either way.
+fn warn_on_lock_mismatch(source_path: &str) {
+    let Some(lock) = load_lock_file() else {
+        return;
+    };
+    let Ok(content) = fs::read_to_string(source_path) else {
+        return;
+    };
+    let Ok(tokens) = nucle_lang::Lexer::new(&content).tokenize() else {
+        return;
+    };
+    let Ok(program) = nucle_lang::Parser::new(tokens).parse_program() else {
+        return;
+    };
+
+    let mut checked = std::collections::HashSet::new();
+    for decl in &program.declarations {
+        let nucle_lang::Declaration::Import(import) = decl else {
+            continue;
+        };
+        if !checked.insert(import.source.clone()) {
+            continue;
+        }
+        let Some(locked) = lock.find(&import.source) else {
+            continue;
+        };
+        let Some(manifest_json) = nucle_lang::package::find_package_manifest_json(&import.source) else {
+            continue;
+        };
+        let sources = nucle_lang::package::checksum_sources(&import.source);
+        let actual = nucle_lang::lockfile::compute_checksum(manifest_json, &sources);
+        if actual != locked.checksum {
+            eprintln!(
+                "Warning: package '{}' has drifted from {} (locked={}, actual={}). Run 'nucle package lock' to refresh.",
+                import.source, nucle_lang::lockfile::LOCK_FILE_NAME, locked.checksum, actual
+            );
+        }
+    }
+}
+
 fn cmd_check(source: &str, json: bool) {
+    warn_on_lock_mismatch(source);
     let report = match nucle_lang::check_source_file(source) {
         Ok(report) => report,
         Err(e) => {
@@ -888,6 +932,7 @@ fn cmd_explain(source: &str) {
 }
 
 fn cmd_run(source: &str) {
+    warn_on_lock_mismatch(source);
     match nucle_lang::run_source_file(source) {
         Ok(report) => println!("{}", report),
         Err(e) => {
@@ -923,10 +968,6 @@ fn cmd_packages() {
     for export in manifest.exports {
         println!("  - {} [{}] {}", export.name, export.kind, export.description);
     }
-}
-/// Structural validation shared by `nucle package verify` and `nucle doctor`.
-fn validate_package_manifest(manifest: &nucle_lang::package::PackageManifest) -> Vec<String> {
-    nucle_lang::package::validate_manifest(manifest)
 }
 fn load_lock_file() -> Option<nucle_lang::lockfile::LockFile> {
     let content = fs::read_to_string(nucle_lang::lockfile::LOCK_FILE_NAME).ok()?;
@@ -982,7 +1023,8 @@ fn cmd_package(action: PackageAction, json: bool) {
             let checksum_status = match (load_lock_file(), nucle_lang::package::find_package_manifest_json(&name)) {
                 (Some(lock), Some(manifest_json)) => match lock.find(&manifest.import_source) {
                     Some(locked) => {
-                        let actual = nucle_lang::lockfile::compute_checksum(manifest_json);
+                        let sources = nucle_lang::package::checksum_sources(&name);
+                        let actual = nucle_lang::lockfile::compute_checksum(manifest_json, &sources);
                         if actual == locked.checksum {
                             "match".to_string()
                         } else {
@@ -1058,15 +1100,14 @@ fn cmd_package(action: PackageAction, json: bool) {
             let mut lock = load_lock_file().unwrap_or_default();
             let index = nucle_lang::package::registry_index();
             for entry in &index.packages {
-                let Some(manifest_json) = nucle_lang::package::find_package_manifest_json(&entry.name) else {
+                let (Some(manifest), Some(manifest_json)) = (
+                    nucle_lang::package::find_package(&entry.name),
+                    nucle_lang::package::find_package_manifest_json(&entry.name),
+                ) else {
                     continue;
                 };
-                lock.upsert(nucle_lang::lockfile::LockedPackage {
-                    name: entry.name.clone(),
-                    version: entry.version.clone(),
-                    import_source: entry.import.clone(),
-                    checksum: nucle_lang::lockfile::compute_checksum(manifest_json),
-                });
+                let sources = nucle_lang::package::checksum_sources(&entry.name);
+                lock.upsert(nucle_lang::lockfile::generate(&manifest, manifest_json, &sources));
             }
             let content = lock.to_json().unwrap();
             if let Err(e) = fs::write(nucle_lang::lockfile::LOCK_FILE_NAME, &content) {

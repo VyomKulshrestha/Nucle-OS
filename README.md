@@ -89,7 +89,7 @@ The execution boundary between compiled NucleScript plans and real lab hardware.
 # Build the entire workspace
 cargo build --workspace
 
-# Run all tests (270+ tests)
+# Run all tests (300+ tests)
 cargo test --workspace
 
 # Run the CLI
@@ -245,7 +245,7 @@ $ nucle store README.md -r 4
 ## NucleScript — Declarative DNA Operations Language
 
 > [!NOTE]
-> **Official Language & Preset Ecosystem:** Visit the [**@Nuclescript Organization**](https://github.com/orgs/Nuclescript) or browse official language modules in our [**Packages Registry**](https://github.com/orgs/Nuclescript/packages).
+> **Official Language & Preset Ecosystem:** Visit the [**Nuclescript Organization**](https://github.com/Nuclescript) — official packages live in the [**Packages Registry**](https://github.com/orgs/Nuclescript/packages), and the interactive web playground is published standalone at [**Nuclescript/playground**](https://github.com/Nuclescript/playground).
 
 NucleScript is a domain-specific programming language for DNA storage
 operations. NucleScript source files use the `.nsl` extension. A program
@@ -343,16 +343,27 @@ import {
 } from "nuclescript/presets"
 ```
 
-The first NucleScript package is `@nuclescript/presets` version `0.1.0`,
-imported in source as `nuclescript/presets`. Its manifest,
-source, and changelog live under `packages/nuclescript-presets/`, with a
-registry index at `packages/registry.json` — the CLI resolves packages by
-reading that file directly, so adding an entry there is what makes a new
-package discoverable. List or inspect bundled packages with:
+Four official packages ship with this repository and are published to the
+[Nuclescript org's package registry](https://github.com/orgs/Nuclescript/packages),
+each versioned independently from NucleOS releases:
+
+| Package | Import source | Purpose |
+|---|---|---|
+| `@nuclescript/presets` | `nuclescript/presets` | Baseline archive pool schemas, a reliable-store pipeline, and an `archive_with_guarantee` function |
+| `@nuclescript/profiles` | `nuclescript/profiles` | Illumina/Nanopore/Twist pool presets at optimizer-recommended redundancy, plus per-profile simulate functions |
+| `@nuclescript/benchmarks` | `nuclescript/benchmarks` | Pool schemas and pipelines matching the `docs/examples/fixtures/` workload set |
+| `@nuclescript/recovery` | `nuclescript/recovery` | Consensus/recovery pool bindings and a `recover_with_consensus` function |
+
+Each package's manifest, source, README, and changelog live under
+`packages/nuclescript-<name>/`, with a registry index at
+`packages/registry.json` — the CLI resolves packages by reading that file
+directly, so adding an entry there is what makes a new package discoverable.
+List or inspect bundled packages with:
 
 ```bash
 nucle packages                          # quick listing of the bundled presets package
 nucle package list                      # full registry.json index
+nucle package inspect "@nuclescript/profiles"
 ```
 
 Install and verify packages by name (resolved against `packages/registry.json`,
@@ -360,7 +371,7 @@ not a filesystem path):
 
 ```bash
 nucle package install "@nuclescript/presets"
-nucle package lock                      # write/update nucle.lock with manifest checksums
+nucle package lock                      # write/update nucle.lock with manifest + source checksums
 nucle package verify "@nuclescript/presets"   # checks manifest shape + checksum against nucle.lock
 ```
 
@@ -378,6 +389,50 @@ Current NucleScript result summary:
 Compiler diagnostics are surfaced before execution. For example,
 `docs/examples/critical_redundancy_warning.nsl` warns when critical data uses
 only `1x` redundancy.
+
+`nucle check` runs lex → parse → typecheck without touching hardware or
+executing anything — the fast path for CI or an editor integration:
+
+```bash
+$ nucle check docs/examples/failures/missing_confirmation.nsl
+error: delete 'old_archive.bin' from 'archive' has Destructive effect and requires explicit physical key confirmation
+```
+
+`nucle explain` goes further, turning MIR optimizer notes and the program's
+full effect summary (including effects propagated through function calls —
+calling a function that deletes something isn't automatically safe just
+because it's wrapped in a function) into plain-language explanations. See
+[docs/effects.md](docs/effects.md) for the full effect model:
+
+```bash
+$ nucle explain docs/examples/critical_redundancy_warning.nsl
+--- Execution & Safety Explanation ---
+
+### Optimization Decisions:
+- optimiser raised redundancy for 'sample_a.txt' from 1x to 4x under Illumina. Redundancy was increased to satisfy statistical recovery guarantees under this profile's specific error profile.
+
+### Safety & Confirmation Summary:
+- pool 'archive' (Pure): Pure effect. [SAFE (Pure)]
+- store 'sample_a.txt' (Synthesis): Synthesis effect. [CONFIRMED]
+```
+
+### Playground
+
+`nucle_playground` is a self-contained `tiny_http` server exposing
+`POST /analyze`, wired directly to the same `analyze_source` API `nucle
+check --json` uses internally, plus a plain HTML/JS frontend (no build
+tooling) for pasting and analyzing `.nsl` programs interactively:
+
+```bash
+cargo run -p nucle_playground
+# open http://127.0.0.1:8080
+```
+
+It's also published standalone at
+[**Nuclescript/playground**](https://github.com/Nuclescript/playground) — a
+self-contained snapshot of this workspace (verified to build independently
+from a fresh clone) for anyone who wants to run the playground without
+cloning this repo directly.
 
 ---
 
@@ -427,6 +482,13 @@ nucle pipeline -f 100 -s 1024 -p illumina -c 10 -r 4
 # Run a NucleScript source file
 nucle run docs/examples/store.nsl
 
+# Compile-only validation: lex -> parse -> typecheck, no hardware, no execution
+nucle check docs/examples/store.nsl
+nucle check docs/examples/store.nsl --json
+
+# Explain effect summary and optimizer decisions in plain language
+nucle explain docs/examples/critical_redundancy_warning.nsl
+
 # Show an optimized no-hardware NucleScript plan
 nucle plan docs/examples/probabilistic_recovery.nsl
 
@@ -465,9 +527,9 @@ nucle agent "pool status"
 | `nucle_index` | 28 | Primers, CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 48 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 34 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects, MIR optimizer, simulation backend, table-driven package registry, lock file checksums, hardware request collection, VFS lowering |
+| `nucle_lang` | 66 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, `nucle check`/`nucle explain` integration tests |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
-| **Total** | **273 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **305 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
@@ -483,8 +545,9 @@ nucle_agent/     — Agent interface (ReAct planner)
 nucle_lang/      — NucleScript compiler, MIR optimizer, package registry, lock files, ecosystem APIs, simulation backend, and VFS backend
 nucle_hardware/  — Hardware provider adapters (Provider trait, MockProvider, FileExportProvider)
 nucle_cli/       — Command-line interface
+nucle_playground/ — Interactive web playground (tiny_http server + static frontend), also published at github.com/Nuclescript/playground
 docs/            — Architecture notes, paper references, and runnable examples/fixtures
-packages/        — NucleScript package registry (packages/registry.json) and package releases
+packages/        — NucleScript package registry (packages/registry.json) and package releases (presets, profiles, benchmarks, recovery)
 ```
 
 ---

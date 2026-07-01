@@ -1,0 +1,65 @@
+{
+  "name": "@nuclescript/profiles",
+  "import": "nuclescript/profiles",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Illumina, Nanopore, and Twist hardware profile presets with recommended redundancy and measured error rates.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VyomKulshrestha/Nucle-OS.git",
+    "directory": "packages/nuclescript-profiles"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
+  "exports": [
+    {
+      "name": "illumina_standard",
+      "kind": "pool_schema",
+      "description": "Illumina archive defaults at the optimizer-recommended 4x redundancy for low coverage."
+    },
+    {
+      "name": "illumina_high_coverage",
+      "kind": "pool_schema",
+      "description": "Illumina archive defaults at 3x redundancy, recommended once coverage reaches 10x or more."
+    },
+    {
+      "name": "nanopore_standard",
+      "kind": "pool_schema",
+      "description": "Nanopore archive defaults at the optimizer-recommended 8x redundancy for low coverage."
+    },
+    {
+      "name": "nanopore_high_coverage",
+      "kind": "pool_schema",
+      "description": "Nanopore archive defaults at 6x redundancy, recommended once coverage reaches 10x or more."
+    },
+    {
+      "name": "twist_standard",
+      "kind": "pool_schema",
+      "description": "Twist synthesis defaults at 2x redundancy for its very low error rate."
+    },
+    {
+      "name": "recommended_pool_for_illumina",
+      "kind": "function",
+      "description": "Simulates a target pool under Illumina and returns its measured 0.35% error-rate binding."
+    },
+    {
+      "name": "recommended_pool_for_nanopore",
+      "kind": "function",
+      "description": "Simulates a target pool under Nanopore and returns its measured 5.00% error-rate binding."
+    },
+    {
+      "name": "recommended_pool_for_twist",
+      "kind": "function",
+      "description": "Simulates a target pool under Twist and returns its measured 0.03% error-rate binding."
+    }
+  ],
+  "source": "src/profiles.nsl",
+  "readme": "README.md"
+}

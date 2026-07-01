@@ -1,0 +1,50 @@
+// Reference hardware profile presets: recommended pool defaults per
+// synthesis/sequencing platform, matching NucleOS's own optimizer
+// recommendations (nucle_lang::middle::recommended_redundancy) and
+// measured error rates (nucle_lang::probabilistic::profile_error_rate_percent).
+
+pool illumina_standard: DnaPool {
+    codec: Ternary,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+pool illumina_high_coverage: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+pool nanopore_standard: DnaPool {
+    codec: Ternary,
+    redundancy: 8x,
+    profile: Nanopore
+}
+
+pool nanopore_high_coverage: DnaPool {
+    codec: Ternary,
+    redundancy: 6x,
+    profile: Nanopore
+}
+
+pool twist_standard: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Twist
+}
+
+let illumina_noise_profile: Pool<Illumina, 0.35%> = simulate illumina_standard under Illumina
+let nanopore_noise_profile: Pool<Nanopore, 5.00%> = simulate nanopore_standard under Nanopore
+let twist_noise_profile: Pool<Twist, 0.03%> = simulate twist_standard under Twist
+
+fn recommended_pool_for_illumina(target: Pool<Illumina>) returns Pool<Illumina, 0.35%> {
+    let noisy: Pool<Illumina, 0.35%> = simulate target under Illumina
+}
+
+fn recommended_pool_for_nanopore(target: Pool<Nanopore>) returns Pool<Nanopore, 5.00%> {
+    let noisy: Pool<Nanopore, 5.00%> = simulate target under Nanopore
+}
+
+fn recommended_pool_for_twist(target: Pool<Twist>) returns Pool<Twist, 0.03%> {
+    let noisy: Pool<Twist, 0.03%> = simulate target under Twist
+}

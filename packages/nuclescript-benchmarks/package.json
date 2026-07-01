@@ -1,0 +1,65 @@
+{
+  "name": "@nuclescript/benchmarks",
+  "import": "nuclescript/benchmarks",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Standard benchmark workload pool schemas and pipelines matching NucleOS's own fixture set (text, binary, FASTA, image).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VyomKulshrestha/Nucle-OS.git",
+    "directory": "packages/nuclescript-benchmarks"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
+  "exports": [
+    {
+      "name": "benchmark_text_archive",
+      "kind": "pool_schema",
+      "description": "Illumina archive defaults sized for small text payloads."
+    },
+    {
+      "name": "benchmark_binary_archive",
+      "kind": "pool_schema",
+      "description": "Illumina archive defaults sized for binary payloads at higher redundancy."
+    },
+    {
+      "name": "benchmark_fasta_archive",
+      "kind": "pool_schema",
+      "description": "Twist archive defaults sized for FASTA sequence data."
+    },
+    {
+      "name": "benchmark_image_archive",
+      "kind": "pool_schema",
+      "description": "Nanopore archive defaults sized for image payloads at higher redundancy."
+    },
+    {
+      "name": "small_text_workload",
+      "kind": "pipeline",
+      "description": "Encode, protect, store, and verify a small text file end to end."
+    },
+    {
+      "name": "binary_archive_workload",
+      "kind": "pipeline",
+      "description": "Encode, protect, store, and verify a binary archive file end to end."
+    },
+    {
+      "name": "fasta_workload",
+      "kind": "pipeline",
+      "description": "Encode, protect, store, and verify a FASTA file end to end."
+    },
+    {
+      "name": "image_workload",
+      "kind": "pipeline",
+      "description": "Encode, protect, store, and verify an image payload end to end."
+    }
+  ],
+  "source": "src/benchmarks.nsl",
+  "readme": "README.md"
+}

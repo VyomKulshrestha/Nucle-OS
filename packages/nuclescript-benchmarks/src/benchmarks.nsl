@@ -1,0 +1,56 @@
+// Standard benchmark workload templates, matching the fixture shapes NucleOS
+// ships under docs/examples/fixtures/: small text, a binary archive, FASTA
+// sequence data, and an image payload. Each pool picks a profile/redundancy
+// combination appropriate to that workload's size and error tolerance.
+
+pool benchmark_text_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+pool benchmark_binary_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+pool benchmark_fasta_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Twist
+}
+
+pool benchmark_image_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 4x,
+    profile: Nanopore
+}
+
+pipeline small_text_workload {
+    encode "small_text.txt" using Ternary,
+    protect with redundancy 2x,
+    store into benchmark_text_archive,
+    verify roundtrip
+}
+
+pipeline binary_archive_workload {
+    encode "archive.bin" using Ternary,
+    protect with redundancy 4x,
+    store into benchmark_binary_archive,
+    verify roundtrip
+}
+
+pipeline fasta_workload {
+    encode "sample.fasta" using Ternary,
+    protect with redundancy 2x,
+    store into benchmark_fasta_archive,
+    verify roundtrip
+}
+
+pipeline image_workload {
+    encode "image.png" using Ternary,
+    protect with redundancy 4x,
+    store into benchmark_image_archive,
+    verify roundtrip
+}

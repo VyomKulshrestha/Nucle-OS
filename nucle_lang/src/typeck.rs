@@ -146,17 +146,25 @@ impl TypeChecker {
             return;
         }
 
-        let inferred = match self.infer_expr(&binding.expr) {
-            Some(inferred) => inferred,
-            None => return,
-        };
-        let effect = expr_effect(&binding.expr);
-        if !expr_has_required_confirmation(&binding.expr) {
+        // Effect/confirmation checking must run regardless of whether the
+        // expression produces a Pool type: `infer_expr` returns `None` both
+        // for genuine errors (already reported inside it) AND for a
+        // perfectly valid call to a Void/DnaFile-returning function — the
+        // common shape for a side-effecting function. Bailing out on `None`
+        // before this check would silently skip confirmation checking for
+        // exactly that case.
+        let effect = expr_effect(&binding.expr, &self.functions, &mut std::collections::HashSet::new());
+        if !expr_has_required_confirmation(&binding.expr, &self.functions, &mut std::collections::HashSet::new()) {
             self.report.error(format!(
                 "binding '{}' has {} effect and requires explicit hardware confirmation",
                 binding.name, effect
             ));
         }
+
+        let inferred = match self.infer_expr(&binding.expr) {
+            Some(inferred) => inferred,
+            None => return,
+        };
 
         match &binding.annotation {
             TypeExpr::Pool(expected) => {
@@ -322,6 +330,44 @@ impl TypeChecker {
 
         for decl in &func.body {
             body_checker.check_declaration_single(decl);
+        }
+
+        // Return-type validation: the language has no explicit `return`
+        // expression (a function body is a statement sequence), so the only
+        // well-defined case to check is a `Pool<...>`-returning function
+        // whose last statement is a `let` binding producing a pool type —
+        // that's the shape every current example uses to "return" a value.
+        // A `Void`/`File`/`DnaFile`/etc. return type, or a body ending in a
+        // non-`let` statement (e.g. `store ... into ...`), isn't validated:
+        // there's no reliable inferred value to compare against without
+        // inventing semantics the AST doesn't otherwise support.
+        if let TypeExpr::Pool(expected) = &func.return_type {
+            match func.body.last() {
+                Some(Declaration::Let(last_binding)) => {
+                    match body_checker.pool_bindings.get(&last_binding.name) {
+                        Some(actual) => {
+                            if actual.state != expected.state {
+                                self.report.error(format!(
+                                    "function '{}' is declared to return Pool<{}> but its body produces Pool<{}>",
+                                    func.name, expected.state, actual.state
+                                ));
+                            }
+                        }
+                        None => {
+                            self.report.error(format!(
+                                "function '{}' is declared to return Pool<{}> but its last binding does not produce a pool type",
+                                func.name, expected.state
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    self.report.error(format!(
+                        "function '{}' is declared to return Pool<{}> but its body does not end in a binding that produces one",
+                        func.name, expected.state
+                    ));
+                }
+            }
         }
 
         self.report.diagnostics.extend(body_checker.report.diagnostics);
