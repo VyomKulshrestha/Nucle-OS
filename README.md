@@ -316,7 +316,7 @@ $ nucle store README.md -r 4
 ## NucleScript — Declarative DNA Operations Language
 
 > [!NOTE]
-> **Official Language & Preset Ecosystem:** Visit the [**Nuclescript Organization**](https://github.com/Nuclescript) — official packages live in the [**Packages Registry**](https://github.com/orgs/Nuclescript/packages), and the interactive web playground is published standalone at [**Nuclescript/playground**](https://github.com/Nuclescript/playground).
+> **Official Language & Preset Ecosystem:** Visit the [**Nuclescript Organization**](https://github.com/Nuclescript) — official packages live in the [**Packages Registry**](https://github.com/orgs/Nuclescript/packages), and the interactive web playground is [**live in your browser**](https://nuclescript.github.io/playground/) or published standalone at [**Nuclescript/playground**](https://github.com/Nuclescript/playground).
 
 NucleScript is a domain-specific programming language for DNA storage
 operations. NucleScript source files use the `.nsl` extension. A program
@@ -489,20 +489,29 @@ $ nucle explain docs/examples/critical_redundancy_warning.nsl
 
 ### Playground
 
-`nucle_playground` is a self-contained `tiny_http` server with three tabs,
-each backed by the real engine (no reimplemented math, no mocked data):
+**🧪 [Try it live in your browser](https://nuclescript.github.io/playground/)**
+— no install, no download. `nucle_wasm` compiles the same compiler/codec/ECC
+engine to WebAssembly and runs it entirely client-side; a GitHub Actions
+workflow (`Nuclescript/playground`'s `.github/workflows/pages.yml`) rebuilds
+and redeploys it on every push, so it's always current.
 
-- **Write & Run** — `POST /analyze`, the same `analyze_source` API `nucle
-  check --json` uses internally. Paste a `.nsl` program, get diagnostics,
-  simulation steps, and optimizer notes.
-- **Benchmark Explorer** — `POST /benchmark`. Pick a codec/profile, drag the
-  redundancy slider, and density/GC%/cost/recovery-probability update live —
-  computed by `nucle_codec::benchmark` plus a real Reed-Solomon-aware
-  Monte-Carlo recovery estimate, not a lookup table.
-- **Pipeline Visualizer** — `POST /pipeline-demo`. Encodes real input through
-  the actual codec/ECC/noise engine and animates each strand through
+The playground has three tabs, each backed by the real engine (no
+reimplemented math, no mocked data):
+
+- **Write & Run** — the same `analyze_source` API `nucle check --json` uses
+  internally. Paste a `.nsl` program, get diagnostics, simulation steps, and
+  optimizer notes.
+- **Benchmark Explorer** — pick a codec/profile, drag the redundancy slider,
+  and density/GC%/cost/recovery-probability update live — computed by
+  `nucle_codec::benchmark` plus a real Reed-Solomon-aware Monte-Carlo
+  recovery estimate, not a lookup table.
+- **Pipeline Visualizer** — encodes real input through the actual
+  codec/ECC/noise engine and animates each strand through
   encode → synthesize/sequence (noise) → recover, including honest failures
   when redundancy/profile can't reconstruct the data.
+
+Prefer a native server over the browser build? `nucle_playground` is the
+same three tabs as a self-contained `tiny_http` server:
 
 ```bash
 cargo run -p nucle_playground
@@ -631,6 +640,8 @@ nucle_lang/      — NucleScript compiler, MIR optimizer, package registry, lock
 nucle_hardware/  — Hardware provider adapters (Provider trait, MockProvider, FileExportProvider)
 nucle_cli/       — Command-line interface
 nucle_playground/ — Interactive web playground (tiny_http server + static frontend), also published at github.com/Nuclescript/playground
+nucle_demo_core/ — Shared, I/O-free benchmark/pipeline-visualizer logic used by both nucle_playground and nucle_wasm
+nucle_wasm/      — Same playground compiled to WebAssembly; live at nuclescript.github.io/playground
 docs/            — Architecture notes, paper references, and runnable examples/fixtures
 packages/        — NucleScript package registry (packages/registry.json) and package releases (presets, profiles, benchmarks, recovery)
 ```
