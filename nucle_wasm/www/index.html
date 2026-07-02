@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NucleScript Playground</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0b0f19 0%, #111827 50%, #1e1b4b 100%);
+            --panel-bg: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-color: #6366f1;
+            --accent-hover: #4f46e5;
+            --accent-glow: rgba(99, 102, 241, 0.4);
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --error-color: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        header {
+            padding: 1.5rem 4rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            backdrop-filter: blur(12px);
+            background: rgba(11, 15, 25, 0.5);
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .logo-section h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            background: linear-gradient(to right, #a5b4fc, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.05em;
+        }
+
+        .logo-section p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 0.2rem;
+        }
+
+        nav.tabs {
+            display: flex;
+            gap: 0.5rem;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 0.3rem;
+        }
+
+        nav.tabs button {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.6rem 1.1rem;
+            border-radius: 7px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        nav.tabs button:hover {
+            color: var(--text-color);
+        }
+
+        nav.tabs button.active {
+            background: var(--accent-color);
+            color: white;
+            box-shadow: 0 2px 10px var(--accent-glow);
+        }
+
+        main {
+            flex: 1;
+            padding: 2.5rem 4rem;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
+        /* ---- Tab 1: Write & Run ---- */
+
+        .write-run-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+
+        .editor-container, .results-container, .control-panel, .viz-panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            backdrop-filter: blur(16px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+            transition: border-color 0.3s ease;
+        }
+
+        .editor-container:focus-within {
+            border-color: rgba(99, 102, 241, 0.4);
+        }
+
+        .panel-header {
+            padding: 1.2rem 1.5rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-header h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .textarea-wrapper {
+            flex: 1;
+            position: relative;
+            min-height: 450px;
+        }
+
+        textarea, input[type="text"] {
+            width: 100%;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: #e5e7eb;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            resize: none;
+        }
+
+        textarea {
+            height: 100%;
+            padding: 1.5rem;
+            tab-size: 4;
+        }
+
+        .panel-footer {
+            padding: 1.2rem 1.5rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .btn-analyze {
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 0.8rem 1.8rem;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px var(--accent-glow);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-analyze:hover {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px var(--accent-glow);
+        }
+
+        .btn-analyze:active {
+            transform: translateY(1px);
+        }
+
+        .btn-analyze:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .results-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            min-height: 450px;
+        }
+
+        .section-title {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 0.6rem;
+            font-weight: 600;
+        }
+
+        .diagnostics-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .diagnostic-item {
+            padding: 0.6rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6rem;
+            line-height: 1.4;
+        }
+
+        .diagnostic-item.error {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+        }
+
+        .diagnostic-item.warning {
+            background: rgba(245, 158, 11, 0.08);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            color: #fde047;
+        }
+
+        .empty-state {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            text-align: center;
+            padding: 2rem;
+            border: 1px dashed var(--border-color);
+            border-radius: 8px;
+        }
+
+        .step-list, .note-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .step-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--accent-color);
+            padding: 0.8rem 1rem;
+            border-radius: 0 6px 6px 0;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .note-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--warning-color);
+            padding: 0.8rem 1rem;
+            border-radius: 0 6px 6px 0;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
+
+        .status-badge {
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .status-badge.ok { background: rgba(16, 185, 129, 0.15); color: var(--success-color); }
+        .status-badge.fail { background: rgba(239, 68, 68, 0.15); color: var(--error-color); }
+        .status-badge.idle { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); }
+
+        /* ---- Tab 2: Benchmark Explorer ---- */
+
+        .benchmark-grid {
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 2rem;
+        }
+
+        .control-panel { padding: 1.5rem; gap: 1.3rem; }
+
+        .field { display: flex; flex-direction: column; gap: 0.5rem; }
+        .field label { font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
+        .field select, .field input[type="range"] { width: 100%; }
+
+        select {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 0.6rem 0.8rem;
+            border-radius: 8px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+        }
+
+        input[type="range"] {
+            accent-color: var(--accent-color);
+        }
+
+        .range-value {
+            font-family: 'Fira Code', monospace;
+            color: var(--accent-color);
+            font-weight: 600;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            padding: 1.5rem;
+        }
+
+        .metric-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.2rem;
+        }
+
+        .metric-card .metric-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            margin-bottom: 0.4rem;
+        }
+
+        .metric-card .metric-value {
+            font-size: 1.7rem;
+            font-weight: 700;
+            font-family: 'Fira Code', monospace;
+        }
+
+        .gc-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            height: 100px;
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .gc-bar {
+            flex: 1;
+            background: linear-gradient(to top, var(--accent-color), #a5b4fc);
+            border-radius: 3px 3px 0 0;
+            min-height: 2px;
+            transition: height 0.3s ease;
+        }
+
+        .callout {
+            margin: 0 1.5rem 1.5rem 1.5rem;
+            padding: 1rem;
+            border-radius: 8px;
+            background: rgba(245, 158, 11, 0.06);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+            font-size: 0.85rem;
+            color: #fde68a;
+            line-height: 1.5;
+        }
+
+        /* ---- Tab 3: Pipeline Visualizer ---- */
+
+        .pipeline-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: flex-end;
+            padding: 1.5rem;
+        }
+
+        .pipeline-controls .field { min-width: 200px; flex: 1; }
+        .pipeline-controls input[type="text"] {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.6rem 0.8rem;
+        }
+
+        .stage-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 1.5rem;
+            padding: 0 1.5rem 1.5rem 1.5rem;
+        }
+
+        .stage {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            min-height: 300px;
+        }
+
+        .stage h3 {
+            font-size: 0.9rem;
+            margin-bottom: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .strand-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .strand-block {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.6rem;
+            font-family: 'Fira Code', monospace;
+            font-weight: 600;
+            cursor: default;
+            opacity: 0;
+            transform: scale(0.5);
+            transition: opacity 0.4s ease, transform 0.4s ease, background 0.4s ease;
+        }
+
+        .strand-block.show { opacity: 1; transform: scale(1); }
+        .strand-block.clean { background: rgba(16, 185, 129, 0.25); border: 1px solid var(--success-color); color: #a7f3d0; }
+        .strand-block.parity-clean { background: rgba(99, 102, 241, 0.25); border: 1px solid var(--accent-color); color: #c7d2fe; }
+        .strand-block.corrupted { background: rgba(245, 158, 11, 0.3); border: 1px solid var(--warning-color); color: #fde68a; }
+        .strand-block.dropped { background: rgba(239, 68, 68, 0.3); border: 1px solid var(--error-color); color: #fca5a5; }
+
+        .recovery-result {
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.85rem;
+            word-break: break-word;
+            margin-top: 0.5rem;
+        }
+
+        .recovery-result.success { background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success-color); color: #a7f3d0; }
+        .recovery-result.failure { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--error-color); color: #fca5a5; }
+
+        .legend {
+            display: flex;
+            gap: 1.2rem;
+            flex-wrap: wrap;
+            padding: 0 1.5rem 1rem 1.5rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+        .legend .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+        footer {
+            padding: 2rem;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border-color);
+        }
+
+        @media (max-width: 1000px) {
+            .write-run-grid, .benchmark-grid, .stage-columns { grid-template-columns: 1fr; }
+            header, main { padding-left: 1.5rem; padding-right: 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo-section">
+            <h1>NucleScript Playground</h1>
+            <p>Interactive compiler, benchmark explorer, and pipeline visualizer</p>
+        </div>
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="tab-write-run">📝 Write &amp; Run</button>
+            <button class="tab-btn" data-tab="tab-benchmark">📊 Benchmark Explorer</button>
+            <button class="tab-btn" data-tab="tab-pipeline">🧬 Pipeline Visualizer</button>
+        </nav>
+        <div id="status-container">
+            <span class="status-badge idle">Ready</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- ============ TAB 1: WRITE & RUN ============ -->
+        <section id="tab-write-run" class="tab-panel active">
+            <div class="write-run-grid">
+                <div class="editor-container">
+                    <div class="panel-header">
+                        <h2><span>📝</span> Source Code</h2>
+                    </div>
+                    <div class="textarea-wrapper">
+                        <textarea id="editor" spellcheck="false">pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+
+let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+
+fn recover_pool(source: Pool<Illumina>) returns Pool<Recovered> {
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}
+
+let final: Pool<Recovered> = recover_pool(noisy)</textarea>
+                    </div>
+                    <div class="panel-footer">
+                        <span style="font-size: 0.85rem; color: var(--text-muted)">NucleScript v0.1.0</span>
+                        <button class="btn-analyze" id="btn-analyze">
+                            <span>⚡</span> Run Analysis
+                        </button>
+                    </div>
+                </div>
+
+                <div class="results-container">
+                    <div class="panel-header">
+                        <h2><span>🔍</span> Analysis Results</h2>
+                    </div>
+                    <div class="results-content" id="results-content">
+                        <div class="empty-state">
+                            Write some code and run analysis to see compiler output, simulation steps, and optimizer notes.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ TAB 2: BENCHMARK EXPLORER ============ -->
+        <section id="tab-benchmark" class="tab-panel">
+            <div class="benchmark-grid">
+                <div class="control-panel">
+                    <div class="panel-header" style="margin: -1.5rem -1.5rem 0.5rem -1.5rem;">
+                        <h2><span>🎛️</span> Controls</h2>
+                    </div>
+                    <div class="field">
+                        <label for="bench-codec">Codec</label>
+                        <select id="bench-codec">
+                            <option value="ternary">Ternary Rotating Cipher</option>
+                            <option value="ternary-overlap">Ternary (overlap)</option>
+                            <option value="yinyang">Yin-Yang</option>
+                            <option value="fountain">DNA Fountain</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="bench-profile">Hardware Profile</label>
+                        <select id="bench-profile">
+                            <option value="illumina">Illumina</option>
+                            <option value="nanopore">Oxford Nanopore</option>
+                            <option value="twist">Twist Bioscience</option>
+                            <option value="idt">IDT oPools</option>
+                            <option value="column-synthesis">Column Synthesis</option>
+                            <option value="pristine">Pristine (no errors)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="bench-redundancy">Redundancy (RS parity strands): <span class="range-value" id="bench-redundancy-value">2</span></label>
+                        <input type="range" id="bench-redundancy" min="0" max="10" value="2" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="bench-data">Sample data</label>
+                        <textarea id="bench-data" rows="4" style="border:1px solid var(--border-color); border-radius:8px; background:rgba(255,255,255,0.04); padding:0.6rem;">The quick brown fox jumps over the lazy dog. NucleOS benchmarks all available DNA codecs.</textarea>
+                    </div>
+                </div>
+
+                <div class="viz-panel">
+                    <div class="panel-header">
+                        <h2><span>📊</span> Live Results</h2>
+                        <span class="status-badge idle" id="bench-status">Idle</span>
+                    </div>
+                    <div class="metric-grid" id="bench-metrics">
+                        <div class="metric-card"><div class="metric-label">Density</div><div class="metric-value" id="m-density">—</div></div>
+                        <div class="metric-card"><div class="metric-label">Avg GC%</div><div class="metric-value" id="m-gc">—</div></div>
+                        <div class="metric-card"><div class="metric-label">Strands</div><div class="metric-value" id="m-strands">—</div></div>
+                        <div class="metric-card"><div class="metric-label">Nucleotides</div><div class="metric-value" id="m-nt">—</div></div>
+                        <div class="metric-card"><div class="metric-label">Est. Cost</div><div class="metric-value" id="m-cost">—</div></div>
+                        <div class="metric-card"><div class="metric-label">Recovery Prob.</div><div class="metric-value" id="m-recovery">—</div></div>
+                    </div>
+                    <div class="section-title" style="padding: 0 1.5rem;">GC Content Distribution (10 bins, 0%&ndash;100%)</div>
+                    <div class="gc-chart" id="gc-chart"></div>
+                    <div class="callout">
+                        <strong>Why doesn't recovery probability improve with more redundancy on Illumina/Nanopore?</strong>
+                        Reed-Solomon parity here only reconstructs strands that were fully <em>dropped</em>. The current ternary decoder has zero tolerance for a strand that survived but was <em>corrupted</em> (a substitution/indel) — it's a real, documented gap (see the core repo's <code>docs/architecture.md</code> "Current status"), not a demo bug. Try the <strong>Twist</strong> or <strong>Pristine</strong> profiles (deletion-dominant / error-free) to see redundancy actually help.
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ TAB 3: PIPELINE VISUALIZER ============ -->
+        <section id="tab-pipeline" class="tab-panel">
+            <div class="viz-panel">
+                <div class="panel-header">
+                    <h2><span>🧬</span> Encode &rarr; Synthesize/Sequence &rarr; Recover</h2>
+                </div>
+                <div class="pipeline-controls">
+                    <div class="field">
+                        <label for="pipe-data">Message to store</label>
+                        <input type="text" id="pipe-data" value="Hello NucleOS! DNA storage demo." maxlength="200">
+                    </div>
+                    <div class="field" style="max-width: 200px;">
+                        <label for="pipe-profile">Profile</label>
+                        <select id="pipe-profile">
+                            <option value="illumina">Illumina</option>
+                            <option value="nanopore" selected>Oxford Nanopore</option>
+                            <option value="twist">Twist Bioscience</option>
+                            <option value="pristine">Pristine</option>
+                        </select>
+                    </div>
+                    <div class="field" style="max-width: 220px;">
+                        <label for="pipe-redundancy">Redundancy: <span class="range-value" id="pipe-redundancy-value">3</span></label>
+                        <input type="range" id="pipe-redundancy" min="0" max="8" value="3" step="1">
+                    </div>
+                    <button class="btn-analyze" id="btn-run-pipeline"><span>▶</span> Run Pipeline</button>
+                </div>
+
+                <div class="legend">
+                    <span><span class="swatch" style="background: rgba(16,185,129,0.5); border:1px solid var(--success-color);"></span> Data strand</span>
+                    <span><span class="swatch" style="background: rgba(99,102,241,0.5); border:1px solid var(--accent-color);"></span> Parity strand</span>
+                    <span><span class="swatch" style="background: rgba(245,158,11,0.5); border:1px solid var(--warning-color);"></span> Corrupted</span>
+                    <span><span class="swatch" style="background: rgba(239,68,68,0.5); border:1px solid var(--error-color);"></span> Dropped</span>
+                </div>
+
+                <div class="stage-columns">
+                    <div class="stage">
+                        <h3>1. Encode</h3>
+                        <div class="strand-grid" id="stage-encode"></div>
+                    </div>
+                    <div class="stage">
+                        <h3>2. Synthesize + Sequence (noise)</h3>
+                        <div class="strand-grid" id="stage-noise"></div>
+                        <div id="stage-noise-stats" style="margin-top:0.8rem; font-size:0.8rem; color: var(--text-muted);"></div>
+                    </div>
+                    <div class="stage">
+                        <h3>3. Recover</h3>
+                        <div id="stage-recovery" class="empty-state" style="min-height: 200px; display:flex; align-items:center; justify-content:center;">
+                            Run the pipeline to see recovery.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 NucleOS DNA Storage Engine</p>
+    </footer>
+
+    <script type="module">
+        // This is the WASM build of the playground: the exact same UI as the
+        // server-backed version, but every network call below goes straight
+        // into a WASM module running in this tab instead of `fetch()`-ing a
+        // server -- there is no backend at all on this page.
+        import init, { analyze, benchmark, pipeline_demo } from './nucle_wasm.js';
+
+        const wasmReady = init();
+
+        async function callWasm(wasmFn, payload) {
+            await wasmReady;
+            const result = JSON.parse(wasmFn(JSON.stringify(payload)));
+            if (result.error) throw new Error(result.error);
+            return result;
+        }
+
+        // ---------------- Tab switching ----------------
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(btn.dataset.tab).classList.add('active');
+            });
+        });
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;")
+                      .replace(/</g, "&lt;")
+                      .replace(/>/g, "&gt;")
+                      .replace(/"/g, "&quot;")
+                      .replace(/'/g, "&#039;");
+        }
+
+        // ---------------- Tab 1: Write & Run ----------------
+        const editor = document.getElementById('editor');
+        const btnAnalyze = document.getElementById('btn-analyze');
+        const resultsContent = document.getElementById('results-content');
+        const statusContainer = document.getElementById('status-container');
+
+        btnAnalyze.addEventListener('click', async () => {
+            btnAnalyze.disabled = true;
+            btnAnalyze.innerText = 'Analyzing...';
+            statusContainer.innerHTML = '<span class="status-badge idle">Analyzing...</span>';
+
+            try {
+                const report = await callWasm(analyze, { source: editor.value });
+                renderResults(report);
+            } catch (err) {
+                resultsContent.innerHTML = `
+                    <div class="diagnostics-box">
+                        <div class="section-title">WASM Error</div>
+                        <div class="diagnostic-item error">${err.message}</div>
+                    </div>`;
+                statusContainer.innerHTML = '<span class="status-badge fail">Error</span>';
+            } finally {
+                btnAnalyze.disabled = false;
+                btnAnalyze.innerHTML = '<span>⚡</span> Run Analysis';
+            }
+        });
+
+        function renderResults(report) {
+            let html = '';
+            statusContainer.innerHTML = report.ok
+                ? '<span class="status-badge ok">Success</span>'
+                : '<span class="status-badge fail">Failed</span>';
+
+            html += `<div><div class="section-title">Diagnostics</div><div class="diagnostics-box">`;
+            if (report.diagnostics.length === 0) {
+                html += `<div style="color: var(--success-color); font-size: 0.9rem; padding: 0.4rem 0.6rem;">No errors or warnings found.</div>`;
+            } else {
+                report.diagnostics.forEach(diag => {
+                    const cls = diag.level === 'error' ? 'error' : 'warning';
+                    const sign = diag.level === 'error' ? '❌' : '⚠️';
+                    html += `<div class="diagnostic-item ${cls}"><span>${sign}</span><div>${escapeHtml(diag.message)}</div></div>`;
+                });
+            }
+            html += `</div></div>`;
+
+            if (report.simulation_steps.length > 0) {
+                html += `<div><div class="section-title">Simulation Plan Steps</div><div class="step-list">`;
+                report.simulation_steps.forEach(step => { html += `<div class="step-item">${escapeHtml(step)}</div>`; });
+                html += `</div></div>`;
+            }
+
+            if (report.optimiser_notes.length > 0) {
+                html += `<div><div class="section-title">Optimizer Notes</div><div class="note-list">`;
+                report.optimiser_notes.forEach(note => { html += `<div class="note-item">${escapeHtml(note)}</div>`; });
+                html += `</div></div>`;
+            }
+
+            html += `
+                <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-muted);">
+                    <span>VFS Call Count: <strong>${report.vfs_call_count}</strong></span>
+                    <span>Status: <strong>${report.ok ? 'Verified' : 'Invalid'}</strong></span>
+                </div>`;
+            resultsContent.innerHTML = html;
+        }
+
+        // ---------------- Tab 2: Benchmark Explorer ----------------
+        const benchCodec = document.getElementById('bench-codec');
+        const benchProfile = document.getElementById('bench-profile');
+        const benchRedundancy = document.getElementById('bench-redundancy');
+        const benchRedundancyValue = document.getElementById('bench-redundancy-value');
+        const benchData = document.getElementById('bench-data');
+        const benchStatus = document.getElementById('bench-status');
+
+        let benchDebounce = null;
+        function scheduleBenchmark() {
+            benchRedundancyValue.textContent = benchRedundancy.value;
+            clearTimeout(benchDebounce);
+            benchDebounce = setTimeout(runBenchmark, 250);
+        }
+
+        async function runBenchmark() {
+            benchStatus.innerHTML = '<span class="status-badge idle">Running...</span>'.match(/<span.*<\/span>/)[0];
+            benchStatus.className = 'status-badge idle';
+            benchStatus.textContent = 'Running...';
+            try {
+                const report = await callWasm(benchmark, {
+                    codec: benchCodec.value,
+                    profile: benchProfile.value,
+                    redundancy: parseInt(benchRedundancy.value, 10),
+                    data: benchData.value || undefined,
+                });
+
+                document.getElementById('m-density').textContent = report.bits_per_nucleotide.toFixed(3) + ' bits/nt';
+                document.getElementById('m-gc').textContent = (report.avg_gc_content * 100).toFixed(1) + '%';
+                document.getElementById('m-strands').textContent = report.strand_count;
+                document.getElementById('m-nt').textContent = report.total_nucleotides;
+                document.getElementById('m-cost').textContent = '$' + report.estimated_cost_usd.toFixed(4);
+                document.getElementById('m-recovery').textContent = (report.recovery_probability * 100).toFixed(0) + '%';
+
+                const chart = document.getElementById('gc-chart');
+                const maxCount = Math.max(1, ...report.gc_distribution);
+                chart.innerHTML = report.gc_distribution.map(count => {
+                    const pct = Math.max(2, (count / maxCount) * 100);
+                    return `<div class="gc-bar" style="height:${pct}%" title="${count} strand(s)"></div>`;
+                }).join('');
+
+                benchStatus.className = 'status-badge ok';
+                benchStatus.textContent = 'Live';
+            } catch (err) {
+                benchStatus.className = 'status-badge fail';
+                benchStatus.textContent = 'Error';
+            }
+        }
+
+        [benchCodec, benchProfile, benchRedundancy, benchData].forEach(el => {
+            el.addEventListener('input', scheduleBenchmark);
+            el.addEventListener('change', scheduleBenchmark);
+        });
+        runBenchmark();
+
+        // ---------------- Tab 3: Pipeline Visualizer ----------------
+        const pipeData = document.getElementById('pipe-data');
+        const pipeProfile = document.getElementById('pipe-profile');
+        const pipeRedundancy = document.getElementById('pipe-redundancy');
+        const pipeRedundancyValue = document.getElementById('pipe-redundancy-value');
+        const btnRunPipeline = document.getElementById('btn-run-pipeline');
+
+        pipeRedundancy.addEventListener('input', () => {
+            pipeRedundancyValue.textContent = pipeRedundancy.value;
+        });
+
+        function strandLabel(view) {
+            return view.is_parity ? 'P' + view.index : 'D' + view.index;
+        }
+
+        function strandClass(view, stage) {
+            if (stage === 'encode') return view.is_parity ? 'parity-clean' : 'clean';
+            if (view.dropped) return 'dropped';
+            if (view.corrupted) return 'corrupted';
+            return view.is_parity ? 'parity-clean' : 'clean';
+        }
+
+        btnRunPipeline.addEventListener('click', async () => {
+            btnRunPipeline.disabled = true;
+            btnRunPipeline.innerHTML = '<span>⏳</span> Running...';
+
+            const encodeGrid = document.getElementById('stage-encode');
+            const noiseGrid = document.getElementById('stage-noise');
+            const noiseStats = document.getElementById('stage-noise-stats');
+            const recoveryPanel = document.getElementById('stage-recovery');
+            encodeGrid.innerHTML = '';
+            noiseGrid.innerHTML = '';
+            noiseStats.innerHTML = '';
+            recoveryPanel.className = 'empty-state';
+            recoveryPanel.style.cssText = 'min-height: 200px; display:flex; align-items:center; justify-content:center;';
+            recoveryPanel.innerHTML = 'Encoding...';
+
+            try {
+                const report = await callWasm(pipeline_demo, {
+                    data: pipeData.value,
+                    profile: pipeProfile.value,
+                    redundancy: parseInt(pipeRedundancy.value, 10),
+                });
+
+                // Stage 1: encode -- reveal strand blocks one by one
+                report.strands.forEach((s, i) => {
+                    const block = document.createElement('div');
+                    block.className = 'strand-block ' + strandClass(s, 'encode');
+                    block.textContent = strandLabel(s);
+                    block.title = 'Original: ' + s.original.slice(0, 40) + (s.original.length > 40 ? '...' : '');
+                    encodeGrid.appendChild(block);
+                    setTimeout(() => block.classList.add('show'), i * 30);
+                });
+
+                await sleep(report.strands.length * 30 + 400);
+
+                // Stage 2: noise -- reveal corrupted/dropped state one by one
+                report.strands.forEach((s, i) => {
+                    const block = document.createElement('div');
+                    block.className = 'strand-block ' + strandClass(s, 'noise');
+                    block.textContent = strandLabel(s);
+                    block.title = (s.dropped ? 'DROPPED' : s.corrupted ? `${s.error_count} error(s)` : 'clean')
+                        + '\nAfter noise: ' + s.after_noise.slice(0, 40) + (s.after_noise.length > 40 ? '...' : '');
+                    noiseGrid.appendChild(block);
+                    setTimeout(() => block.classList.add('show'), i * 30);
+                });
+                noiseStats.textContent = `Survival: ${(report.survival_rate * 100).toFixed(0)}% · Avg error rate: ${(report.avg_error_rate * 100).toFixed(2)}%`;
+
+                await sleep(report.strands.length * 30 + 500);
+
+                // Stage 3: recovery result
+                const rec = report.recovery;
+                recoveryPanel.className = 'recovery-result ' + (rec.success ? 'success' : 'failure');
+                recoveryPanel.style.cssText = '';
+                if (rec.success) {
+                    recoveryPanel.innerHTML = `<strong>✓ Recovered exactly</strong><br><br>"${escapeHtml(rec.recovered_preview)}"`;
+                } else {
+                    recoveryPanel.innerHTML = `<strong>✗ Recovery failed</strong><br><br>Too many strands were corrupted or dropped for Reed-Solomon + the codec to reconstruct the original data at this redundancy/profile combination. Try increasing redundancy or switching to a lower-error profile.`;
+                }
+            } catch (err) {
+                recoveryPanel.className = 'recovery-result failure';
+                recoveryPanel.style.cssText = '';
+                recoveryPanel.innerHTML = 'Error: ' + escapeHtml(err.message);
+            } finally {
+                btnRunPipeline.disabled = false;
+                btnRunPipeline.innerHTML = '<span>▶</span> Run Pipeline';
+            }
+        });
+
+        function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+    </script>
+</body>
+</html>

@@ -11,6 +11,8 @@ members = [
     "nucle_cli",
     "nucle_hardware",
     "nucle_playground",
+    "nucle_demo_core",
+    "nucle_wasm",
 ]
 
 [workspace.package]

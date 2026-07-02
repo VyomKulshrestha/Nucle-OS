@@ -1,0 +1,24 @@
+[package]
+name = "nucle_wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nucle_lang = { path = "../nucle_lang" }
+nucle_demo_core = { path = "../nucle_demo_core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+
+# rand (pulled in transitively by nucle_codec/nucle_ecc/nucle_synth) falls
+# back to this crate for entropy. Every use in the engine is a seeded
+# StdRng (deterministic Monte-Carlo, no OS randomness needed at runtime),
+# but getrandom must still compile for wasm32-unknown-unknown, which
+# requires explicitly opting into its browser (`crypto.getRandomValues`)
+# backend via the "js" feature.
+getrandom = { version = "0.2", features = ["js"] }
