@@ -1,0 +1,15 @@
+pool medical_archive: DnaPool {
+    codec: YinYang,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+let noisy: Pool<Illumina, 0.35%> = simulate medical_archive under Illumina
+let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+
+pipeline archive_patient_records {
+    encode "patient_records_2026.csv" using YinYang,
+    protect with redundancy 4x,
+    store into medical_archive,
+    verify roundtrip
+}

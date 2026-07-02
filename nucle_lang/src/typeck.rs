@@ -116,10 +116,10 @@ impl TypeChecker {
                 pool.name
             ));
         }
-        if pool.codec != Codec::Ternary {
+        if pool.codec == Codec::Fountain {
             self.report.warning(format!(
-                "pool '{}' declares {} codec; current VFS backend stores through the existing Ternary syscall path",
-                pool.name, pool.codec
+                "pool '{}' declares Fountain codec; the VFS backend only executes Ternary and YinYang end-to-end",
+                pool.name
             ));
         }
         self.pools.insert(pool.name.clone(), pool.clone());
@@ -507,10 +507,10 @@ impl TypeChecker {
             match step {
                 PipelineStep::Encode { codec, .. } => {
                     saw_encode = true;
-                    if *codec != Codec::Ternary {
+                    if *codec == Codec::Fountain {
                         self.report.warning(format!(
-                            "pipeline '{}' uses {} codec; current executable backend maps to Ternary VFS calls",
-                            pipeline.name, codec
+                            "pipeline '{}' uses Fountain codec; the VFS backend only executes Ternary and YinYang end-to-end",
+                            pipeline.name
                         ));
                     }
                 }

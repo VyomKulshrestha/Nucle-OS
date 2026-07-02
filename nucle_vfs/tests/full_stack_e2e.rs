@@ -193,7 +193,8 @@ fn test_migrate_preserves_history() {
 }
 
 /// Migrating to an unsupported codec must fail clearly, not silently no-op:
-/// NucleOS's storage pipeline only implements one codec end-to-end today.
+/// NucleOS's storage pipeline implements Ternary and YinYang end-to-end,
+/// but not the raw Fountain codec.
 #[test]
 fn test_migrate_rejects_unsupported_codec() {
     let mut os = NucleOS::new(10);
@@ -203,14 +204,17 @@ fn test_migrate_rejects_unsupported_codec() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not supported"));
 
-    // Migrating to the one supported codec name should still work.
+    // Migrating to a genuinely supported codec should work and actually
+    // switch the file's stored codec, not just accept the name.
     let result = nucle_vfs::migrate::migrate_object(
         &mut os,
         "codec_migrate.txt",
         None,
-        Some(nucle_vfs::migrate::SUPPORTED_CODEC),
+        Some("yin-yang"),
     );
     assert!(result.is_ok());
+    assert_eq!(result.unwrap().codec, "yin-yang");
+    assert_eq!(os.dna_read("codec_migrate.txt").unwrap(), b"codec migration test");
 }
 
 /// Recovery manifest test: verify that reading a file populates the last recovery manifest correctly.

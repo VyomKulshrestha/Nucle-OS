@@ -5,7 +5,7 @@ use crate::middle::{lower_program, MirOp};
 use crate::typeck::TypeReport;
 use nucle_synth::noise::SimulationConfig;
 use nucle_synth::profiles::HardwareProfile;
-use nucle_vfs::syscall::{NucleOS, PoolStatus};
+use nucle_vfs::syscall::{CodecKind, NucleOS, PoolStatus};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -20,6 +20,7 @@ pub enum VfsCall {
     Store {
         file: String,
         pool: String,
+        codec: Codec,
         redundancy: usize,
         simulate: bool,
         coverage: usize,
@@ -64,6 +65,7 @@ pub fn compile_program(program: Program, type_report: TypeReport) -> CompiledPla
             MirOp::Store {
                 file,
                 pool,
+                codec,
                 redundancy,
                 simulate,
                 coverage,
@@ -73,6 +75,7 @@ pub fn compile_program(program: Program, type_report: TypeReport) -> CompiledPla
             } => calls.push(VfsCall::Store {
                 file,
                 pool,
+                codec,
                 redundancy,
                 simulate,
                 coverage,
@@ -97,7 +100,7 @@ pub fn execute_program(
 
     for call in &plan.calls {
         match call {
-            VfsCall::Store { file, pool, redundancy, simulate, coverage, profile, verify_roundtrip } => {
+            VfsCall::Store { file, pool, codec, redundancy, simulate, coverage, profile, verify_roundtrip } => {
                 let path = resolve_source_path(base_dir, file);
                 let data = std::fs::read(&path)
                     .map_err(|err| format!("failed to read '{}': {}", path.display(), err))?;
@@ -119,7 +122,8 @@ pub fn execute_program(
                     };
                 }
 
-                let result = os.dna_write(filename, &data, *redundancy)?;
+                let codec_kind = codec_to_vfs_kind(*codec)?;
+                let result = os.dna_write_with_codec(filename, &data, *redundancy, codec_kind)?;
                 steps.push(format!("✓ store into {}: {}", pool, result));
 
                 if *verify_roundtrip {
@@ -157,6 +161,18 @@ pub fn execute_program(
     }
 
     Ok(ExecutionReport { type_report: plan.type_report.clone(), steps, pool_status: os.dna_stat() })
+}
+
+/// NucleScript's `Fountain` codec has no VFS-backend implementation yet
+/// (`nucle check` warns about this at compile time); executing a pipeline
+/// that reaches this point with it fails clearly instead of silently
+/// falling back to a different codec.
+fn codec_to_vfs_kind(codec: Codec) -> Result<CodecKind, String> {
+    match codec {
+        Codec::Ternary => Ok(CodecKind::Ternary),
+        Codec::YinYang => Ok(CodecKind::YinYang),
+        Codec::Fountain => Err("codec 'Fountain' has no VFS execution backend yet — use Ternary or YinYang".into()),
+    }
 }
 
 fn resolve_source_path(base_dir: &Path, file: &str) -> PathBuf {

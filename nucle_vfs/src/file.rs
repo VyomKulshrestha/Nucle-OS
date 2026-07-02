@@ -52,6 +52,13 @@ pub struct DnaFile {
     pub data_strand_count: usize,
     /// Number of parity strands.
     pub parity_strand_count: usize,
+    /// The RS parity count each stripe was encoded with (the `redundancy`
+    /// argument passed to `dna_write`), distinct from `parity_strand_count`
+    /// once large files span multiple GF(256) stripes and accumulate more
+    /// total parity strands than any single stripe's parity count. `dna_read`
+    /// needs this exact value to reconstruct a matching `RsConfig` for decode.
+    #[serde(default)]
+    pub rs_parity_per_stripe: usize,
     /// Codec used for encoding.
     pub codec: String,
     /// Redundancy level (e.g., 2.0 = 2× parity).
@@ -143,6 +150,7 @@ mod tests {
             primer_id: "P0000".into(),
             data_strand_count: 10,
             parity_strand_count: 4,
+            rs_parity_per_stripe: 4,
             codec: "ternary".into(),
             redundancy: 1.4,
             manifest: None,

@@ -166,6 +166,13 @@ impl RsConfig {
     }
 }
 
+/// GF(256) has only 256 distinct field elements, so a single Reed-Solomon
+/// block can address at most this many codeword positions (data + parity
+/// strands combined) before the `x`-coordinates used for interpolation wrap
+/// around and collide. Beyond this size, `encode_block`/`decode_block` split
+/// the input into independent stripes, each within this limit.
+const MAX_BLOCK_SYMBOLS: usize = 256;
+
 /// Reed-Solomon encoder/decoder for DNA strand-level error correction.
 pub struct ReedSolomon {
     config: RsConfig,
@@ -187,16 +194,40 @@ impl ReedSolomon {
         &self.config
     }
 
+    /// Maximum number of data strands a single stripe can hold for this
+    /// codec's parity count, while staying within GF(256)'s 256 positions.
+    fn max_data_per_stripe(&self) -> usize {
+        MAX_BLOCK_SYMBOLS.saturating_sub(self.config.parity_count).max(1)
+    }
+
     /// Encode a block of data strands, producing parity strands.
     ///
     /// Model: treat each byte position as an independent GF(256) polynomial.
     /// Data strands are evaluations of P(x) at x = 0, 1, ..., k-1.
     /// Parity strands are evaluations of P(x) at x = k, k+1, ..., k+n-1.
+    ///
+    /// Inputs larger than [`MAX_BLOCK_SYMBOLS`] minus the parity count are
+    /// split into independent stripes, each producing its own full set of
+    /// parity strands — otherwise `x`-coordinates beyond 255 would wrap
+    /// around a `u8` and collide with earlier ones.
     pub fn encode_block(&self, data_strands: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, RsError> {
         if data_strands.is_empty() {
             return Ok(Vec::new());
         }
 
+        let max_per_stripe = self.max_data_per_stripe();
+        if data_strands.len() <= max_per_stripe {
+            return self.encode_stripe(data_strands);
+        }
+
+        let mut all_parity = Vec::new();
+        for chunk in data_strands.chunks(max_per_stripe) {
+            all_parity.extend(self.encode_stripe(chunk)?);
+        }
+        Ok(all_parity)
+    }
+
+    fn encode_stripe(&self, data_strands: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, RsError> {
         let strand_len = data_strands[0].len();
         let k = data_strands.len();
         let n = self.config.parity_count;
@@ -221,7 +252,36 @@ impl ReedSolomon {
     }
 
     /// Decode a block, recovering missing strands from parity.
+    ///
+    /// Mirrors the striping `encode_block` performs: `received` is split
+    /// into the same-sized stripes, `parity` into groups of this codec's
+    /// parity count per stripe, and each stripe is decoded independently.
     pub fn decode_block(
+        &self,
+        received: &[Option<Vec<u8>>],
+        parity: &[Vec<u8>],
+    ) -> Result<Vec<Vec<u8>>, RsError> {
+        let n = self.config.parity_count;
+
+        if n == 0 {
+            return received.iter().enumerate().map(|(i, s)| {
+                s.clone().ok_or(RsError::TooManyErrors { errors: i + 1, parity: 0 })
+            }).collect();
+        }
+
+        let max_per_stripe = self.max_data_per_stripe();
+        if received.len() <= max_per_stripe {
+            return self.decode_stripe(received, parity);
+        }
+
+        let mut result = Vec::with_capacity(received.len());
+        for (data_chunk, parity_chunk) in received.chunks(max_per_stripe).zip(parity.chunks(n)) {
+            result.extend(self.decode_stripe(data_chunk, parity_chunk)?);
+        }
+        Ok(result)
+    }
+
+    fn decode_stripe(
         &self,
         received: &[Option<Vec<u8>>],
         parity: &[Vec<u8>],
@@ -420,6 +480,51 @@ mod tests {
         let decoded = rs.decode_block(&received, &parity).unwrap();
         assert_eq!(decoded[0], data[0], "failed to recover strand 0");
         assert_eq!(decoded[3], data[3], "failed to recover strand 3");
+    }
+
+    #[test]
+    fn test_rs_encode_large_block_does_not_panic() {
+        // 300 data strands with 4 parity would put x-coordinates at 300..303,
+        // which overflow a u8 and previously collided with earlier indices,
+        // causing a division-by-zero panic. Striping must avoid that.
+        let rs = ReedSolomon::new(RsConfig::new(4));
+        let data: Vec<Vec<u8>> = (0..300u32).map(|i| vec![(i % 256) as u8, ((i * 7) % 256) as u8]).collect();
+
+        let parity = rs.encode_block(&data).unwrap();
+        // Two stripes of <=252 data strands each => 2 * 4 parity strands.
+        assert_eq!(parity.len(), 8);
+
+        let received: Vec<Option<Vec<u8>>> = data.iter().map(|s| Some(s.clone())).collect();
+        let decoded = rs.decode_block(&received, &parity).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_rs_recover_erasures_across_striped_block() {
+        let rs = ReedSolomon::new(RsConfig::new(4));
+        let data: Vec<Vec<u8>> = (0..300u32).map(|i| vec![(i % 256) as u8]).collect();
+        let parity = rs.encode_block(&data).unwrap();
+
+        // Erase one strand in the first stripe and one in the second.
+        let mut received: Vec<Option<Vec<u8>>> = data.iter().map(|s| Some(s.clone())).collect();
+        received[10] = None;
+        received[260] = None;
+
+        let decoded = rs.decode_block(&received, &parity).unwrap();
+        assert_eq!(decoded[10], data[10]);
+        assert_eq!(decoded[260], data[260]);
+    }
+
+    #[test]
+    fn test_rs_zero_parity_passthrough() {
+        let rs = ReedSolomon::new(RsConfig::new(0));
+        let data = vec![vec![1, 2], vec![3, 4]];
+        let received: Vec<Option<Vec<u8>>> = data.iter().map(|s| Some(s.clone())).collect();
+        let decoded = rs.decode_block(&received, &[]).unwrap();
+        assert_eq!(decoded, data);
+
+        let received_with_gap: Vec<Option<Vec<u8>>> = vec![Some(data[0].clone()), None];
+        assert!(rs.decode_block(&received_with_gap, &[]).is_err());
     }
 
     #[test]

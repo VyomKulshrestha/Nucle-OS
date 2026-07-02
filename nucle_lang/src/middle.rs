@@ -28,6 +28,7 @@ pub enum MirOp {
     Store {
         file: String,
         pool: String,
+        codec: Codec,
         redundancy: usize,
         coverage: usize,
         profile: Profile,
@@ -90,6 +91,7 @@ pub fn lower_program(program: &Program) -> MirProgram {
                     ops.push(MirOp::Store {
                         file: store.file.clone(),
                         pool: store.pool.clone(),
+                        codec: pool.codec,
                         redundancy,
                         coverage: store.options.coverage.unwrap_or(redundancy),
                         profile: pool.profile,
@@ -185,13 +187,17 @@ fn infer_binding(
 
 fn lower_pipeline(pipeline: &PipelineDecl, pools: &HashMap<String, PoolDecl>) -> Option<MirOp> {
     let mut file = None;
+    let mut codec = None;
     let mut redundancy = None;
     let mut target_pool = None;
     let mut verify_roundtrip = false;
 
     for step in &pipeline.steps {
         match step {
-            PipelineStep::Encode { path, .. } => file = Some(path.clone()),
+            PipelineStep::Encode { path, codec: step_codec } => {
+                file = Some(path.clone());
+                codec = Some(*step_codec);
+            }
             PipelineStep::Protect { redundancy: value } => redundancy = Some(*value),
             PipelineStep::Store { pool } => target_pool = Some(pool.clone()),
             PipelineStep::VerifyRoundtrip => verify_roundtrip = true,
@@ -205,6 +211,7 @@ fn lower_pipeline(pipeline: &PipelineDecl, pools: &HashMap<String, PoolDecl>) ->
     Some(MirOp::Store {
         file,
         pool: target_pool,
+        codec: codec.unwrap_or(pool.codec),
         redundancy,
         coverage: redundancy,
         profile: pool.profile,
@@ -259,6 +266,7 @@ mod tests {
             ops: vec![MirOp::Store {
                 file: "data.bin".into(),
                 pool: "archive".into(),
+                codec: Codec::Ternary,
                 redundancy: 1,
                 coverage: 1,
                 profile: Profile::Nanopore,

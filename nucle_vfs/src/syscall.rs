@@ -21,6 +21,7 @@ use crate::file::{DnaFile, StorageManifest, SimulationAssumptions};
 use crate::catalog::Catalog;
 use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
+use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
 use nucle_ecc::pipeline::{compute_error_distribution, RecoveryManifest};
 use nucle_index::primer::PrimerLibrary;
@@ -31,6 +32,40 @@ use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// ---------------------------------------------------------------------------
+// CodecKind — which binary <-> DNA codec a write/read pass uses
+// ---------------------------------------------------------------------------
+
+/// Selects which [`DnaCodec`] implementation `dna_write_with_codec` uses.
+///
+/// `dna_read` doesn't take one of these: it recovers the codec a file was
+/// written with from the name stored on its [`DnaFile`] record, so encoding
+/// choice is a write-time decision only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecKind {
+    Ternary,
+    YinYang,
+}
+
+impl CodecKind {
+    fn to_boxed(self) -> Box<dyn DnaCodec> {
+        match self {
+            Self::Ternary => Box::new(TernaryCodec::new(TernaryConfig::no_overlap())),
+            Self::YinYang => Box::new(YinYangCodec::new(YinYangConfig::default())),
+        }
+    }
+
+    /// Reverse-lookup from the name a codec reports via [`DnaCodec::name`],
+    /// as persisted on a [`DnaFile`]'s `codec` field.
+    pub fn from_codec_name(name: &str) -> Option<Self> {
+        match name {
+            "ternary-rotating-cipher" => Some(Self::Ternary),
+            "yin-yang" => Some(Self::YinYang),
+            _ => None,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // NucleOS — the unified DNA storage OS
@@ -105,14 +140,8 @@ impl NucleOS {
     // dna_write — store a file into DNA
     // -----------------------------------------------------------------------
 
-    /// Store binary data as a file in DNA storage.
-    ///
-    /// Full pipeline:
-    /// 1. **Codec**: encode binary → DNA strands (ternary rotating cipher)
-    /// 2. **ECC**: compute RS parity strands (if redundancy > 0)
-    /// 3. **Primers**: tag each strand with unique file primer pair
-    /// 4. **Synth** (optional): simulate synthesis noise
-    /// 5. **Pool**: store all tagged strands
+    /// Store binary data as a file in DNA storage, using the default
+    /// Ternary codec. See [`Self::dna_write_with_codec`] to pick a codec.
     ///
     /// `redundancy`: number of RS parity strands (0 = no ECC).
     pub fn dna_write(
@@ -120,6 +149,26 @@ impl NucleOS {
         filename: &str,
         data: &[u8],
         redundancy: usize,
+    ) -> Result<WriteResult, String> {
+        self.dna_write_with_codec(filename, data, redundancy, CodecKind::Ternary)
+    }
+
+    /// Store binary data as a file in DNA storage.
+    ///
+    /// Full pipeline:
+    /// 1. **Codec**: encode binary → DNA strands (`codec`)
+    /// 2. **ECC**: compute RS parity strands (if redundancy > 0)
+    /// 3. **Primers**: tag each strand with unique file primer pair
+    /// 4. **Synth** (optional): simulate synthesis noise
+    /// 5. **Pool**: store all tagged strands
+    ///
+    /// `redundancy`: number of RS parity strands (0 = no ECC).
+    pub fn dna_write_with_codec(
+        &mut self,
+        filename: &str,
+        data: &[u8],
+        redundancy: usize,
+        codec_kind: CodecKind,
     ) -> Result<WriteResult, String> {
         // Check if filename already exists
         if self.catalog.contains_name(filename) {
@@ -134,7 +183,7 @@ impl NucleOS {
         self.primers_used += 1;
 
         // ── Layer 1: Codec ── encode binary → DNA strands
-        let codec = TernaryCodec::new(TernaryConfig::no_overlap());
+        let codec = codec_kind.to_boxed();
         let encoded = codec.encode(data)
             .map_err(|e| format!("encoding failed: {}", e))?;
 
@@ -213,7 +262,7 @@ impl NucleOS {
         let mut id_hasher = Sha256::new();
         id_hasher.update(filename.as_bytes());
         id_hasher.update(&content_hash);
-        id_hasher.update(b"ternary-rotating-cipher");
+        id_hasher.update(codec.name().as_bytes());
         let profile_str = if self.simulate_noise {
             self.noise_config.synthesis_profile.name()
         } else {
@@ -264,7 +313,7 @@ impl NucleOS {
 
         let manifest = StorageManifest {
             archive_id: file_id.clone(),
-            codec: "ternary-rotating-cipher".to_string(),
+            codec: codec.name().to_string(),
             profile: profile_str.to_string(),
             redundancy: parity_count,
             primer_set: primer_pair.id.clone(),
@@ -284,7 +333,8 @@ impl NucleOS {
             primer_id: primer_pair.id.clone(),
             data_strand_count: final_data.len(),
             parity_strand_count: parity_count,
-            codec: "ternary-rotating-cipher".into(),
+            rs_parity_per_stripe: redundancy,
+            codec: codec.name().to_string(),
             redundancy: redundancy_ratio,
             manifest: Some(manifest),
             manifest_history: Vec::new(),
@@ -377,7 +427,7 @@ impl NucleOS {
         // observed error distribution, since `data_strands` is consumed below.
         let pre_correction_strands = data_strands.clone();
         let decoded_strands = if !parity_strands.is_empty() && dna_file.parity_strand_count > 0 {
-            let rs = ReedSolomon::new(RsConfig::new(dna_file.parity_strand_count));
+            let rs = ReedSolomon::new(RsConfig::new(dna_file.rs_parity_per_stripe));
 
             // Convert to byte vectors
             let received: Vec<Option<Vec<u8>>> = data_strands.iter()
@@ -418,7 +468,9 @@ impl NucleOS {
         // ── Layer 1: Codec ── decode DNA → binary
         let recovered_strands_count = decoded_strands.len();
         let collection = StrandCollection::from_strands(decoded_strands, dna_file.size);
-        let codec = TernaryCodec::new(TernaryConfig::no_overlap());
+        let codec_kind = CodecKind::from_codec_name(&dna_file.codec)
+            .ok_or_else(|| format!("unknown codec '{}' recorded for this file", dna_file.codec))?;
+        let codec = codec_kind.to_boxed();
         let decoded = codec.decode(&collection)
             .map_err(|e| format!("codec decoding failed: {}", e))?;
 
