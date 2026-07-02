@@ -565,7 +565,6 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "getrandom",
- "nucle_codec",
  "nucle_demo_core",
  "nucle_lang",
  "serde",

@@ -34,37 +34,6 @@ pub fn benchmark(request_json: &str) -> String {
     run_json(request_json, nucle_demo_core::run_benchmark)
 }
 
-// TEMPORARY bisection probe -- calls benchmark_codec alone with no
-// redundancy/recovery logic, to isolate which part of run_benchmark panics
-// on wasm32. Remove once the wasm32 time panic is diagnosed.
-#[wasm_bindgen]
-pub fn debug_probe(step: u32) -> String {
-    let data = b"The quick brown fox jumps over the lazy dog. NucleOS benchmarks all available DNA codecs.";
-    let codec = match nucle_demo_core::make_codec("ternary") {
-        Ok(c) => c,
-        Err(e) => return format!("step0-make_codec-err: {}", e),
-    };
-    if step == 0 {
-        return "step0-ok".into();
-    }
-    let bench = match nucle_codec::benchmark::benchmark_codec(codec.as_ref(), data) {
-        Ok(b) => b,
-        Err(e) => return format!("step1-benchmark_codec-err: {}", e),
-    };
-    if step == 1 {
-        return format!("step1-ok bits_per_nt={}", bench.bits_per_nucleotide);
-    }
-    let profile = match nucle_demo_core::parse_hw_profile("illumina") {
-        Ok(p) => p,
-        Err(e) => return format!("step2-parse_hw_profile-err: {}", e),
-    };
-    if step == 2 {
-        return "step2-ok".into();
-    }
-    let recovery = nucle_demo_core::estimate_recovery_probability(codec.as_ref(), data, profile, 3, 20);
-    format!("step3-ok recovery={}", recovery)
-}
-
 #[wasm_bindgen]
 pub fn pipeline_demo(request_json: &str) -> String {
     run_json(request_json, nucle_demo_core::run_pipeline_demo)
