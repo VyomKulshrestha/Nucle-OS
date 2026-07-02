@@ -9,6 +9,8 @@ use nucle_vfs::syscall::NucleOS;
 use nucle_agent::executor::Executor;
 use nucle_agent::planner::Planner;
 use nucle_agent::tools::ToolName;
+use nucle_synth::noise::SimulationConfig;
+use nucle_synth::profiles::HardwareProfile;
 
 /// Full roundtrip: store text file with ECC and retrieve it.
 #[test]
@@ -270,4 +272,81 @@ fn test_archive_id_stable_across_repeated_reads() {
 
     let id_after = os.catalog.get_by_name("stable.txt").unwrap().manifest.clone().unwrap().archive_id;
     assert_eq!(id_before, id_after, "archive_id must not change across repeated reads");
+}
+
+/// The core claim of this whole system: redundancy should actually help
+/// recover data under realistic (substitution-heavy) sequencing noise, not
+/// just when a strand is entirely missing. Before consensus voting was
+/// wired into `dna_read`, a strand that survived but was corrupted flowed
+/// straight into Reed-Solomon as if it were correct data, and RS -- an
+/// erasure decoder, not an error decoder -- had no way to catch that. With
+/// coverage_depth copies of each strand consensus-voted before RS ever
+/// sees them, most substitution errors are corrected regardless of which
+/// copy has them, and the roundtrip succeeds under Illumina noise.
+#[test]
+fn test_roundtrip_survives_illumina_noise_via_consensus() {
+    let noise_cfg = SimulationConfig {
+        seed: 7,
+        coverage_depth: 10,
+        synthesis_profile: HardwareProfile::Illumina,
+        sequencing_profile: HardwareProfile::Illumina,
+        simulate_decay: false,
+        decay_rate: 0.0,
+        storage_time: 0.0,
+    };
+    let mut os = NucleOS::new(10).with_noise(noise_cfg);
+
+    let original = b"Consensus voting across coverage copies corrects \
+        substitution errors that Reed-Solomon alone cannot.";
+
+    os.dna_write("noisy.txt", original, 4).unwrap();
+    let recovered = os.dna_read("noisy.txt")
+        .expect("roundtrip should survive Illumina noise once coverage copies are consensus-voted");
+    assert_eq!(recovered, original.to_vec());
+
+    // The recovery manifest should reflect that consensus genuinely ran and
+    // that positions actually needed correcting (not a no-op on pristine data).
+    let manifest = os.catalog.get_by_name("noisy.txt").unwrap()
+        .manifest.clone().unwrap()
+        .recovery_manifest.expect("recovery manifest should be set after read");
+    assert!(manifest.ecc_success);
+    assert!(
+        manifest.observed_error_distribution.iter().any(|(_, rate)| *rate > 0.0),
+        "Illumina noise at 10x coverage should show up as real, non-zero per-position error rates"
+    );
+}
+
+/// Consensus voting fixes Illumina (above) but NOT Nanopore, and this is a
+/// real, distinct limitation worth documenting rather than papering over:
+/// `nucle_ecc::consensus::build_consensus` aligns reads by raw position
+/// (truncating to the median length), which only works when reads are
+/// roughly the same length and errors are substitutions. Nanopore is
+/// indel-dominant -- an insertion or deletion shifts every base after it,
+/// so positional majority voting is comparing unrelated bases across
+/// copies and produces garbage instead of a correction. Fixing this for
+/// real needs sequence alignment (e.g. Needleman-Wunsch / partial-order
+/// alignment), not just more coverage or more parity.
+#[test]
+fn test_nanopore_indels_still_break_positional_consensus() {
+    let noise_cfg = SimulationConfig {
+        seed: 7,
+        coverage_depth: 10,
+        synthesis_profile: HardwareProfile::OxfordNanopore,
+        sequencing_profile: HardwareProfile::OxfordNanopore,
+        simulate_decay: false,
+        decay_rate: 0.0,
+        storage_time: 0.0,
+    };
+    let mut os = NucleOS::new(10).with_noise(noise_cfg);
+    let original = b"Consensus voting across coverage copies corrects \
+        substitution errors that Reed-Solomon alone cannot.";
+    os.dna_write("noisy_nanopore.txt", original, 4).unwrap();
+
+    let recovered = os.dna_read("noisy_nanopore.txt");
+    assert!(
+        recovered.is_err() || recovered.unwrap() != original.to_vec(),
+        "Nanopore roundtrip is expected to still fail today (positional consensus can't \
+         handle indel-heavy noise) -- if this starts passing, indel-aware alignment has \
+         been added and this test (and the docs describing the limitation) should be updated"
+    );
 }

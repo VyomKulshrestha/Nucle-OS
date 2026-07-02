@@ -23,13 +23,14 @@ use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
-use nucle_ecc::pipeline::{compute_error_distribution, RecoveryManifest};
+use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode, RecoveryManifest};
 use nucle_index::primer::PrimerLibrary;
 use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
 use nucle_synth::noise::{NoiseEngine, SimulationConfig};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
+use std::collections::HashMap;
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -65,6 +66,39 @@ impl CodecKind {
             _ => None,
         }
     }
+}
+
+/// Optionally run strands through synthesis/sequencing noise, returning
+/// each surviving strand alongside the logical (pre-coverage-expansion)
+/// index of the strand it's a copy of.
+///
+/// When `simulate` is false, this is the identity mapping (`source_index ==
+/// position`). When true, `NoiseEngine::simulate` produces `coverage_depth`
+/// independent noisy copies per input strand in copy-major order with a
+/// flat, monotonically increasing `strand_id`; dividing that id by
+/// `coverage_depth` recovers which original strand a given copy belongs to.
+/// Copies that were dropped entirely (`!is_intact`) carry no information and
+/// are not stored.
+fn simulate_with_provenance(
+    simulate: bool,
+    noise_config: &SimulationConfig,
+    strands: Vec<DnaStrand>,
+    original_size: usize,
+) -> (Vec<DnaStrand>, Vec<usize>) {
+    if !simulate {
+        let sources = (0..strands.len()).collect();
+        return (strands, sources);
+    }
+
+    let collection = StrandCollection::from_strands(strands, original_size);
+    let engine = NoiseEngine::new(noise_config.clone());
+    let result = engine.simulate(&collection);
+    let coverage = noise_config.coverage_depth.max(1) as u64;
+
+    result.pool.strands.iter()
+        .filter(|s| s.is_intact && !s.is_truncated)
+        .map(|s| (s.sequence.clone(), (s.strand_id / coverage) as usize))
+        .unzip()
 }
 
 // ---------------------------------------------------------------------------
@@ -221,29 +255,27 @@ impl NucleOS {
             .collect();
 
         // ── Layer 2: Synth (optional) ── simulate noise
-        let final_data = if self.simulate_noise {
-            let collection = StrandCollection::from_strands(
-                tagged_data.clone(),
-                data.len(),
-            );
-            let engine = NoiseEngine::new(self.noise_config.clone());
-            let result = engine.simulate(&collection);
-            result.pool.to_strand_collection(data.len()).strands
-        } else {
-            tagged_data
-        };
-
-        let final_parity = if self.simulate_noise {
-            let collection = StrandCollection::from_strands(
-                tagged_parity.clone(),
-                0, // parity has no original data size
-            );
-            let engine = NoiseEngine::new(self.noise_config.clone());
-            let result = engine.simulate(&collection);
-            result.pool.to_strand_collection(0).strands
-        } else {
-            tagged_parity
-        };
+        //
+        // When coverage_depth > 1, `simulate()` produces several independent
+        // noisy copies of each strand (real sequencing reads a pool many
+        // times over). Each copy's `source_index` (its position divided by
+        // coverage_depth, per `NoiseEngine::simulate`'s copy-major loop
+        // order) is preserved through to storage so `dna_read` can regroup
+        // and consensus-vote coverage copies of the same logical strand
+        // before Reed-Solomon ever sees them -- RS alone can only recover a
+        // strand that's entirely missing, never one that survived corrupted.
+        let (final_data, final_data_sources) = simulate_with_provenance(
+            self.simulate_noise,
+            &self.noise_config,
+            tagged_data,
+            data.len(),
+        );
+        let (final_parity, final_parity_sources) = simulate_with_provenance(
+            self.simulate_noise,
+            &self.noise_config,
+            tagged_parity,
+            0, // parity has no original data size
+        );
 
         // ── Compute content hash
         let mut hasher = Sha256::new();
@@ -274,30 +306,37 @@ impl NucleOS {
         let file_id = format!("archive-{}", &id_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>()[..16]);
 
         // ── Layer 5: VFS ── store in pool
-        for (i, strand) in final_data.iter().enumerate() {
+        for (i, (strand, &source_index)) in final_data.iter().zip(final_data_sources.iter()).enumerate() {
             self.pool.add_strand(PoolEntry {
                 strand: strand.clone(),
                 file_id: file_id.clone(),
                 strand_index: i,
+                source_index,
                 is_parity: false,
             });
         }
 
-        for (i, strand) in final_parity.iter().enumerate() {
+        for (i, (strand, &source_index)) in final_parity.iter().zip(final_parity_sources.iter()).enumerate() {
             self.pool.add_strand(PoolEntry {
                 strand: strand.clone(),
                 file_id: file_id.clone(),
                 strand_index: data_strand_count + i,
+                source_index,
                 is_parity: true,
             });
         }
 
-        let parity_count = final_parity.len();
-        let total_strands = final_data.len() + parity_count;
-        let redundancy_ratio = if final_data.is_empty() {
+        // Logical counts describe the file structure that was asked for
+        // (data strands + requested parity), not the physical footprint
+        // once coverage simulation multiplies strand copies -- that
+        // physical total is what `dna_stat()`'s pool-wide numbers report,
+        // by counting actual stored entries rather than these fields.
+        let parity_count = parity_strands.len();
+        let total_strands = data_strand_count + parity_count;
+        let redundancy_ratio = if data_strand_count == 0 {
             0.0
         } else {
-            total_strands as f64 / final_data.len() as f64
+            total_strands as f64 / data_strand_count as f64
         };
 
         let simulation_assumptions = if self.simulate_noise {
@@ -331,7 +370,7 @@ impl NucleOS {
             content_hash: content_hash.clone(),
             created_at,
             primer_id: primer_pair.id.clone(),
-            data_strand_count: final_data.len(),
+            data_strand_count,
             parity_strand_count: parity_count,
             rs_parity_per_stripe: redundancy,
             codec: codec.name().to_string(),
@@ -355,7 +394,7 @@ impl NucleOS {
             file_id,
             filename: filename.to_string(),
             data_size: data.len(),
-            data_strand_count: final_data.len(),
+            data_strand_count,
             parity_strand_count: parity_count,
             total_strand_count: total_strands,
             primer_id: primer_pair.id,
@@ -403,58 +442,47 @@ impl NucleOS {
             ));
         }
 
-        // ── Layer 4: Index ── untag strands (remove primers)
-        // Separate data and parity strands via pool metadata
+        // ── Layer 4: Index ── untag strands (remove primers), grouped by
+        // which logical strand each retrieved copy is a coverage-read of
+        // (see `simulate_with_provenance` in `dna_write`). With no coverage
+        // simulation this is just one read per group, same as before.
         let pool_entries = self.pool.get_file_strands(&dna_file.file_id);
 
-        let data_entries: Vec<_> = pool_entries.iter()
-            .filter(|e| !e.is_parity)
+        let mut data_groups: HashMap<usize, Vec<DnaStrand>> = HashMap::new();
+        let mut parity_groups: HashMap<usize, Vec<DnaStrand>> = HashMap::new();
+        for &entry in &pool_entries {
+            let Some(strand) = primer_pair.untag_strand(&entry.strand) else { continue };
+            let groups = if entry.is_parity { &mut parity_groups } else { &mut data_groups };
+            groups.entry(entry.source_index).or_default().push(strand);
+        }
+
+        // ── Layer 3: ECC ── consensus-vote coverage copies of each logical
+        // strand, then Reed-Solomon over the consensus results (see
+        // `nucle_ecc::pipeline::consensus_then_rs_decode` for why this is
+        // what actually lets redundancy help under substitution-heavy
+        // noise, which RS alone cannot).
+        let dense_data_groups: Vec<Vec<DnaStrand>> = (0..dna_file.data_strand_count)
+            .map(|i| data_groups.remove(&i).unwrap_or_default())
             .collect();
-        let parity_entries: Vec<_> = pool_entries.iter()
-            .filter(|e| e.is_parity)
+        let dense_parity_groups: Vec<Vec<DnaStrand>> = (0..dna_file.parity_strand_count)
+            .map(|i| parity_groups.remove(&i).unwrap_or_default())
             .collect();
 
-        let data_strands: Vec<DnaStrand> = data_entries.iter()
-            .filter_map(|e| primer_pair.untag_strand(&e.strand))
-            .collect();
-
-        let parity_strands: Vec<DnaStrand> = parity_entries.iter()
-            .filter_map(|e| primer_pair.untag_strand(&e.strand))
-            .collect();
-
-        // ── Layer 3: ECC ── RS decode (if parity strands exist)
         // Kept so we can diff pre- vs. post-correction strands for a real
-        // observed error distribution, since `data_strands` is consumed below.
-        let pre_correction_strands = data_strands.clone();
-        let decoded_strands = if !parity_strands.is_empty() && dna_file.parity_strand_count > 0 {
-            let rs = ReedSolomon::new(RsConfig::new(dna_file.rs_parity_per_stripe));
+        // observed error distribution: one arbitrary raw read per position
+        // (or an empty placeholder where nothing survived) as the baseline.
+        let pre_correction_strands: Vec<DnaStrand> = dense_data_groups.iter()
+            .map(|g| g.first().cloned().unwrap_or_else(|| DnaStrand::new(Vec::new())))
+            .collect();
 
-            // Convert to byte vectors
-            let received: Vec<Option<Vec<u8>>> = data_strands.iter()
-                .map(|s| Some(s.bases().iter().map(|n| n.to_bits()).collect()))
-                .collect();
-
-            let parity_bytes: Vec<Vec<u8>> = parity_strands.iter()
-                .map(|s| s.bases().iter().map(|n| n.to_bits()).collect())
-                .collect();
-
-            match rs.decode_block(&received, &parity_bytes) {
-                Ok(recovered_bytes) => {
-                    // Convert back to DnaStrands
-                    recovered_bytes.iter().map(|bytes| {
-                        let bases: Vec<_> = bytes.iter()
-                            .filter_map(|&b| nucle_codec::base::Nucleotide::from_bits(b).ok())
-                            .collect();
-                        DnaStrand::new(bases)
-                    }).collect()
-                }
-                Err(_) => {
-                    // ECC failed — fall back to raw data strands
-                    data_strands
-                }
-            }
+        let decoded_strands: Vec<DnaStrand> = if dna_file.parity_strand_count > 0 {
+            consensus_then_rs_decode(
+                &dense_data_groups,
+                &dense_parity_groups,
+                RsConfig::new(dna_file.rs_parity_per_stripe),
+            )
         } else {
-            data_strands
+            consensus_then_rs_decode(&dense_data_groups, &[], RsConfig::new(0))
         };
 
         if decoded_strands.is_empty() {

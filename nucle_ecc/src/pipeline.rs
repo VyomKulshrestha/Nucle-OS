@@ -11,7 +11,7 @@
 
 use crate::reed_solomon::{ReedSolomon, RsConfig, RsError};
 use crate::consensus::{self, ConsensusResult};
-use nucle_codec::base::DnaStrand;
+use nucle_codec::base::{DnaStrand, Nucleotide};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -81,6 +81,56 @@ pub fn compute_error_distribution(before: &[DnaStrand], after: &[DnaStrand]) -> 
             Some((i, mismatches as f64 / len as f64))
         })
         .collect()
+}
+
+/// Consensus-vote each group of coverage-copy reads, then Reed-Solomon
+/// decode the consensus results.
+///
+/// `data_groups`/`parity_groups`: dense, one entry per logical strand
+/// position (a position with zero surviving reads is an empty `Vec`, which
+/// becomes an erasure for RS -- same as a strand that never arrived at
+/// all). This is the one real fix for the standard DNA-storage failure
+/// mode: RS alone only recovers a strand that's entirely missing, never one
+/// that survived corrupted, but majority-voting across independent reads of
+/// the SAME strand corrects most substitution errors regardless of which
+/// read has them. Requires actual sequencing coverage (multiple reads per
+/// group) to have anything to vote across -- a single read per group is
+/// consensus voting on nothing, which is still safe (returns that read
+/// unchanged) but provides no correction.
+///
+/// Used by both `nucle_vfs::syscall::dna_read` and the playground's
+/// interactive benchmark, so there's one implementation of "how redundancy
+/// actually helps under noise," not two that can drift apart.
+pub fn consensus_then_rs_decode(
+    data_groups: &[Vec<DnaStrand>],
+    parity_groups: &[Vec<DnaStrand>],
+    rs_config: RsConfig,
+) -> Vec<DnaStrand> {
+    let vote = |group: &[DnaStrand]| -> Option<DnaStrand> {
+        consensus::build_consensus(group).map(|r| r.sequence)
+    };
+    let consensus_data: Vec<Option<DnaStrand>> = data_groups.iter().map(|g| vote(g)).collect();
+    let consensus_parity: Vec<DnaStrand> = parity_groups.iter().filter_map(|g| vote(g)).collect();
+
+    if consensus_parity.is_empty() {
+        return consensus_data.into_iter().flatten().collect();
+    }
+
+    let rs = ReedSolomon::new(rs_config);
+    let received: Vec<Option<Vec<u8>>> = consensus_data.iter()
+        .map(|opt| opt.as_ref().map(|s| s.bases().iter().map(|n| n.to_bits()).collect()))
+        .collect();
+    let parity_bytes: Vec<Vec<u8>> = consensus_parity.iter()
+        .map(|s| s.bases().iter().map(|n| n.to_bits()).collect())
+        .collect();
+
+    match rs.decode_block(&received, &parity_bytes) {
+        Ok(recovered_bytes) => recovered_bytes.iter().map(|bytes| {
+            let bases: Vec<_> = bytes.iter().filter_map(|&b| Nucleotide::from_bits(b).ok()).collect();
+            DnaStrand::new(bases)
+        }).collect(),
+        Err(_) => consensus_data.into_iter().flatten().collect(),
+    }
 }
 
 /// Statistics from running the repair pipeline.
@@ -357,5 +407,56 @@ mod tests {
         let (recovered, count) = pipeline.run_rs_recovery(&received, &parity).unwrap();
         assert_eq!(count, 1); // One erasure
         assert_eq!(recovered[1], vec![4, 5, 6]); // Recovered!
+    }
+
+    #[test]
+    fn test_consensus_then_rs_decode_corrects_substitution_with_no_rs_needed() {
+        // Two logical strands, each read 3 times; one read of the first
+        // strand has a single substitution error. No parity involved --
+        // consensus alone should out-vote the corrupted copy.
+        let data_groups = vec![
+            vec![
+                DnaStrand::from_str("ATCG").unwrap(),
+                DnaStrand::from_str("ATCG").unwrap(),
+                DnaStrand::from_str("ATCC").unwrap(), // last base flipped
+            ],
+            vec![
+                DnaStrand::from_str("GCTA").unwrap(),
+                DnaStrand::from_str("GCTA").unwrap(),
+            ],
+        ];
+        let recovered = consensus_then_rs_decode(&data_groups, &[], RsConfig::new(0));
+        assert_eq!(recovered[0].to_string(), "ATCG", "majority vote should out-vote the single corrupted read");
+        assert_eq!(recovered[1].to_string(), "GCTA");
+    }
+
+    #[test]
+    fn test_consensus_then_rs_decode_recovers_full_erasure_via_rs() {
+        // Strand 1 has zero surviving reads (fully dropped) -- consensus
+        // has nothing to vote on, so RS must reconstruct it from parity.
+        let rs = ReedSolomon::new(RsConfig::new(2));
+        let strands = vec![
+            DnaStrand::from_str("AAAA").unwrap(),
+            DnaStrand::from_str("CCCC").unwrap(),
+            DnaStrand::from_str("GGGG").unwrap(),
+        ];
+        let strand_bytes: Vec<Vec<u8>> = strands.iter()
+            .map(|s| s.bases().iter().map(|n| n.to_bits()).collect())
+            .collect();
+        let parity_bytes = rs.encode_block(&strand_bytes).unwrap();
+        let parity_strands: Vec<DnaStrand> = parity_bytes.iter()
+            .map(|p| DnaStrand::new(p.iter().filter_map(|&b| Nucleotide::from_bits(b).ok()).collect()))
+            .collect();
+
+        let data_groups = vec![
+            vec![strands[0].clone()],
+            vec![], // dropped entirely
+            vec![strands[2].clone()],
+        ];
+        let parity_groups: Vec<Vec<DnaStrand>> = parity_strands.iter().map(|p| vec![p.clone()]).collect();
+
+        let recovered = consensus_then_rs_decode(&data_groups, &parity_groups, RsConfig::new(2));
+        assert_eq!(recovered.len(), 3);
+        assert_eq!(recovered[1].to_string(), "CCCC", "RS should reconstruct the fully-dropped strand");
     }
 }

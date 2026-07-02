@@ -11,8 +11,9 @@ use nucle_codec::benchmark::benchmark_codec;
 use nucle_codec::fountain::{FountainCodec, FountainConfig};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
+use nucle_ecc::pipeline::consensus_then_rs_decode;
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
-use nucle_synth::noise::{NoiseEngine, SimulationConfig};
+use nucle_synth::noise::{NoiseEngine, SimulationConfig, SimulationResult};
 use nucle_synth::profiles::HardwareProfile;
 use serde::{Deserialize, Serialize};
 
@@ -90,10 +91,37 @@ pub fn bytes_to_dna(bytes: &[u8]) -> DnaStrand {
     DnaStrand::new(bases)
 }
 
-/// Monte-Carlo estimate of encode -> [+RS parity] -> noise -> recover
-/// roundtrip success — the redundancy slider actually changes this number
-/// because higher redundancy means more RS parity strands are available to
-/// reconstruct dropped/corrupted data strands during each trial.
+/// Real sequencing coverage assumed for the recovery estimate below --
+/// matches what `nucle benchmark` and NucleScript's own `simulate under`
+/// use elsewhere, so this interactive estimate reflects the real engine's
+/// behavior rather than a simplified one-shot read.
+const RECOVERY_COVERAGE_DEPTH: u32 = 10;
+
+/// Group a noise-simulation result's surviving reads by which pre-coverage
+/// logical strand each is a copy of (see `NoiseEngine::simulate`'s
+/// copy-major loop order: dividing the flat `strand_id` by coverage depth
+/// recovers the original index). Returns a dense `Vec` of length
+/// `input_count`; a logical position with zero surviving reads is an empty
+/// group, which `consensus_then_rs_decode` treats as an erasure.
+fn grouped_reads(result: &SimulationResult, coverage_depth: u32, input_count: usize) -> Vec<Vec<DnaStrand>> {
+    let coverage = coverage_depth.max(1) as u64;
+    let mut groups: Vec<Vec<DnaStrand>> = vec![Vec::new(); input_count];
+    for s in result.pool.strands.iter().filter(|s| s.is_intact && !s.is_truncated) {
+        if let Some(group) = groups.get_mut((s.strand_id / coverage) as usize) {
+            group.push(s.sequence.clone());
+        }
+    }
+    groups
+}
+
+/// Monte-Carlo estimate of encode -> [+RS parity] -> noise -> consensus ->
+/// RS recover roundtrip success — the redundancy slider actually changes
+/// this number because higher redundancy means more RS parity strands are
+/// available to reconstruct fully-dropped data strands, and because
+/// consensus-voting across `RECOVERY_COVERAGE_DEPTH` simulated reads per
+/// strand corrects substitution errors that RS alone cannot (RS is an
+/// erasure decoder, not an error decoder — it only recovers a strand
+/// that's entirely missing, never one that survived corrupted).
 pub fn estimate_recovery_probability(
     codec: &dyn DnaCodec,
     data: &[u8],
@@ -107,60 +135,41 @@ pub fn estimate_recovery_probability(
     let Ok(encoded) = codec.encode(data) else {
         return 0.0;
     };
-    let data_strand_count = encoded.strands.len();
 
-    let parity_bytes: Vec<Vec<u8>> = if redundancy > 0 {
+    let parity_strands: Vec<DnaStrand> = if redundancy > 0 {
         let rs = ReedSolomon::new(RsConfig::new(redundancy));
         let strand_bytes: Vec<Vec<u8>> = encoded.strands.iter().map(dna_to_bytes).collect();
-        rs.encode_block(&strand_bytes).unwrap_or_default()
+        rs.encode_block(&strand_bytes).unwrap_or_default().iter().map(|p| bytes_to_dna(p)).collect()
     } else {
         Vec::new()
     };
-    let mut all_strands = encoded.strands.clone();
-    for parity in &parity_bytes {
-        all_strands.push(bytes_to_dna(parity));
-    }
-    let combined = StrandCollection::from_strands(all_strands, data.len());
+
+    let data_collection = StrandCollection::from_strands(encoded.strands.clone(), data.len());
+    let parity_collection = StrandCollection::from_strands(parity_strands.clone(), 0);
 
     let mut successes = 0u64;
     for t in 0..trials {
         let config = SimulationConfig {
             seed: 9000 + t,
-            coverage_depth: 1,
+            coverage_depth: RECOVERY_COVERAGE_DEPTH,
             synthesis_profile: profile,
             sequencing_profile: profile,
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
         };
-        let sim_result = NoiseEngine::new(config).simulate(&combined);
+        let data_sim = NoiseEngine::new(config.clone()).simulate(&data_collection);
+        let data_groups = grouped_reads(&data_sim, RECOVERY_COVERAGE_DEPTH, encoded.strands.len());
 
-        let final_strands: Vec<DnaStrand> = if redundancy > 0 && !parity_bytes.is_empty() {
-            let received: Vec<Option<Vec<u8>>> = sim_result
-                .pool
-                .strands
-                .iter()
-                .take(data_strand_count)
-                .map(|s| if s.is_intact { Some(dna_to_bytes(&s.sequence)) } else { None })
-                .collect();
-            let parity_received: Vec<Vec<u8>> = sim_result
-                .pool
-                .strands
-                .iter()
-                .skip(data_strand_count)
-                .filter(|s| s.is_intact)
-                .map(|s| dna_to_bytes(&s.sequence))
-                .collect();
-            let rs = ReedSolomon::new(RsConfig::new(redundancy));
-            match rs.decode_block(&received, &parity_received) {
-                Ok(recovered) => recovered.iter().map(|b| bytes_to_dna(b)).collect(),
-                Err(_) => continue,
-            }
+        let recovered_strands = if redundancy > 0 {
+            let parity_sim = NoiseEngine::new(config).simulate(&parity_collection);
+            let parity_groups = grouped_reads(&parity_sim, RECOVERY_COVERAGE_DEPTH, parity_strands.len());
+            consensus_then_rs_decode(&data_groups, &parity_groups, RsConfig::new(redundancy))
         } else {
-            sim_result.pool.to_strand_collection(data.len()).strands
+            consensus_then_rs_decode(&data_groups, &[], RsConfig::new(0))
         };
 
-        let collection = StrandCollection::from_strands(final_strands, data.len());
+        let collection = StrandCollection::from_strands(recovered_strands, data.len());
         if let Ok(decoded) = codec.decode(&collection) {
             if decoded == data {
                 successes += 1;
@@ -393,6 +402,23 @@ mod tests {
         .unwrap();
         assert!(result.roundtrip_ok);
         assert_eq!(result.recovery_probability, 1.0);
+    }
+
+    /// The interactive Benchmark Explorer's recovery estimate should reflect
+    /// the real engine's fixed behavior under Illumina noise: consensus
+    /// voting across simulated sequencing coverage corrects substitution
+    /// errors that Reed-Solomon alone cannot, so recovery is now reliably
+    /// high instead of near-zero (which is what it was before consensus was
+    /// wired in -- a corrupted-but-present strand used to fail the codec's
+    /// decode outright, redundancy or not).
+    #[test]
+    fn benchmark_recovery_is_reliably_high_under_illumina_noise_with_consensus() {
+        let codec = make_codec("ternary").unwrap();
+        let data = b"Consensus voting across simulated sequencing coverage \
+            corrects substitution errors that Reed-Solomon alone cannot.";
+
+        let recovery = estimate_recovery_probability(codec.as_ref(), data, HardwareProfile::Illumina, 4, 20);
+        assert!(recovery > 0.5, "with real coverage + consensus + RS, recovery should be reliably high, got {recovery}");
     }
 
     #[test]

@@ -777,8 +777,8 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
                     <div class="section-title" style="padding: 1rem 1.4rem 0;">GC Content Distribution (10 bins, 0%&ndash;100%)</div>
                     <div class="gc-chart" id="gc-chart"></div>
                     <div class="callout">
-                        <strong>Why doesn't recovery probability improve with more redundancy on Illumina/Nanopore?</strong>
-                        Reed-Solomon parity here only reconstructs strands that were fully <em>dropped</em>. The current ternary decoder has zero tolerance for a strand that survived but was <em>corrupted</em> (a substitution/indel) &mdash; it's a real, documented gap (see the core repo's <code>docs/architecture.md</code> &quot;Current status&quot;), not a demo bug. Try the <strong>Twist</strong> or <strong>Pristine</strong> profiles (deletion-dominant / error-free) to see redundancy actually help.
+                        <strong>How does recovery probability improve under Illumina, and why doesn't it under Nanopore?</strong>
+                        This estimate simulates real sequencing coverage &mdash; 10 independent noisy reads per strand, the same assumption <code>nucle benchmark</code> makes &mdash; and consensus-votes them before Reed-Solomon ever runs. Majority voting across coverage copies corrects most <em>substitution</em> errors regardless of which copy has them, which is why redundancy now genuinely helps under Illumina. It doesn't help under Nanopore: that voting compares reads base-by-base at the same position, and Nanopore's errors are mostly <em>insertions/deletions</em> that shift every base after them out of position &mdash; so positional voting compares unrelated bases and produces garbage instead of a correction. That's a real, distinct gap (sequence alignment before voting would fix it), not a demo bug.
                     </div>
                 </div>
             </div>

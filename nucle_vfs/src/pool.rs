@@ -25,6 +25,13 @@ pub struct PoolEntry {
     pub file_id: String,
     /// Strand index within the file.
     pub strand_index: usize,
+    /// Which logical strand (0..data_strand_count for data, 0..parity_count
+    /// for parity) this entry is a read of. Equal to `strand_index` for a
+    /// plain write; when synthesis noise simulation produced multiple
+    /// coverage copies of the same logical strand, every copy shares the
+    /// same `source_index` so `dna_read` can regroup and consensus-vote
+    /// them before Reed-Solomon ever sees them.
+    pub source_index: usize,
     /// Whether this is a parity (ECC) strand.
     pub is_parity: bool,
 }
@@ -82,6 +89,7 @@ impl DnaPool {
                 strand,
                 file_id: file_id.to_string(),
                 strand_index: i,
+                source_index: i,
                 is_parity: false,
             });
             ids.push(id);
@@ -92,6 +100,7 @@ impl DnaPool {
                 strand,
                 file_id: file_id.to_string(),
                 strand_index: strands_count_placeholder(i, ids.len()),
+                source_index: i,
                 is_parity: true,
             });
             ids.push(id);
@@ -258,6 +267,7 @@ mod tests {
             strand: strand.clone(),
             file_id: "file1".into(),
             strand_index: 0,
+            source_index: 0,
             is_parity: false,
         });
 
@@ -276,6 +286,7 @@ mod tests {
                 strand: DnaStrand::from_str("ATCGATCG").unwrap(),
                 file_id: "file1".into(),
                 strand_index: i,
+                source_index: i,
                 is_parity: i >= 3, // Last 2 are parity
             });
         }
@@ -285,6 +296,7 @@ mod tests {
                 strand: DnaStrand::from_str("GCTAGCTA").unwrap(),
                 file_id: "file2".into(),
                 strand_index: i,
+                source_index: i,
                 is_parity: false,
             });
         }
@@ -305,6 +317,7 @@ mod tests {
                 strand: DnaStrand::from_str("ATCG").unwrap(),
                 file_id: "file1".into(),
                 strand_index: i,
+                source_index: i,
                 is_parity: false,
             });
         }
@@ -325,6 +338,7 @@ mod tests {
                 strand: DnaStrand::from_str("ATCGATCG").unwrap(), // 8 nt
                 file_id: "f1".into(),
                 strand_index: i,
+                source_index: i,
                 is_parity: i == 3,
             });
         }
@@ -344,6 +358,7 @@ mod tests {
             strand: DnaStrand::from_str("ATCG").unwrap(),
             file_id: "f1".into(),
             strand_index: 0,
+            source_index: 0,
             is_parity: false,
         });
 
@@ -366,12 +381,14 @@ mod tests {
             strand: DnaStrand::from_str("AAAA").unwrap(),
             file_id: "f1".into(),
             strand_index: 0,
+            source_index: 0,
             is_parity: false,
         });
         pool.add_strand(PoolEntry {
             strand: DnaStrand::from_str("TTTT").unwrap(),
             file_id: "f2".into(),
             strand_index: 0,
+            source_index: 0,
             is_parity: false,
         });
 

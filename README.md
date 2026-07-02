@@ -228,21 +228,33 @@ $ nucle benchmark --profile pristine -r 4
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
 ```
 
-Under a noisy channel like Illumina, the same fixtures currently fail
-recovery — a known, documented limitation, not a bug in the benchmark: the
-ternary decoder is strict and rejects substitution-corrupted strands rather
-than soft-decoding them (see [docs/architecture.md](docs/architecture.md#current-status)
-for the fix path — consensus voting across coverage copies, already
-implemented in `nucle_ecc::consensus` but not yet wired into this decode path):
+Under a noisy channel like Illumina, this used to fail recovery: the ternary
+decoder is strict and rejects substitution-corrupted strands rather than
+soft-decoding them, and Reed-Solomon alone only recovers a strand that's
+entirely missing, never one that survived corrupted. The fix is consensus
+voting across coverage copies — sequencing each strand multiple times and
+majority-voting corrects substitution errors regardless of which copy has
+them — and it's now wired into the real `dna_read` path (`nucle_ecc::consensus`
+→ `nucle_vfs::syscall::dna_read`), not just implemented in isolation:
 
 ```
 $ nucle benchmark -p illumina -r 4
 
-║ small_text.txt     │      96 │      78 │      0.36% │    FAIL │ $  0.0616 │  41.7% │      0 ║
-║ archive.bin        │     327 │     176 │      0.36% │    FAIL │ $  0.2156 │  38.1% │      0 ║
-║ sample.fasta       │     176 │     118 │      0.36% │    FAIL │ $  0.1232 │  34.7% │      0 ║
-║ image.png          │     294 │     156 │      0.35% │    FAIL │ $  0.1848 │  39.0% │      0 ║
+║ small_text.txt     │      96 │       8 │      0.36% │    PASS │ $  0.0616 │  41.7% │      0 ║
+║ archive.bin        │     327 │      18 │      0.36% │    PASS │ $  0.2156 │  38.1% │      0 ║
+║ sample.fasta       │     176 │      12 │      0.36% │    PASS │ $  0.1232 │  34.7% │      0 ║
+║ image.png          │     294 │      16 │      0.35% │    PASS │ $  0.1848 │  39.0% │      0 ║
 ```
+
+This fixes Illumina, not Nanopore — and that split is real, not an oversight.
+Consensus voting (`nucle_ecc::consensus::build_consensus`) aligns reads by
+raw position, which corrects Illumina's substitution-heavy noise but can't
+handle Nanopore's indel-heavy noise: an insertion or deletion shifts every
+base after it out of position, so positional majority voting compares
+unrelated bases across copies instead of correcting anything. `nucle
+benchmark -p nanopore -r 4` still fails today — fixing it for real needs
+sequence alignment before voting, not more coverage or redundancy. See
+[docs/architecture.md](docs/architecture.md#current-status) for the detail.
 
 ### End-to-End Roundtrip: Encode → Noise → Recover
 
