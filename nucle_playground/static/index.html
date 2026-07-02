@@ -103,20 +103,19 @@
         nav.tabs {
             display: flex;
             gap: 1.6rem;
-            border-bottom: 2px solid transparent;
+            position: relative;
         }
 
         nav.tabs button {
             background: transparent;
             border: none;
-            border-bottom: 2px solid transparent;
             color: var(--muted);
             font-family: var(--font-body);
             font-size: 0.92rem;
             font-weight: 600;
             padding: 0.5rem 0.1rem;
             cursor: pointer;
-            transition: color 0.15s ease, border-color 0.15s ease;
+            transition: color 0.15s ease;
             white-space: nowrap;
             margin-bottom: -1px;
         }
@@ -127,7 +126,31 @@
 
         nav.tabs button.active {
             color: var(--signal);
-            border-bottom-color: var(--signal);
+        }
+
+        .tab-indicator {
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            height: 2px;
+            background: var(--signal);
+            transition: transform 0.28s cubic-bezier(0.65, 0, 0.35, 1), width 0.28s cubic-bezier(0.65, 0, 0.35, 1);
+        }
+
+        /* Live "sequencer trace" strip -- an animated stand-in for the four
+           fluorescence channels a real chromatogram plots, in the same
+           colors used for strand state everywhere else on this page. */
+        .trace-strip {
+            height: 64px;
+            border-bottom: 1px solid var(--line);
+            background: var(--surface);
+            overflow: hidden;
+        }
+
+        .trace-strip canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
         }
 
         nav.tabs button:focus-visible,
@@ -244,11 +267,14 @@
             font-size: 0.9rem;
             font-weight: 700;
             cursor: pointer;
-            transition: background 0.15s ease, transform 0.1s ease;
+            transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+            animation: breathe 3.4s ease-in-out infinite;
         }
 
         .btn-analyze:hover {
             background: #86f5b9;
+            animation: none;
+            box-shadow: 0 0 20px 3px rgba(110, 240, 168, 0.45);
         }
 
         .btn-analyze:active {
@@ -258,6 +284,18 @@
         .btn-analyze:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            animation: none;
+            box-shadow: none;
+        }
+
+        @keyframes breathe {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(110, 240, 168, 0.3); }
+            50% { box-shadow: 0 0 14px 1px rgba(110, 240, 168, 0.3); }
+        }
+
+        @keyframes strand-flash {
+            0% { box-shadow: 0 0 0 2px rgba(237, 242, 233, 0.55); }
+            100% { box-shadow: 0 0 0 0 rgba(237, 242, 233, 0); }
         }
 
         .results-content {
@@ -540,7 +578,7 @@
             transition: opacity 0.35s ease, transform 0.35s ease;
         }
 
-        .strand-block.show { opacity: 1; transform: scaleY(1); }
+        .strand-block.show { opacity: 1; transform: scaleY(1); animation: strand-flash 0.5s ease-out; }
 
         .strand-block.clean {
             background: var(--signal-dim);
@@ -639,11 +677,14 @@
             <button class="tab-btn active" data-tab="tab-write-run">Write &amp; Run</button>
             <button class="tab-btn" data-tab="tab-benchmark">Benchmark Explorer</button>
             <button class="tab-btn" data-tab="tab-pipeline">Pipeline Visualizer</button>
+            <span class="tab-indicator"></span>
         </nav>
         <div id="status-container">
             <span class="status-badge idle">Ready</span>
         </div>
     </header>
+
+    <div class="trace-strip"><canvas id="trace-canvas" aria-hidden="true"></canvas></div>
 
     <main>
         <!-- ============ TAB 1: WRITE & RUN ============ -->
@@ -803,15 +844,109 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
     </footer>
 
     <script>
+        const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        // ---------------- Hero: live sequencer trace ----------------
+        // A generative stand-in for a Sanger/Illumina chromatogram: four
+        // scrolling channels in the same colors used for strand state
+        // everywhere else on the page (signal/parity/warn/danger). Canvas,
+        // not an image -- it's the one truly "live" thing on the page.
+        (function initTraceCanvas() {
+            const canvas = document.getElementById('trace-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const channels = [
+                { color: '110, 240, 168', phase: 0.0, speed: 0.020, freq: 0.020 },
+                { color: '79, 168, 216', phase: 2.4, speed: 0.015, freq: 0.026 },
+                { color: '227, 162, 61', phase: 4.6, speed: 0.023, freq: 0.017 },
+                { color: '201, 85, 61', phase: 1.2, speed: 0.012, freq: 0.023 },
+            ];
+            let t = 0;
+
+            function resize() {
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = Math.max(1, Math.round(rect.width * dpr));
+                canvas.height = Math.max(1, Math.round(rect.height * dpr));
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            function drawFrame() {
+                const rect = canvas.getBoundingClientRect();
+                const w = rect.width, h = rect.height;
+                ctx.clearRect(0, 0, w, h);
+                const mid = h * 0.6;
+
+                channels.forEach(c => {
+                    ctx.beginPath();
+                    for (let x = 0; x <= w; x += 4) {
+                        const localT = t * c.speed + x * c.freq;
+                        const wander = Math.sin(localT + c.phase) * 0.3 + Math.sin(localT * 2.3 + c.phase * 1.7) * 0.14;
+                        const peak = Math.pow(Math.max(0, Math.sin(localT * 0.45 + c.phase * 2.0)), 10) * 0.85;
+                        const y = mid - (wander + peak) * (h * 0.4);
+                        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                    }
+                    ctx.strokeStyle = `rgba(${c.color}, 0.5)`;
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                });
+
+                if (!prefersReducedMotion) {
+                    t += 1;
+                    requestAnimationFrame(drawFrame);
+                }
+            }
+            drawFrame();
+        })();
+
+        // ---------------- Number count-up ----------------
+        // Metric readouts animate to their new value instead of snapping,
+        // like a live instrument settling on a reading.
+        function animateMetric(el, text, prefix) {
+            prefix = prefix || '';
+            const numeric = text.slice(prefix.length);
+            const match = numeric.match(/^-?[\d.]+/);
+            if (!match || prefersReducedMotion) { el.textContent = text; return; }
+            const end = parseFloat(match[0]);
+            const suffix = numeric.slice(match[0].length);
+            const startMatch = el.textContent.slice(prefix.length).match(/^-?[\d.]+/);
+            const start = startMatch ? parseFloat(startMatch[0]) : 0;
+            const decimals = (match[0].split('.')[1] || '').length;
+            const duration = 450;
+            const t0 = performance.now();
+            function tick(now) {
+                const progress = Math.min(1, (now - t0) / duration);
+                const eased = 1 - Math.pow(1 - progress, 3);
+                el.textContent = prefix + (start + (end - start) * eased).toFixed(decimals) + suffix;
+                if (progress < 1) requestAnimationFrame(tick);
+            }
+            requestAnimationFrame(tick);
+        }
+
         // ---------------- Tab switching ----------------
+        const tabIndicator = document.querySelector('.tab-indicator');
+        function moveTabIndicator(btn) {
+            if (!tabIndicator) return;
+            const nav = btn.parentElement;
+            const navRect = nav.getBoundingClientRect();
+            const btnRect = btn.getBoundingClientRect();
+            tabIndicator.style.width = btnRect.width + 'px';
+            tabIndicator.style.transform = `translateX(${btnRect.left - navRect.left}px)`;
+        }
+
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
                 document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
                 btn.classList.add('active');
                 document.getElementById(btn.dataset.tab).classList.add('active');
+                moveTabIndicator(btn);
             });
         });
+        moveTabIndicator(document.querySelector('.tab-btn.active'));
+        window.addEventListener('resize', () => moveTabIndicator(document.querySelector('.tab-btn.active')));
 
         function escapeHtml(str) {
             return str.replace(/&/g, "&amp;")
@@ -923,12 +1058,12 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
                 const report = await response.json();
                 if (!response.ok) throw new Error(report.error || 'benchmark failed');
 
-                document.getElementById('m-density').textContent = report.bits_per_nucleotide.toFixed(3) + ' bits/nt';
-                document.getElementById('m-gc').textContent = (report.avg_gc_content * 100).toFixed(1) + '%';
-                document.getElementById('m-strands').textContent = report.strand_count;
-                document.getElementById('m-nt').textContent = report.total_nucleotides;
-                document.getElementById('m-cost').textContent = '$' + report.estimated_cost_usd.toFixed(4);
-                document.getElementById('m-recovery').textContent = (report.recovery_probability * 100).toFixed(0) + '%';
+                animateMetric(document.getElementById('m-density'), report.bits_per_nucleotide.toFixed(3) + ' bits/nt');
+                animateMetric(document.getElementById('m-gc'), (report.avg_gc_content * 100).toFixed(1) + '%');
+                animateMetric(document.getElementById('m-strands'), String(report.strand_count));
+                animateMetric(document.getElementById('m-nt'), String(report.total_nucleotides));
+                animateMetric(document.getElementById('m-cost'), '$' + report.estimated_cost_usd.toFixed(4), '$');
+                animateMetric(document.getElementById('m-recovery'), (report.recovery_probability * 100).toFixed(0) + '%');
 
                 const chart = document.getElementById('gc-chart');
                 const maxCount = Math.max(1, ...report.gc_distribution);
