@@ -12,6 +12,11 @@ bitvec = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
+# std::time::Instant panics on wasm32-unknown-unknown ("time not implemented
+# on this platform"); web-time re-exports std's Instant unchanged on every
+# other target and backs it with `Performance.now()` in the browser, so
+# benchmark_codec's timing works natively AND compiled to WASM.
+web-time = "1.1"
 
 [dev-dependencies]
 env_logger = { workspace = true }

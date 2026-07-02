@@ -13,7 +13,7 @@
 use crate::base::{DnaCodec, DnaError, StrandCollection};
 use crate::constraints::{ConstraintConfig, ConstraintValidator};
 use std::fmt;
-use std::time::Instant;
+use web_time::Instant;
 use serde::Serialize;
 
 // ---------------------------------------------------------------------------
