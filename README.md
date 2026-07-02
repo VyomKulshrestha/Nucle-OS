@@ -1,5 +1,7 @@
 # Nucle-OS — DNA Storage Engine
 
+[![Release](https://img.shields.io/github/v/release/VyomKulshrestha/Nucle-OS)](https://github.com/VyomKulshrestha/Nucle-OS/releases)
+
 **A complete software-defined DNA storage operating system.**
 
 The same way software-defined networking abstracts physical switches, Nucle-OS abstracts physical DNA synthesizers. It is the driver layer that molecular data storage plugs into.
