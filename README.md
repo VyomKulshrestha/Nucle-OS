@@ -246,14 +246,22 @@ $ nucle benchmark -p illumina -r 4
 ║ image.png          │     294 │      16 │      0.35% │    PASS │ $  0.1848 │  39.0% │      0 ║
 ```
 
-This fixes Illumina, not Nanopore — and that split is real, not an oversight.
-Consensus voting (`nucle_ecc::consensus::build_consensus`) aligns reads by
-raw position, which corrects Illumina's substitution-heavy noise but can't
-handle Nanopore's indel-heavy noise: an insertion or deletion shifts every
-base after it out of position, so positional majority voting compares
-unrelated bases across copies instead of correcting anything. `nucle
-benchmark -p nanopore -r 4` still fails today — fixing it for real needs
-sequence alignment before voting, not more coverage or redundancy. See
+This fixes Illumina. Nanopore is still broken, and we chased why twice.
+First fix: consensus voting (`nucle_ecc::consensus::build_consensus`) now
+globally aligns (Needleman-Wunsch) any read whose length differs from the
+group's reference before voting, instead of comparing raw positions — that
+made it tolerate indels, not just substitutions. Second, bigger fix: primer
+matching (`nucle_index::primer::PrimerPair`) used to require an exact-position
+match, so a single indel landing inside a primer — routine at Nanopore's
+error rate — made retrieval drop the whole strand *before it ever reached
+consensus*. That turned out to be the dominant blocker, not the voting
+algorithm. Both are fixed and covered by unit tests. `nucle benchmark -p
+nanopore -r 4` still fails today, even at 50x coverage — the remaining
+cause is that a single ~150nt Nanopore read accumulates many simultaneous
+indels, and realigning each read pairwise against one arbitrarily-picked
+noisy read (rather than a proper multi-read consensus) accumulates drift at
+that density. Fixing that needs partial-order alignment across all reads at
+once, not pairwise realignment. See
 [docs/architecture.md](docs/architecture.md#current-status) for the detail.
 
 ### End-to-End Roundtrip: Encode → Noise → Recover

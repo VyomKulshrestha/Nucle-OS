@@ -22,6 +22,20 @@ use std::fmt;
 /// Standard primer length in nucleotides (20 nt is typical for PCR).
 pub const DEFAULT_PRIMER_LENGTH: usize = 20;
 
+/// Maximum edit-distance fraction (relative to primer length) tolerated when
+/// locating a primer inside a physically synthesized/sequenced strand.
+/// `PrimerLibrary::is_orthogonal` guarantees every pair of primers in a
+/// library differs by a Hamming distance of at least 30% of their length, so
+/// staying comfortably under that (20%) still tells different files' primers
+/// apart while tolerating Nanopore-grade noise (~2-3% substitution + ~2%
+/// insertion + ~2% deletion per base, so ~1-2 expected errors over a 20nt
+/// primer).
+const MAX_PRIMER_ERROR_FRACTION: f64 = 0.2;
+
+/// How many bases of net insertion/deletion inside a primer to search for
+/// when its exact boundary has been shifted by indel noise.
+const MAX_PRIMER_SHIFT: usize = 4;
+
 // ---------------------------------------------------------------------------
 // Primer Pair
 // ---------------------------------------------------------------------------
@@ -62,34 +76,64 @@ impl PrimerPair {
 
     /// Extract the data portion from a tagged strand.
     ///
-    /// Returns None if the strand doesn't match this primer pair.
+    /// Returns None if the strand doesn't match this primer pair. Primer
+    /// boundaries are located by approximate (edit-distance-tolerant)
+    /// matching rather than an exact-position slice, because an insertion or
+    /// deletion inside either primer -- routine under Nanopore-grade noise --
+    /// shifts exactly where the primer ends without changing that it's still
+    /// recognizably the same primer.
     pub fn untag_strand(&self, tagged: &DnaStrand) -> Option<DnaStrand> {
-        let fwd_len = self.forward.len();
-        let rev_len = self.reverse.len();
+        let fwd_end = Self::find_primer_end(tagged.bases(), self.forward.bases())?;
+        let rev_complement = self.reverse.reverse_complement();
+        let rev_start = Self::find_primer_start_from_end(tagged.bases(), rev_complement.bases())?;
 
-        if tagged.len() < fwd_len + rev_len {
+        if rev_start <= fwd_end {
             return None;
         }
 
-        // Verify forward primer matches
-        let fwd_region = &tagged.bases()[..fwd_len];
-        if fwd_region != self.forward.bases() {
-            return None;
-        }
-
-        // Extract data (between forward and reverse complement)
-        let data_end = tagged.len() - rev_len;
-        let data_bases = tagged.bases()[fwd_len..data_end].to_vec();
-
-        Some(DnaStrand::new(data_bases))
+        Some(DnaStrand::new(tagged.bases()[fwd_end..rev_start].to_vec()))
     }
 
-    /// Check if a strand starts with this primer pair's forward primer.
+    /// Check if a strand starts with this primer pair's forward primer
+    /// (tolerant of the same primer-boundary noise as [`Self::untag_strand`]).
     pub fn matches_forward(&self, strand: &DnaStrand) -> bool {
-        if strand.len() < self.forward.len() {
-            return false;
+        Self::find_primer_end(strand.bases(), self.forward.bases()).is_some()
+    }
+
+    /// Find where `primer` ends inside `haystack`, assuming it starts at
+    /// position 0 (true for a forward primer, which is always prepended).
+    /// A net insertion or deletion inside the primer shifts where it ends
+    /// without shifting where it starts, so this checks candidate end
+    /// positions near the primer's nominal length and keeps whichever has
+    /// the lowest edit distance, rejecting anything over
+    /// `MAX_PRIMER_ERROR_FRACTION`.
+    fn find_primer_end(haystack: &[Nucleotide], primer: &[Nucleotide]) -> Option<usize> {
+        let nominal = primer.len();
+        let max_errors = (nominal as f64 * MAX_PRIMER_ERROR_FRACTION).ceil() as usize;
+
+        let lo = nominal.saturating_sub(MAX_PRIMER_SHIFT);
+        let hi = (nominal + MAX_PRIMER_SHIFT).min(haystack.len());
+
+        let mut best: Option<(usize, usize)> = None; // (end position, edit distance)
+        for end in lo..=hi {
+            let dist = edit_distance(primer, &haystack[..end]);
+            if best.map_or(true, |(_, best_dist)| dist < best_dist) {
+                best = Some((end, dist));
+            }
         }
-        &strand.bases()[..self.forward.len()] == self.forward.bases()
+
+        best.filter(|&(_, dist)| dist <= max_errors).map(|(end, _)| end)
+    }
+
+    /// Mirror of [`Self::find_primer_end`] for a primer anchored to the
+    /// *end* of `haystack` (the reverse-complement of the reverse primer,
+    /// which is appended). Returns the start index of that occurrence in
+    /// `haystack`'s own orientation.
+    fn find_primer_start_from_end(haystack: &[Nucleotide], primer: &[Nucleotide]) -> Option<usize> {
+        let reversed_haystack: Vec<Nucleotide> = haystack.iter().rev().copied().collect();
+        let reversed_primer: Vec<Nucleotide> = primer.iter().rev().copied().collect();
+        let end_from_reversed = Self::find_primer_end(&reversed_haystack, &reversed_primer)?;
+        Some(haystack.len() - end_from_reversed)
     }
 
     /// Estimated melting temperature (Tm) using the Wallace rule.
@@ -108,6 +152,29 @@ impl PrimerPair {
         let at = strand.len() - gc;
         2.0 * at as f64 + 4.0 * gc as f64
     }
+}
+
+/// Levenshtein edit distance between two nucleotide sequences (substitution,
+/// insertion, and deletion each cost 1).
+fn edit_distance(a: &[Nucleotide], b: &[Nucleotide]) -> usize {
+    let (n, m) = (a.len(), b.len());
+    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for j in 0..=m {
+        dp[0][j] = j;
+    }
+    for i in 1..=n {
+        for j in 1..=m {
+            dp[i][j] = if a[i - 1] == b[j - 1] {
+                dp[i - 1][j - 1]
+            } else {
+                1 + dp[i - 1][j - 1].min(dp[i - 1][j]).min(dp[i][j - 1])
+            };
+        }
+    }
+    dp[n][m]
 }
 
 impl fmt::Display for PrimerPair {
@@ -302,6 +369,64 @@ mod tests {
 
         // Untag should recover original data
         let recovered = pair.untag_strand(&tagged).unwrap();
+        assert_eq!(recovered, data);
+    }
+
+    #[test]
+    fn test_untag_tolerates_single_insertion_in_forward_primer() {
+        let fwd = DnaStrand::from_str("ATCGATCGATCGATCGATCG").unwrap();
+        let rev = DnaStrand::from_str("GCTAGCTAGCTAGCTAGCTA").unwrap();
+        let pair = PrimerPair::new("test", fwd, rev);
+        let data = DnaStrand::from_str("AAACCCGGGTTT").unwrap();
+        let tagged = pair.tag_strand(&data);
+
+        // Insert an extra base into the forward primer region (index 5),
+        // simulating a Nanopore insertion error -- this shifts every base
+        // after it, so the old exact-slice-at-fwd_len approach would grab
+        // the wrong window entirely.
+        let mut noisy = tagged.bases().to_vec();
+        noisy.insert(5, Nucleotide::T);
+        let noisy = DnaStrand::new(noisy);
+
+        assert!(pair.matches_forward(&noisy));
+        let recovered = pair.untag_strand(&noisy).expect("should recover despite the insertion");
+        assert_eq!(recovered, data);
+    }
+
+    #[test]
+    fn test_untag_tolerates_single_deletion_in_reverse_primer() {
+        let fwd = DnaStrand::from_str("ATCGATCGATCGATCGATCG").unwrap();
+        let rev = DnaStrand::from_str("GCTAGCTAGCTAGCTAGCTA").unwrap();
+        let pair = PrimerPair::new("test", fwd, rev);
+        let data = DnaStrand::from_str("AAACCCGGGTTT").unwrap();
+        let tagged = pair.tag_strand(&data);
+
+        // Delete a base from inside the appended reverse-complement region
+        // (near the very end), simulating a Nanopore deletion error.
+        let mut noisy = tagged.bases().to_vec();
+        let last = noisy.len() - 1;
+        noisy.remove(last - 3);
+        let noisy = DnaStrand::new(noisy);
+
+        let recovered = pair.untag_strand(&noisy).expect("should recover despite the deletion");
+        assert_eq!(recovered, data);
+    }
+
+    #[test]
+    fn test_untag_tolerates_substitution_in_both_primers() {
+        let fwd = DnaStrand::from_str("ATCGATCGATCGATCGATCG").unwrap();
+        let rev = DnaStrand::from_str("GCTAGCTAGCTAGCTAGCTA").unwrap();
+        let pair = PrimerPair::new("test", fwd, rev);
+        let data = DnaStrand::from_str("AAACCCGGGTTT").unwrap();
+        let tagged = pair.tag_strand(&data);
+
+        let mut noisy = tagged.bases().to_vec();
+        noisy[2] = Nucleotide::G; // corrupt a base inside the forward primer
+        let last = noisy.len() - 1;
+        noisy[last - 2] = Nucleotide::A; // corrupt a base inside the reverse-complement region
+        let noisy = DnaStrand::new(noisy);
+
+        let recovered = pair.untag_strand(&noisy).expect("should recover despite substitutions");
         assert_eq!(recovered, data);
     }
 

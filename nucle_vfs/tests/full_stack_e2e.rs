@@ -316,37 +316,73 @@ fn test_roundtrip_survives_illumina_noise_via_consensus() {
     );
 }
 
-/// Consensus voting fixes Illumina (above) but NOT Nanopore, and this is a
-/// real, distinct limitation worth documenting rather than papering over:
-/// `nucle_ecc::consensus::build_consensus` aligns reads by raw position
-/// (truncating to the median length), which only works when reads are
-/// roughly the same length and errors are substitutions. Nanopore is
-/// indel-dominant -- an insertion or deletion shifts every base after it,
-/// so positional majority voting is comparing unrelated bases across
-/// copies and produces garbage instead of a correction. Fixing this for
-/// real needs sequence alignment (e.g. Needleman-Wunsch / partial-order
-/// alignment), not just more coverage or more parity.
+/// Nanopore recovery needed two real, distinct fixes, and this test
+/// documents what's now fixed and what honestly still isn't:
+///
+/// 1. **Fixed**: `nucle_ecc::consensus::build_consensus` used to align reads
+///    by raw position (truncate-to-median-length), which only works when
+///    errors are substitutions. It now globally aligns any read whose length
+///    differs from the reference (Needleman-Wunsch) before voting, so a
+///    frame-shifted read still contributes its votes to the right column.
+///    See `nucle_ecc::consensus::tests::test_consensus_corrects_frame_shifting_indels`
+///    for a direct proof this works.
+/// 2. **Fixed**: `nucle_index::primer::PrimerPair::{matches_forward,
+///    untag_strand}` used exact-position primer matching, so a single indel
+///    landing inside a primer (routine at Nanopore's ~4%/base indel rate)
+///    made CRISPR retrieval treat the strand as non-target and dropped it
+///    *before it ever reached consensus* -- this, not the voting algorithm,
+///    was the dominant reason Nanopore recovery was previously impossible in
+///    principle regardless of coverage. Both now locate primer boundaries by
+///    bounded edit-distance search. See
+///    `nucle_index::primer::tests::test_untag_tolerates_*` for direct proof.
+///
+/// 3. **Still broken, and this is real**: a single ~150nt strand at
+///    Nanopore's per-base indel rate accumulates *many* simultaneous indels
+///    (empirically 6-10 net insertions/deletions per read here), not just
+///    one. Every read is realigned against a single arbitrarily-picked noisy
+///    read (the one closest to median length) rather than against the true
+///    original sequence or a proper multi-read consensus, so with that many
+///    indels per read the pairwise alignment itself accumulates drift and
+///    produces wrong votes at scattered positions -- not just at the indel
+///    site. This is confirmed below to persist even at 50x coverage and 12
+///    parity strands, which rules out "just not enough redundancy": the
+///    problem isn't statistical (residual iid noise slipping through), it's
+///    structural (single-reference pairwise realignment isn't accurate
+///    enough at this indel density). Correcting it for real needs multi-read
+///    consensus that builds an alignment from *all* reads at once (e.g.
+///    partial-order alignment, as used by real long-read polishers like
+///    Racon/Medaka) instead of each read independently against one noisy
+///    anchor -- a substantially larger piece of work than adding alignment
+///    awareness to voting, and out of scope here.
 #[test]
-fn test_nanopore_indels_still_break_positional_consensus() {
-    let noise_cfg = SimulationConfig {
-        seed: 7,
-        coverage_depth: 10,
-        synthesis_profile: HardwareProfile::OxfordNanopore,
-        sequencing_profile: HardwareProfile::OxfordNanopore,
-        simulate_decay: false,
-        decay_rate: 0.0,
-        storage_time: 0.0,
-    };
-    let mut os = NucleOS::new(10).with_noise(noise_cfg);
-    let original = b"Consensus voting across coverage copies corrects \
-        substitution errors that Reed-Solomon alone cannot.";
-    os.dna_write("noisy_nanopore.txt", original, 4).unwrap();
+fn test_nanopore_still_fails_at_realistic_indel_density_despite_alignment_fixes() {
+    let mut still_failing = 0;
+    let trials = 5;
+    for seed in 0..trials {
+        let noise_cfg = SimulationConfig {
+            seed,
+            coverage_depth: 50,
+            synthesis_profile: HardwareProfile::OxfordNanopore,
+            sequencing_profile: HardwareProfile::OxfordNanopore,
+            simulate_decay: false,
+            decay_rate: 0.0,
+            storage_time: 0.0,
+        };
+        let mut os = NucleOS::new(10).with_noise(noise_cfg);
+        let original = b"Consensus voting across coverage copies corrects \
+            substitution errors that Reed-Solomon alone cannot.";
+        os.dna_write("noisy_nanopore.txt", original, 12).unwrap();
 
-    let recovered = os.dna_read("noisy_nanopore.txt");
-    assert!(
-        recovered.is_err() || recovered.unwrap() != original.to_vec(),
-        "Nanopore roundtrip is expected to still fail today (positional consensus can't \
-         handle indel-heavy noise) -- if this starts passing, indel-aware alignment has \
-         been added and this test (and the docs describing the limitation) should be updated"
+        let recovered = os.dna_read("noisy_nanopore.txt");
+        if recovered.is_err() || recovered.unwrap() != original.to_vec() {
+            still_failing += 1;
+        }
+    }
+    assert_eq!(
+        still_failing, trials,
+        "expected Nanopore roundtrip to still fail at realistic per-read indel density \
+         even at 50x coverage / 12 parity strands (see doc comment) -- if this starts \
+         passing, multi-read consensus has been added and this test (and the docs \
+         describing the limitation) should be updated"
     );
 }
