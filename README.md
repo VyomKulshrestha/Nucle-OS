@@ -263,14 +263,24 @@ including the very first or last base (previously it couldn't). Consensus
 now also polishes over multiple rounds (reseed from the previous round's
 own result, re-fold every read, repeat to a fixed point — what Racon/Medaka
 do), verified not to regress Illumina this time after an earlier attempt's
-double-counted vote weight briefly did. All of this is covered by dedicated
-regression tests, including a crash found by fuzzing realistic-rate
-Nanopore noise at 50x coverage. `nucle benchmark -p nanopore -r 4` still
-fails today, even at 50x coverage and even with polishing — a synthetic
-worst-case test lands 1 base off out of 43 after polishing converges,
-traced to column identity fragmenting near a compounding cluster of edits
-in the graph's own seed read. A more sophisticated alignment scheme to stop
-that fragmentation, rather than polish around it, remains open. See
+double-counted vote weight briefly did. A synthetic worst-case test still
+landed 1 base off out of 43 even after polishing converged, and the first
+diagnosis for that ("column identity fragmenting") turned out to be wrong
+once tested further — the real cause is that sequential graph construction
+is fold-order dependent (folding the exact same reads in reverse order
+gave the exactly correct answer, no other change), and polishing can't fix
+that since every round reuses the same fold order. `build_consensus` now
+re-runs the pipeline with a second and, if needed, third fold order and
+takes whichever result a majority agree on, which resolves that test
+exactly — gated on the first pass's own confidence so realistic
+(non-adversarial) cases don't pay the extra cost. All of this is covered
+by dedicated regression tests, including a crash found by fuzzing
+realistic-rate Nanopore noise at 50x coverage. `nucle benchmark -p
+nanopore -r 4` still fails today at realistic settings even with all of
+this — at Nanopore's real noise density nearly every position is
+genuinely contested, so the extra fold-order checking runs almost always
+there, a real compute cost that buys correctness without yet being enough
+to close the gap. See
 [docs/architecture.md](docs/architecture.md#current-status) for the detail.
 
 ### End-to-End Roundtrip: Encode → Noise → Recover

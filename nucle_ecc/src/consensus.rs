@@ -28,6 +28,22 @@
 //! DNA storage's much shorter strands. The reseed is unweighted (the
 //! backbone contributes no vote of its own) so a read doesn't get counted
 //! twice just because its content happens to already match the backbone.
+//!
+//! Sequential construction is also *fold-order dependent*: whichever read
+//! is folded in first shapes which alternate nodes exist at all, and a
+//! later read can "snap" onto an early alternate for loosely-related
+//! reasons even when its own content doesn't really support it, letting
+//! an accidental order-driven majority snowball around the wrong
+//! interpretation at a position where several reads' unrelated edits
+//! happen to cluster. Polishing alone doesn't fix this, since every round
+//! reuses the same fold order. So when the primary pass's own weakest
+//! position looks genuinely contested (not just "some noise," but low
+//! enough that a rival interpretation was plausible), `build_consensus`
+//! re-runs the whole pipeline with reads folded in a different order and
+//! trusts whichever result at least two of three orderings agree on --
+//! the same order-independence check a deterministic algorithm should be
+//! able to pass trivially, made cheap by only paying for it when the
+//! primary pass gives a reason to doubt itself.
 
 use nucle_codec::base::{DnaStrand, Nucleotide};
 
@@ -111,6 +127,16 @@ struct PoaGraph {
     column: Vec<(usize, usize)>,
 }
 
+/// One node's worth of a read's realized path through the graph, produced
+/// by `align_and_merge`'s traceback and (for `Use`/`Skip`) subject to
+/// `PoaGraph::canonicalize_homopolymer_runs` before being folded in.
+#[derive(Clone, Copy)]
+enum Step {
+    Use(usize, Nucleotide),
+    Skip(usize),
+    Insert(Nucleotide),
+}
+
 impl PoaGraph {
     /// Seed the graph from a single read that is itself one of the votes:
     /// a plain linear chain with weight 1 throughout, representing that
@@ -188,6 +214,104 @@ impl PoaGraph {
 
     fn successors_of(&self, node: usize) -> Vec<usize> {
         (0..self.len()).filter(|&k| self.preds[k].contains(&node)).collect()
+    }
+
+    /// The earliest backbone node in the run of consecutive same-base
+    /// backbone positions that `node` belongs to (or `node` itself, if it
+    /// isn't part of one).
+    ///
+    /// This exists to fix a real ambiguity: inserting an extra base that
+    /// matches an adjacent homopolymer run (e.g. one more `C` right next
+    /// to an existing `CC`) scores identically to Needleman-Wunsch-style
+    /// alignment whether it's placed as "after the 1st C" or "after the
+    /// 2nd C" -- both add one more `C` to the run. Without normalizing,
+    /// different reads' realigned paths can independently pick different
+    /// internal columns for what is really the same event, splitting
+    /// their votes across two insertion nodes instead of one and letting
+    /// a minority fragment slip past the majority. Anchoring every
+    /// same-base insertion to the run's start (not wherever this
+    /// particular read's alignment happened to land) makes their votes
+    /// converge regardless of which internal position was used.
+    fn homopolymer_run_start(&self, node: usize) -> usize {
+        let mut current = node;
+        loop {
+            let (backbone, depth) = self.column[current];
+            if depth != 0 || backbone <= 1 {
+                return current;
+            }
+            match self.find_reusable_at_column((backbone - 1, 0), self.bases[current], None) {
+                Some(prev) => current = prev,
+                None => return current,
+            }
+        }
+    }
+
+    /// Canonicalize runs of `Skip`/exact-match-`Use` steps that walk
+    /// through a homopolymer stretch of the backbone (consecutive
+    /// same-base positions) so a read providing `U` out of `K` run
+    /// members always "keeps" the same leading `U` members and "skips"
+    /// the same trailing `K - U` -- rather than whichever specific
+    /// members the DP's tied scoring happened to mark.
+    ///
+    /// Skipping any one member of a homopolymer run scores identically
+    /// regardless of *which* member is skipped (a `C` matched against a
+    /// `C` is the same everywhere in a run of `C`s), so different reads
+    /// correcting the same "this run is one base too long" error can have
+    /// their skips land on different internal members. Each specific
+    /// choice creates its own distinct bypass edge, splitting what should
+    /// be one shared, clearly-majority vote across several edges, none of
+    /// which individually outweighs simply not skipping at all -- the
+    /// bug this fixes let a backbone run that started one base too long
+    /// (from whichever raw read seeded the graph) survive polishing
+    /// indefinitely even though most reads agree it's wrong.
+    fn canonicalize_homopolymer_runs(&self, steps: &[Step]) -> Vec<Step> {
+        let run_member = |step: &Step| -> Option<usize> {
+            match *step {
+                Step::Use(node, base) if self.bases[node] == base => Some(node),
+                Step::Skip(node) => Some(node),
+                _ => None,
+            }
+        };
+
+        let mut result = Vec::with_capacity(steps.len());
+        let mut i = 0;
+        while i < steps.len() {
+            let Some(first_node) = run_member(&steps[i]) else {
+                result.push(steps[i]);
+                i += 1;
+                continue;
+            };
+
+            let run_base = self.bases[first_node];
+            let mut nodes = vec![first_node];
+            let mut skipped = vec![matches!(steps[i], Step::Skip(_))];
+            let mut next_backbone = self.column[first_node].0 + 1;
+            let mut j = i + 1;
+            while j < steps.len() {
+                match run_member(&steps[j]) {
+                    Some(node) if self.column[node] == (next_backbone, 0) && self.bases[node] == run_base => {
+                        nodes.push(node);
+                        skipped.push(matches!(steps[j], Step::Skip(_)));
+                        next_backbone += 1;
+                        j += 1;
+                    }
+                    _ => break,
+                }
+            }
+
+            if nodes.len() < 2 {
+                result.push(steps[i]);
+                i += 1;
+                continue;
+            }
+
+            let use_count = skipped.iter().filter(|&&s| !s).count();
+            for (k, &node) in nodes.iter().enumerate() {
+                result.push(if k < use_count { Step::Use(node, run_base) } else { Step::Skip(node) });
+            }
+            i = j;
+        }
+        result
     }
 
     /// Add `pred` as a predecessor of `node` (`pred -> node`), unless it's
@@ -368,12 +492,6 @@ impl PoaGraph {
 
         let j_end = (0..=n).max_by_key(|&j| dp[m][j]).unwrap();
 
-        enum Step {
-            Use(usize, Nucleotide),
-            Skip,
-            Insert(Nucleotide),
-        }
-
         let mut steps_rev = Vec::new();
         let (mut i, mut j) = (m, j_end);
         while i > 0 || j > 0 {
@@ -389,11 +507,11 @@ impl PoaGraph {
                     j = 0;
                 }
                 Move::Del(p) => {
-                    steps_rev.push(Step::Skip);
+                    steps_rev.push(Step::Skip(j - 1));
                     j = p + 1;
                 }
                 Move::StartDel => {
-                    steps_rev.push(Step::Skip);
+                    steps_rev.push(Step::Skip(j - 1));
                     j = 0;
                 }
                 Move::Ins => {
@@ -403,11 +521,12 @@ impl PoaGraph {
             }
         }
         steps_rev.reverse();
+        let steps = self.canonicalize_homopolymer_runs(&steps_rev);
 
         let mut prev_node: Option<usize> = None;
-        for step in steps_rev {
+        for step in steps {
             match step {
-                Step::Skip => {}
+                Step::Skip(_) => {}
                 Step::Use(node, base) => {
                     let actual = if self.bases[node] == base {
                         node
@@ -435,8 +554,17 @@ impl PoaGraph {
                     prev_node = Some(actual);
                 }
                 Step::Insert(base) => {
+                    // An insertion that matches the base it's following
+                    // extends a homopolymer run, which is ambiguous about
+                    // exactly which internal run position it's "after" --
+                    // canonicalize to the run's start so independent reads
+                    // converge on one column instead of splitting votes
+                    // across several (see `homopolymer_run_start`).
                     let column = match prev_node {
-                        Some(p) => (self.column[p].0, self.column[p].1 + 1),
+                        Some(p) => {
+                            let anchor = if self.bases[p] == base { self.homopolymer_run_start(p) } else { p };
+                            (self.column[anchor].0, self.column[anchor].1 + 1)
+                        }
                         None => (0, 0),
                     };
                     let actual = if let Some(sibling) = self.find_reusable_at_column(column, base, prev_node) {
@@ -551,6 +679,81 @@ pub fn build_consensus(reads: &[DnaStrand]) -> Option<ConsensusResult> {
         });
     }
 
+    // Sequential POA construction is order-dependent: the reads folded in
+    // *first* shape which alternate nodes exist at all, and a later read
+    // can "snap" onto an early alternate for loosely-related reasons even
+    // when its own true content doesn't really support it -- an
+    // accidental fold-order majority can snowball around the wrong
+    // interpretation at a position where several reads' unrelated edits
+    // happen to cluster (confirmed directly: reversing the fold order
+    // alone flips a real failure on a synthetic stress case to correct,
+    // with the exact same reads and the exact same votes). Polishing
+    // re-derives the backbone but reuses the *same* fold order each
+    // round, so it can converge to a stable, order-biased wrong answer
+    // just as easily as a right one.
+    //
+    // Running the whole pipeline again with reads folded in a different
+    // order breaks that: if two orderings agree, the result didn't depend
+    // on which read went first and is trustworthy. If they disagree, a
+    // third, differently-ordered attempt breaks the tie by majority
+    // rather than silently trusting whichever order happened to be given.
+    //
+    // Order-dependence specifically comes from *contested* positions --
+    // ones where a real alternate path had enough votes to be a plausible
+    // rival, not ones where reads overwhelmingly agree (there's no other
+    // path for a snowball to have picked). So this only pays for the
+    // extra orderings when the primary attempt's own weakest position
+    // shows real contest; a clean, high-agreement result (the common
+    // case at realistic Illumina-grade noise) returns after one pass, the
+    // same cost as before this fix existed. Re-running always would
+    // triple the cost of every consensus call regardless of whether
+    // there was ever anything to double-check.
+    const CONTESTED_CONFIDENCE_THRESHOLD: f64 = 0.9;
+    let primary = run_poa_pipeline(reads);
+    let min_confidence = primary.1.iter().copied().fold(1.0, f64::min);
+    let winner = if min_confidence >= CONTESTED_CONFIDENCE_THRESHOLD {
+        primary
+    } else {
+        let reversed_order: Vec<DnaStrand> = reads.iter().rev().cloned().collect();
+        let secondary = run_poa_pipeline(&reversed_order);
+        if primary.0 == secondary.0 {
+            primary
+        } else {
+            let mid = reads.len() / 2;
+            let rotated_order: Vec<DnaStrand> = reads[mid..].iter().chain(reads[..mid].iter()).cloned().collect();
+            let tertiary = run_poa_pipeline(&rotated_order);
+            if tertiary.0 == primary.0 || tertiary.0 == secondary.0 {
+                tertiary
+            } else {
+                // All three orderings disagree -- no majority to break the
+                // tie with. Keep the original-order result rather than
+                // picking arbitrarily among three equally-unconfirmed ones.
+                primary
+            }
+        }
+    };
+
+    let (consensus_bases, confidence) = winner;
+    let avg_conf = if confidence.is_empty() {
+        0.0
+    } else {
+        confidence.iter().sum::<f64>() / confidence.len() as f64
+    };
+
+    Some(ConsensusResult {
+        sequence: DnaStrand::new(consensus_bases),
+        coverage: reads.len(),
+        confidence,
+        avg_confidence: avg_conf,
+    })
+}
+
+/// One ordering's full first-pass-plus-polishing POA pipeline: fold
+/// `reads`, in the order given, into a graph seeded from one of them, then
+/// polish to a fixed point. Returns the consensus sequence and its
+/// per-position confidence (that position's winning edge weight divided
+/// by `reads.len()`).
+fn run_poa_pipeline(reads: &[DnaStrand]) -> (Vec<Nucleotide>, Vec<f64>) {
     let mut lengths: Vec<usize> = reads.iter().map(|r| r.len()).collect();
     lengths.sort_unstable();
     let median_len = lengths[lengths.len() / 2];
@@ -562,12 +765,7 @@ pub fn build_consensus(reads: &[DnaStrand]) -> Option<ConsensusResult> {
 
     let seed_bases = reads[seed_idx].bases();
     if seed_bases.is_empty() {
-        return Some(ConsensusResult {
-            sequence: DnaStrand::new(Vec::new()),
-            coverage: reads.len(),
-            confidence: Vec::new(),
-            avg_confidence: 0.0,
-        });
+        return (Vec::new(), Vec::new());
     }
 
     // First pass: fold every other read into a graph seeded from one raw
@@ -614,18 +812,7 @@ pub fn build_consensus(reads: &[DnaStrand]) -> Option<ConsensusResult> {
     let path = graph.heaviest_path();
     let consensus_bases: Vec<Nucleotide> = path.iter().map(|&(n, _)| graph.bases[n]).collect();
     let confidence: Vec<f64> = path.iter().map(|&(_, w)| w as f64 / reads.len() as f64).collect();
-    let avg_conf = if confidence.is_empty() {
-        0.0
-    } else {
-        confidence.iter().sum::<f64>() / confidence.len() as f64
-    };
-
-    Some(ConsensusResult {
-        sequence: DnaStrand::new(consensus_bases),
-        coverage: reads.len(),
-        confidence,
-        avg_confidence: avg_conf,
-    })
+    (consensus_bases, confidence)
 }
 
 /// Build consensus for groups of reads, where each group corresponds
@@ -907,20 +1094,23 @@ mod tests {
     /// solve at all: many reads, each independently carrying *several*
     /// simultaneous indels (a higher combined edit rate than real Nanopore
     /// noise, deliberately, to stress-test past it), rather than just one
-    /// indel each. Folding every read into a shared, multi-round-polished
-    /// POA graph gets this overwhelmingly right -- honestly verified here
-    /// to land within 2 edits of the true 43-base sequence, not asserted
-    /// as pixel-perfect, because it isn't quite: a small residual (1
-    /// extra/wrong base) can survive even multiple polishing rounds at
-    /// this density, traced to column identity occasionally fragmenting
-    /// near a compounding cluster of edits in the graph's own initial
-    /// seed read. (An earlier attempt at polishing had a double-counted
-    /// vote weight that briefly broke the working Illumina case; that bug
-    /// is what `PoaGraph::seed_unweighted` exists to prevent, not
-    /// polishing itself, which is now verified safe -- see
-    /// docs/architecture.md's "Current status" for the fuller account.)
+    /// indel each.
+    ///
+    /// This exact case (fixed seed `0x1234_5678_9abc_def0`) used to land 1
+    /// base off even after multi-round polishing, and the real cause
+    /// turned out *not* to be column-identity fragmentation (an earlier,
+    /// wrong diagnosis) but fold-order dependence: sequential POA
+    /// construction lets whichever read is folded in first shape which
+    /// alternate nodes exist at all, and later reads can "snap" onto an
+    /// early alternate for loosely-related reasons even when their own
+    /// content doesn't really support it -- confirmed directly by folding
+    /// the *exact same reads* in reverse order and getting the exactly
+    /// correct answer instead. `build_consensus` now runs the pipeline
+    /// against a second (reversed) and, if those disagree, a third
+    /// (rotated) fold order and takes whichever result at least two of
+    /// the three orderings agree on, which is what actually fixes this.
     #[test]
-    fn test_consensus_gets_within_two_edits_under_many_simultaneous_indels_per_read() {
+    fn test_consensus_exactly_recovers_original_under_many_simultaneous_indels_per_read() {
         let original = "ATCGATCGTACGATCGGATCCATGACTGATCGTACGGATCAGT";
         let orig_bases: Vec<Nucleotide> = DnaStrand::from_str(original).unwrap().bases().to_vec();
 
@@ -970,38 +1160,11 @@ mod tests {
             reads.push(DnaStrand::new(bases));
         }
 
-        let result = build_consensus(&reads).expect("non-empty group must produce a consensus");
-        let distance = edit_distance(orig_bases.as_slice(), result.sequence.bases());
-        assert!(
-            distance <= 2,
-            "POA consensus across 30 independently multi-indel reads should land within 2 \
-             edits of the original even though no single reference read is clean -- got \
-             {distance} edits (result: {}, expected: {original})",
-            result.sequence
+        assert_eq!(
+            build_consensus(&reads).expect("non-empty group must produce a consensus").sequence.to_string(),
+            original,
+            "POA consensus across 30 independently multi-indel reads should exactly recover \
+             the original even though no single reference read is clean"
         );
-    }
-
-    /// Plain Levenshtein edit distance, used only to state the bound in
-    /// `test_consensus_gets_within_two_edits_under_many_simultaneous_indels_per_read`
-    /// precisely instead of vaguely.
-    fn edit_distance(a: &[Nucleotide], b: &[Nucleotide]) -> usize {
-        let (n, m) = (a.len(), b.len());
-        let mut dp = vec![vec![0usize; m + 1]; n + 1];
-        for (i, row) in dp.iter_mut().enumerate() {
-            row[0] = i;
-        }
-        for j in 0..=m {
-            dp[0][j] = j;
-        }
-        for i in 1..=n {
-            for j in 1..=m {
-                dp[i][j] = if a[i - 1] == b[j - 1] {
-                    dp[i - 1][j - 1]
-                } else {
-                    1 + dp[i - 1][j - 1].min(dp[i - 1][j]).min(dp[i][j - 1])
-                };
-            }
-        }
-        dp[n][m]
     }
 }
