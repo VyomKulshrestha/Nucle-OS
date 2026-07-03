@@ -246,22 +246,27 @@ $ nucle benchmark -p illumina -r 4
 ║ image.png          │     294 │      16 │      0.35% │    PASS │ $  0.1848 │  39.0% │      0 ║
 ```
 
-This fixes Illumina. Nanopore is still broken, and we chased why twice.
-First fix: consensus voting (`nucle_ecc::consensus::build_consensus`) now
-globally aligns (Needleman-Wunsch) any read whose length differs from the
-group's reference before voting, instead of comparing raw positions — that
-made it tolerate indels, not just substitutions. Second, bigger fix: primer
-matching (`nucle_index::primer::PrimerPair`) used to require an exact-position
-match, so a single indel landing inside a primer — routine at Nanopore's
-error rate — made retrieval drop the whole strand *before it ever reached
-consensus*. That turned out to be the dominant blocker, not the voting
-algorithm. Both are fixed and covered by unit tests. `nucle benchmark -p
-nanopore -r 4` still fails today, even at 50x coverage — the remaining
-cause is that a single ~150nt Nanopore read accumulates many simultaneous
-indels, and realigning each read pairwise against one arbitrarily-picked
-noisy read (rather than a proper multi-read consensus) accumulates drift at
-that density. Fixing that needs partial-order alignment across all reads at
-once, not pairwise realignment. See
+This fixes Illumina. Nanopore is still broken, and we chased why three
+times. Fix one: consensus voting now aligns each read to the group's
+reference before voting instead of comparing raw positions, so it tolerates
+indels, not just substitutions. Fix two, bigger: primer matching
+(`nucle_index::primer::PrimerPair`) required an exact-position match, so a
+single indel inside a primer — routine at Nanopore's error rate — made
+retrieval drop the whole strand *before it ever reached consensus*, the
+real dominant blocker. Fix three: pairwise realignment against one
+arbitrarily-picked noisy reference read has a hard ceiling once a read
+carries several simultaneous indels at once (the real Nanopore regime),
+so `nucle_ecc::consensus` is now genuine partial-order alignment (POA) —
+every read folds into one shared graph with edge-weighted voting, so a
+majority correctly outvotes a minority stray insertion at any position,
+including the very first or last base (previously it couldn't). All three
+are fixed and covered by dedicated regression tests, including a
+crash found by fuzzing realistic-rate Nanopore noise at 50x coverage.
+`nucle benchmark -p nanopore -r 4` still fails today, even at 50x
+coverage and even after all three fixes — a single POA pass gets close
+(97%+ per-strand accuracy on a synthetic worst-case) but not all the way;
+actually fixing that needs multi-round polishing (what Racon/Medaka do) or
+a more sophisticated alignment scheme, and remains open. See
 [docs/architecture.md](docs/architecture.md#current-status) for the detail.
 
 ### End-to-End Roundtrip: Encode → Noise → Recover
