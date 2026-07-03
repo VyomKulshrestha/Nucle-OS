@@ -656,13 +656,13 @@ nucle agent "pool status"
 |-------|------:|---------------|
 | `nucle_codec` | 58 (+3 doctests) | Nucleotide types, constraints, ternary codec, fountain codec, yin-yang codec, benchmarks incl. GC distribution and homopolymer violation counts |
 | `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
-| `nucle_ecc` | 25 | Reed-Solomon, fountain erasure, consensus, repair pipeline, per-position observed error distribution |
-| `nucle_index` | 28 | Primers, CRISPR sim, vector index, semantic search |
-| `nucle_vfs` | 48 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips |
+| `nucle_ecc` | 36 | Reed-Solomon, fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
+| `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
+| `nucle_vfs` | 50 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
 | `nucle_lang` | 66 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, `nucle check`/`nucle explain` integration tests |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
-| **Total** | **305 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **321 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
