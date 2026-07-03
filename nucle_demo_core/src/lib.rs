@@ -139,7 +139,9 @@ pub fn estimate_recovery_probability(
     let parity_strands: Vec<DnaStrand> = if redundancy > 0 {
         let rs = ReedSolomon::new(RsConfig::new(redundancy));
         let strand_bytes: Vec<Vec<u8>> = encoded.strands.iter().map(dna_to_bytes).collect();
-        rs.encode_block(&strand_bytes).unwrap_or_default().iter().map(|p| bytes_to_dna(p)).collect()
+        // Parity symbols span the full 0-255 range, unlike data strand
+        // bytes (always a single to_bits() value) -- pack 4 bases/byte.
+        rs.encode_block(&strand_bytes).unwrap_or_default().iter().map(|p| DnaStrand::from_packed_bytes(p)).collect()
     } else {
         Vec::new()
     };
@@ -200,7 +202,7 @@ pub fn run_benchmark(req: BenchmarkRequest) -> Result<BenchmarkResponse, String>
         let rs = ReedSolomon::new(RsConfig::new(req.redundancy));
         let strand_bytes: Vec<Vec<u8>> = encoded.strands.iter().map(dna_to_bytes).collect();
         let parity_bytes = rs.encode_block(&strand_bytes).map_err(|e| e.to_string())?;
-        parity_bytes.iter().map(|p| bytes_to_dna(p).len()).sum::<usize>()
+        parity_bytes.iter().map(|p| p.len() * 4).sum::<usize>()
     } else {
         0
     };
@@ -292,7 +294,7 @@ pub fn run_pipeline_demo(req: PipelineRequest) -> Result<PipelineResponse, Strin
         let strand_bytes: Vec<Vec<u8>> = encoded.strands.iter().map(dna_to_bytes).collect();
         let parity_bytes = rs.encode_block(&strand_bytes).map_err(|e| e.to_string())?;
         for parity in &parity_bytes {
-            all_strands.push(bytes_to_dna(parity));
+            all_strands.push(DnaStrand::from_packed_bytes(parity));
         }
     }
 
@@ -335,16 +337,18 @@ pub fn run_pipeline_demo(req: PipelineRequest) -> Result<PipelineResponse, Strin
         .take(data_strand_count)
         .map(|s| if s.is_intact { Some(dna_to_bytes(&s.sequence)) } else { None })
         .collect();
-    let parity_received: Vec<Vec<u8>> = sim_result
+    // Keep a slot per parity strand (not a dense list of survivors) --
+    // dropping a missing one would shift every later parity strand onto
+    // the wrong codeword position and corrupt the whole stripe's math.
+    let parity_received: Vec<Option<Vec<u8>>> = sim_result
         .pool
         .strands
         .iter()
         .skip(data_strand_count)
-        .filter(|s| s.is_intact)
-        .map(|s| dna_to_bytes(&s.sequence))
+        .map(|s| if s.is_intact { Some(s.sequence.unpack_bytes()) } else { None })
         .collect();
 
-    let recovery = if req.redundancy > 0 && !parity_received.is_empty() {
+    let recovery = if req.redundancy > 0 && parity_received.iter().any(Option::is_some) {
         let rs = ReedSolomon::new(RsConfig::new(req.redundancy));
         match rs.decode_block(&received, &parity_received) {
             Ok(recovered_bytes) => {

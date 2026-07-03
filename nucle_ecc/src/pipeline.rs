@@ -13,6 +13,7 @@ use crate::reed_solomon::{ReedSolomon, RsConfig, RsError};
 use crate::consensus::{self, ConsensusResult};
 use nucle_codec::base::{DnaStrand, Nucleotide};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
 
 /// Configuration for the repair pipeline.
@@ -106,22 +107,58 @@ pub fn consensus_then_rs_decode(
     parity_groups: &[Vec<DnaStrand>],
     rs_config: RsConfig,
 ) -> Vec<DnaStrand> {
-    let vote = |group: &[DnaStrand]| -> Option<DnaStrand> {
-        consensus::build_consensus(group).map(|r| r.sequence)
-    };
-    let consensus_data: Vec<Option<DnaStrand>> = data_groups.iter().map(|g| vote(g)).collect();
-    let consensus_parity: Vec<DnaStrand> = parity_groups.iter().filter_map(|g| vote(g)).collect();
+    let consensus_data: Vec<Option<DnaStrand>> = data_groups.iter()
+        .map(|g| consensus::build_consensus(g).map(|r| r.sequence))
+        .collect();
+    let consensus_parity: Vec<Option<DnaStrand>> = parity_groups.iter()
+        .map(|g| consensus::build_consensus(g).map(|r| r.sequence))
+        .collect();
+    rs_decode_from_sequences(&consensus_data, &consensus_parity, rs_config, &HashSet::new(), &HashSet::new())
+}
 
-    if consensus_parity.is_empty() {
-        return consensus_data.into_iter().flatten().collect();
+/// Core RS step shared by `consensus_then_rs_decode` and
+/// `consensus_then_rs_decode_with_retry`: given *already-voted* consensus
+/// sequences (one slot per logical strand -- `None` for a strand with no
+/// surviving reads), optionally force additional slots to `None` as if
+/// they were erasures too, then run Reed-Solomon.
+///
+/// Split out from consensus voting specifically so the retry loop can
+/// try many different forced-erasure combinations without re-running POA
+/// consensus (expensive: multi-round polishing, fold-order ensemble) on
+/// every single trial -- consensus only needs to happen once, since it
+/// doesn't depend on which erasures the retry loop is currently trying.
+fn rs_decode_from_sequences(
+    consensus_data: &[Option<DnaStrand>],
+    consensus_parity: &[Option<DnaStrand>],
+    rs_config: RsConfig,
+    force_erase_data: &HashSet<usize>,
+    force_erase_parity: &HashSet<usize>,
+) -> Vec<DnaStrand> {
+    let data: Vec<Option<&DnaStrand>> = consensus_data.iter().enumerate()
+        .map(|(i, opt)| if force_erase_data.contains(&i) { None } else { opt.as_ref() })
+        .collect();
+    // Keep one slot per configured parity strand (not a dense list of
+    // whichever ones happened to survive consensus) -- a missing slot
+    // must stay at its true codeword position `k + j`, or RS evaluates
+    // every later parity strand at the wrong point and corrupts the
+    // whole stripe regardless of how many strands are actually wrong.
+    let parity: Vec<Option<&DnaStrand>> = consensus_parity.iter().enumerate()
+        .map(|(i, opt)| if force_erase_parity.contains(&i) { None } else { opt.as_ref() })
+        .collect();
+
+    if parity.iter().all(Option::is_none) {
+        return data.into_iter().flatten().cloned().collect();
     }
 
     let rs = ReedSolomon::new(rs_config);
-    let received: Vec<Option<Vec<u8>>> = consensus_data.iter()
-        .map(|opt| opt.as_ref().map(|s| s.bases().iter().map(|n| n.to_bits()).collect()))
+    let received: Vec<Option<Vec<u8>>> = data.iter()
+        .map(|opt| opt.map(|s| s.bases().iter().map(|n| n.to_bits()).collect()))
         .collect();
-    let parity_bytes: Vec<Vec<u8>> = consensus_parity.iter()
-        .map(|s| s.bases().iter().map(|n| n.to_bits()).collect())
+    // Parity strands pack 4 bases per byte (see `DnaStrand::from_packed_bytes`
+    // at encode time) since parity symbols span the full 0-255 range, unlike
+    // data strand bases which are always a single to_bits() value.
+    let parity_bytes: Vec<Option<Vec<u8>>> = parity.iter()
+        .map(|opt| opt.map(|s| s.unpack_bytes()))
         .collect();
 
     match rs.decode_block(&received, &parity_bytes) {
@@ -129,8 +166,113 @@ pub fn consensus_then_rs_decode(
             let bases: Vec<_> = bytes.iter().filter_map(|&b| Nucleotide::from_bits(b).ok()).collect();
             DnaStrand::new(bases)
         }).collect(),
-        Err(_) => consensus_data.into_iter().flatten().collect(),
+        Err(_) => data.into_iter().flatten().cloned().collect(),
     }
+}
+
+/// Like `consensus_then_rs_decode`, but when the straightforward result
+/// doesn't validate (per the caller-supplied `is_valid` check -- e.g.
+/// "does the content hash match" or "does this equal the known
+/// original"), progressively forces the least-confident group(s) to be
+/// treated as erasures instead of their best guess and retries, up to the
+/// erasure budget Reed-Solomon can actually recover from.
+///
+/// This is what a static confidence threshold can't do: at real
+/// Nanopore-grade noise it's normal for nearly *every* strand to have
+/// some position without a clean majority, so "is any position below X%
+/// confidence" can't tell a strand that's still right (just not
+/// unanimous) from one whose consensus is actually wrong -- verified
+/// directly, treating every such strand as an erasure blew straight
+/// through the parity budget and failed decode outright, worse than
+/// keeping the occasional wrong guess. Checking the *actual outcome*
+/// against ground truth after each retry can discriminate where an
+/// internal confidence signal alone can't, because it's not guessing --
+/// it's verifying.
+pub fn consensus_then_rs_decode_with_retry(
+    data_groups: &[Vec<DnaStrand>],
+    parity_groups: &[Vec<DnaStrand>],
+    rs_config: RsConfig,
+    mut is_valid: impl FnMut(&[DnaStrand]) -> bool,
+) -> Vec<DnaStrand> {
+    // Consensus voting (POA, multi-round polishing, fold-order ensemble)
+    // is expensive and, crucially, doesn't depend on which erasure
+    // combination the search below is currently trying -- compute it
+    // exactly once and reuse the same sequences for the baseline and
+    // every retry trial, instead of re-running consensus from scratch on
+    // every attempt.
+    let raw_data: Vec<Option<ConsensusResult>> = data_groups.iter().map(|g| consensus::build_consensus(g)).collect();
+    let raw_parity: Vec<Option<ConsensusResult>> = parity_groups.iter().map(|g| consensus::build_consensus(g)).collect();
+    let consensus_data: Vec<Option<DnaStrand>> = raw_data.iter().map(|r| r.as_ref().map(|res| res.sequence.clone())).collect();
+    let consensus_parity: Vec<Option<DnaStrand>> = raw_parity.iter().map(|r| r.as_ref().map(|res| res.sequence.clone())).collect();
+
+    let baseline = rs_decode_from_sequences(&consensus_data, &consensus_parity, rs_config, &HashSet::new(), &HashSet::new());
+    if is_valid(&baseline) {
+        return baseline;
+    }
+
+    let already_missing = raw_data.iter().filter(|r| r.is_none()).count()
+        + raw_parity.iter().filter(|r| r.is_none()).count();
+    let erasure_budget = rs_config.parity_count.saturating_sub(already_missing);
+
+    enum Kind { Data(usize), Parity(usize) }
+    let mut candidates: Vec<(Kind, f64)> = Vec::new();
+    for (i, r) in raw_data.iter().enumerate() {
+        if let Some(res) = r {
+            candidates.push((Kind::Data(i), res.confidence.iter().copied().fold(1.0, f64::min)));
+        }
+    }
+    for (i, r) in raw_parity.iter().enumerate() {
+        if let Some(res) = r {
+            candidates.push((Kind::Parity(i), res.confidence.iter().copied().fold(1.0, f64::min)));
+        }
+    }
+    candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+    // Confidence doesn't reliably rank *which* strand is actually wrong
+    // (see the doc comment above), so trying only the confidence-sorted
+    // prefix (erase the single worst, then the two worst, ...) can walk
+    // right past a combination that would have worked, if the genuinely
+    // wrong strand isn't among the "worst-looking" few. Instead, at each
+    // step, try adding *every* still-unerased candidate on top of the
+    // current erasure set and keep whichever first validates -- this
+    // still finds the answer if the actually-wrong strand is anywhere in
+    // the candidate list, not just at the front of it, at the cost of
+    // O(budget * candidates) attempts instead of O(budget) -- bounded and
+    // small in practice (candidates is one entry per strand).
+    let mut remaining: Vec<Kind> = candidates.into_iter().map(|(k, _)| k).collect();
+    let mut erase_data = HashSet::new();
+    let mut erase_parity = HashSet::new();
+
+    for _ in 0..erasure_budget.min(remaining.len()) {
+        let mut best: Option<(usize, Vec<DnaStrand>)> = None;
+        for (pos, kind) in remaining.iter().enumerate() {
+            let (mut trial_data, mut trial_parity) = (erase_data.clone(), erase_parity.clone());
+            match *kind {
+                Kind::Data(i) => { trial_data.insert(i); }
+                Kind::Parity(i) => { trial_parity.insert(i); }
+            }
+            let attempt = rs_decode_from_sequences(&consensus_data, &consensus_parity, rs_config, &trial_data, &trial_parity);
+            if is_valid(&attempt) {
+                best = Some((pos, attempt));
+                break;
+            }
+        }
+        if let Some((_, attempt)) = best {
+            return attempt;
+        }
+
+        // No single addition validated on its own this round -- lock in
+        // the worst-confidence remaining candidate (candidates is still
+        // sorted worst-first from above) and try building on top of it
+        // next round.
+        let kind = remaining.remove(0);
+        match kind {
+            Kind::Data(i) => { erase_data.insert(i); }
+            Kind::Parity(i) => { erase_parity.insert(i); }
+        }
+    }
+
+    baseline
 }
 
 /// Statistics from running the repair pipeline.
@@ -237,7 +379,8 @@ impl RepairPipeline {
         let rs = ReedSolomon::new(self.config.rs_config.clone());
 
         let erased_count = strand_data.iter().filter(|s| s.is_none()).count();
-        let recovered = rs.decode_block(strand_data, parity_data)?;
+        let parity_opt: Vec<Option<Vec<u8>>> = parity_data.iter().map(|p| Some(p.clone())).collect();
+        let recovered = rs.decode_block(strand_data, &parity_opt)?;
 
         Ok((recovered, erased_count))
     }
@@ -445,7 +588,7 @@ mod tests {
             .collect();
         let parity_bytes = rs.encode_block(&strand_bytes).unwrap();
         let parity_strands: Vec<DnaStrand> = parity_bytes.iter()
-            .map(|p| DnaStrand::new(p.iter().filter_map(|&b| Nucleotide::from_bits(b).ok()).collect()))
+            .map(|p| DnaStrand::from_packed_bytes(p))
             .collect();
 
         let data_groups = vec![

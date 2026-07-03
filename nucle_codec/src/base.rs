@@ -131,6 +131,31 @@ impl Nucleotide {
         }
     }
 
+    /// Pack an arbitrary byte (full 0-255 range) into exactly 4
+    /// nucleotides, 2 bits each, most-significant bits first.
+    ///
+    /// `to_bits`/`from_bits` only round-trip values already restricted to
+    /// 0-3 (one DNA base = 2 bits), which is fine for the ternary codec's
+    /// own data path. It is NOT fine for Reed-Solomon parity symbols:
+    /// those are arbitrary GF(256) linear combinations of the data
+    /// symbols and routinely land outside 0-3, so packing them through
+    /// `from_bits` directly silently drops every base whose byte exceeds
+    /// 3 -- observed corrupting ~98% of every parity strand.
+    pub fn byte_to_bases(byte: u8) -> [Nucleotide; 4] {
+        [
+            Self::from_bits((byte >> 6) & 0b11).expect("2-bit value always in 0..=3"),
+            Self::from_bits((byte >> 4) & 0b11).expect("2-bit value always in 0..=3"),
+            Self::from_bits((byte >> 2) & 0b11).expect("2-bit value always in 0..=3"),
+            Self::from_bits(byte & 0b11).expect("2-bit value always in 0..=3"),
+        ]
+    }
+
+    /// Inverse of [`Self::byte_to_bases`]: reconstruct the original byte
+    /// from its 4 packed nucleotides.
+    pub fn bases_to_byte(bases: [Nucleotide; 4]) -> u8 {
+        (bases[0].to_bits() << 6) | (bases[1].to_bits() << 4) | (bases[2].to_bits() << 2) | bases[3].to_bits()
+    }
+
     /// Map a ternary digit (0, 1, 2) to a nucleotide, excluding
     /// the `previous` base to prevent homopolymer runs.
     ///
@@ -228,6 +253,26 @@ impl DnaStrand {
         let bases: Result<Vec<Nucleotide>, _> =
             s.chars().map(Nucleotide::from_char).collect();
         Ok(Self { bases: bases? })
+    }
+
+    /// Build a strand by packing each byte into 4 nucleotides via
+    /// [`Nucleotide::byte_to_bases`]. For representing arbitrary bytes
+    /// (e.g. Reed-Solomon parity symbols) as DNA -- not for the ternary
+    /// codec's own data path, which already restricts itself to one
+    /// 2-bit value per base.
+    pub fn from_packed_bytes(bytes: &[u8]) -> Self {
+        let bases = bytes.iter().flat_map(|&b| Nucleotide::byte_to_bases(b)).collect();
+        Self { bases }
+    }
+
+    /// Inverse of [`Self::from_packed_bytes`]: unpack every run of 4
+    /// bases back into one byte. Any trailing partial group of fewer
+    /// than 4 bases (shouldn't normally occur -- every packed strand is
+    /// a multiple of 4 bases long) is dropped.
+    pub fn unpack_bytes(&self) -> Vec<u8> {
+        self.bases.chunks_exact(4)
+            .map(|chunk| Nucleotide::bases_to_byte([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
     }
 
     /// Return the nucleotide sequence as a slice.
@@ -495,6 +540,24 @@ mod tests {
             let bits = n.to_bits();
             assert_eq!(Nucleotide::from_bits(bits).unwrap(), n);
         }
+    }
+
+    #[test]
+    fn test_byte_to_bases_roundtrip_covers_full_range() {
+        // Every byte value, not just 0-3, must survive packing -- this is
+        // the whole point (RS parity symbols span all of 0-255).
+        for byte in 0..=255u8 {
+            let bases = Nucleotide::byte_to_bases(byte);
+            assert_eq!(Nucleotide::bases_to_byte(bases), byte);
+        }
+    }
+
+    #[test]
+    fn test_strand_packed_bytes_roundtrip() {
+        let bytes: Vec<u8> = (0..=255u8).collect();
+        let strand = DnaStrand::from_packed_bytes(&bytes);
+        assert_eq!(strand.len(), bytes.len() * 4);
+        assert_eq!(strand.unpack_bytes(), bytes);
     }
 
     #[test]

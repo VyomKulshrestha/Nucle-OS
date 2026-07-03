@@ -316,44 +316,76 @@ fn test_roundtrip_survives_illumina_noise_via_consensus() {
     );
 }
 
-/// Nanopore recovery needed two real, distinct fixes, and this test
+/// Nanopore recovery needed a chain of real, distinct fixes, and this test
 /// documents what's now fixed and what honestly still isn't:
 ///
 /// 1. **Fixed**: `nucle_ecc::consensus::build_consensus` used to align reads
 ///    by raw position (truncate-to-median-length), which only works when
-///    errors are substitutions. It now globally aligns any read whose length
-///    differs from the reference (Needleman-Wunsch) before voting, so a
-///    frame-shifted read still contributes its votes to the right column.
-///    See `nucle_ecc::consensus::tests::test_consensus_corrects_frame_shifting_indels`
-///    for a direct proof this works.
+///    errors are substitutions. See
+///    `nucle_ecc::consensus::tests::test_consensus_corrects_frame_shifting_indels`.
 /// 2. **Fixed**: `nucle_index::primer::PrimerPair::{matches_forward,
 ///    untag_strand}` used exact-position primer matching, so a single indel
 ///    landing inside a primer (routine at Nanopore's ~4%/base indel rate)
-///    made CRISPR retrieval treat the strand as non-target and dropped it
-///    *before it ever reached consensus* -- this, not the voting algorithm,
-///    was the dominant reason Nanopore recovery was previously impossible in
-///    principle regardless of coverage. Both now locate primer boundaries by
-///    bounded edit-distance search. See
-///    `nucle_index::primer::tests::test_untag_tolerates_*` for direct proof.
+///    made CRISPR retrieval drop the strand *before it ever reached
+///    consensus* -- the dominant blocker, not the voting algorithm. See
+///    `nucle_index::primer::tests::test_untag_tolerates_*`.
+/// 3. **Fixed**: pairwise realignment against one arbitrarily-picked noisy
+///    reference read had a hard ceiling once a read carried several
+///    simultaneous indels at once. `nucle_ecc::consensus` is now genuine
+///    partial-order alignment (every read folds into one shared graph with
+///    edge-weighted voting) plus multi-round polishing plus fold-order-
+///    independence checking. See the `PoaGraph`-related tests in
+///    `nucle_ecc::consensus::tests`.
+/// 4. **Fixed, and this one wasn't in the consensus algorithm at all**: the
+///    ternary codec's own padding (`TernaryCodec::segment_trits`) filled
+///    unused strand length with a *constant* trit, and its 4-byte length
+///    header has several leading zero bytes for any file under 16MB -- a
+///    constant trit run maps, through the rotating cipher, to a short
+///    fixed-period base cycle (a run of trit 0 became a literal
+///    "TATATATA..." repeat). That self-inflicted tandem repeat, not
+///    anything about the noise or the consensus algorithm, was the actual
+///    cause of several residual per-strand errors that looked like a
+///    fundamental alignment limit -- tandem repeats are famously hard to
+///    align under indel noise for reasons that have nothing to do with how
+///    good the aligner is, so a codec that gratuitously creates them was
+///    making Nanopore recovery harder than the noise itself required. Fixed
+///    by whitening every strand's trits with a deterministic,
+///    position-addressable pseudo-random stream before the cipher sees
+///    them (`TernaryCodec::whiten_segment`), reversed per-strand at decode.
 ///
-/// 3. **Still broken, and this is real**: a single ~150nt strand at
-///    Nanopore's per-base indel rate accumulates *many* simultaneous indels
-///    (empirically 6-10 net insertions/deletions per read here), not just
-///    one. Every read is realigned against a single arbitrarily-picked noisy
-///    read (the one closest to median length) rather than against the true
-///    original sequence or a proper multi-read consensus, so with that many
-///    indels per read the pairwise alignment itself accumulates drift and
-///    produces wrong votes at scattered positions -- not just at the indel
-///    site. This is confirmed below to persist even at 50x coverage and 12
-///    parity strands, which rules out "just not enough redundancy": the
-///    problem isn't statistical (residual iid noise slipping through), it's
-///    structural (single-reference pairwise realignment isn't accurate
-///    enough at this indel density). Correcting it for real needs multi-read
-///    consensus that builds an alignment from *all* reads at once (e.g.
-///    partial-order alignment, as used by real long-read polishers like
-///    Racon/Medaka) instead of each read independently against one noisy
-///    anchor -- a substantially larger piece of work than adding alignment
-///    awareness to voting, and out of scope here.
+/// 5. **Fixed, in a layer that turned out to have its own bugs**:
+///    `nucle_ecc::reed_solomon` had two real, previously undiscovered
+///    bugs of its own. Parity symbols are arbitrary GF(256) values
+///    (0-255), but were packed into DNA via the same 2-bit
+///    `Nucleotide::from_bits` used for already-restricted data bytes --
+///    any parity byte above 3 was silently dropped, destroying nearly
+///    every parity strand. And a parity strand that failed consensus was
+///    dropped from its array (`filter_map`) instead of leaving a gap,
+///    reindexing every later parity strand onto the wrong evaluation
+///    point. Fixed via 4-base byte packing
+///    (`DnaStrand::from_packed_bytes`/`unpack_bytes`) and `Option`-per-slot
+///    erasures end to end. On top of that, RS itself was upgraded from
+///    erasure-only to genuine combined error-and-erasure decoding
+///    (Berlekamp-Welch, `ReedSolomon::try_welch_decode`), so it can now
+///    blindly correct a strand that comes back wrong-but-present, not
+///    just reconstruct one that's missing. See
+///    `reed_solomon::tests::test_rs_parity_reindexing_does_not_corrupt_decode`
+///    and `test_rs_corrects_silent_error_without_knowing_position`.
+///
+/// 6. **Still broken, and this is real -- but now precisely located**:
+///    even with Reed-Solomon genuinely fixed, this test still fails at
+///    realistic settings. Direct ablation (comparing 0 parity strands
+///    through 50 on identical noisy input) produces the *exact same*
+///    failure at every redundancy level, which proves Reed-Solomon was
+///    never in the critical path here: consensus itself does not reliably
+///    converge to the correct sequence at Nanopore's real per-base rate
+///    (substitution 3% + insertion 2% + deletion 2%), before Reed-Solomon
+///    ever gets a chance to help. This is confirmed below to persist even
+///    at 50x coverage and 12 parity strands, which rules out "just not
+///    enough redundancy" from either direction now. Closing this needs a
+///    better consensus/alignment algorithm for extreme indel density, not
+///    a bigger parity budget, and remains open.
+
 #[test]
 fn test_nanopore_still_fails_at_realistic_indel_density_despite_alignment_fixes() {
     let mut still_failing = 0;

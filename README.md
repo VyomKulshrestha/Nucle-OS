@@ -273,15 +273,63 @@ that since every round reuses the same fold order. `build_consensus` now
 re-runs the pipeline with a second and, if needed, third fold order and
 takes whichever result a majority agree on, which resolves that test
 exactly — gated on the first pass's own confidence so realistic
-(non-adversarial) cases don't pay the extra cost. All of this is covered
-by dedicated regression tests, including a crash found by fuzzing
-realistic-rate Nanopore noise at 50x coverage. `nucle benchmark -p
-nanopore -r 4` still fails today at realistic settings even with all of
-this — at Nanopore's real noise density nearly every position is
-genuinely contested, so the extra fold-order checking runs almost always
-there, a real compute cost that buys correctness without yet being enough
-to close the gap. See
-[docs/architecture.md](docs/architecture.md#current-status) for the detail.
+(non-adversarial) cases don't pay the extra cost.
+
+Fix four, and this one wasn't in the consensus algorithm at all: the
+ternary codec's own padding used a *constant* trit, and its 4-byte length
+header has leading zero bytes for any file under 16MB — a constant trit
+run degenerates, through the rotating cipher, into a literal
+`TATATATATATATATAT...` repeat dozens of bases long at the start of
+essentially every encoded file. That self-inflicted tandem repeat, not
+the noise or the aligner, was the actual cause of several residual errors
+that looked like a fundamental POA limit — tandem repeats are famously
+hard to align under indel noise for reasons that have nothing to do with
+how good the aligner is. Fixed by whitening every strand's trits with a
+deterministic, position-addressable pseudo-random stream before the
+cipher sees them, reversed per-strand at decode
+(`TernaryCodec::whiten_segment`). Verified: the pathological repeats are
+completely gone from the encoded output, and residual consensus errors
+under real Nanopore noise are now small, localized 1-2-base insertions,
+not sprawling corruption.
+
+All four fixes are covered by dedicated regression tests, including a
+crash found by fuzzing realistic-rate Nanopore noise at 50x coverage.
+
+Fix five: Reed-Solomon itself turned out to have two real bugs, both
+silent. First, parity symbols are arbitrary GF(256) values (0-255), but
+they were being packed into DNA one base per byte via the same 2-bit
+`Nucleotide::from_bits` used for already-restricted data values — any
+parity byte above 3 (the overwhelming majority of them) was silently
+dropped, destroying nearly every parity strand ever written. Second, a
+parity strand that failed to arrive was dropped from its array via
+`filter_map` instead of leaving a gap, which shifted every *later*
+parity strand onto the wrong evaluation point and corrupted the whole
+stripe's math. Fixed by packing each parity byte into 4 bases
+(`DnaStrand::from_packed_bytes`/`unpack_bytes`) and keeping erasures as
+`Option`-per-slot everywhere so a missing strand's true codeword
+position is never lost. On top of that, Reed-Solomon itself was
+erasure-only (could rebuild a strand marked missing, but could never
+correct one that survived consensus wrong-but-present); it's now a real
+combined error-and-erasure decoder (Berlekamp-Welch), so a strand that
+comes back from consensus with a residual wrong base gets corrected
+automatically, without knowing in advance which strand that was.
+Verified directly: dedicated unit tests confirm blind single-strand
+correction and correct decode across a parity gap in the middle of the
+list; the full workspace suite (all crates, all doctests, the 50x-coverage
+Nanopore fuzz test) passes with zero regressions.
+
+`nucle benchmark -p nanopore -r 4` (and even `-r 12`) still fails today at
+realistic settings — but ablation testing (comparing `-r 0` through
+`-r 50` on the same noisy data) shows the exact same failure at every
+redundancy level, which pins the remaining gap on **consensus itself**,
+not Reed-Solomon: at Oxford Nanopore's real ~14% combined error rate, POA
+consensus does not reliably converge to the correct sequence even before
+Reed-Solomon ever runs, so no amount of parity can help. This is the same
+limitation `test_nanopore_still_fails_at_realistic_indel_density_despite_alignment_fixes`
+already pins down at 50x coverage. Closing it needs a better consensus/
+alignment algorithm, not a bigger redundancy budget. See
+[docs/architecture.md](docs/architecture.md#current-status) for the
+detail.
 
 ### End-to-End Roundtrip: Encode → Noise → Recover
 
@@ -654,15 +702,15 @@ nucle agent "pool status"
 
 | Crate | Tests | What's Tested |
 |-------|------:|---------------|
-| `nucle_codec` | 58 (+3 doctests) | Nucleotide types, constraints, ternary codec, fountain codec, yin-yang codec, benchmarks incl. GC distribution and homopolymer violation counts |
+| `nucle_codec` | 60 (+3 doctests) | Nucleotide types, constraints, ternary codec, fountain codec, yin-yang codec, byte↔4-base packing roundtrip, benchmarks incl. GC distribution and homopolymer violation counts |
 | `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
-| `nucle_ecc` | 36 | Reed-Solomon, fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
+| `nucle_ecc` | 39 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
 | `nucle_lang` | 66 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, `nucle check`/`nucle explain` integration tests |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
-| **Total** | **321 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **326 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

@@ -23,7 +23,7 @@ use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
-use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode, RecoveryManifest};
+use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, RecoveryManifest};
 use nucle_index::primer::PrimerLibrary;
 use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
@@ -236,12 +236,12 @@ impl NucleOS {
             let parity_bytes = rs.encode_block(&strand_bytes)
                 .map_err(|e| format!("ECC encoding failed: {}", e))?;
 
-            // Convert parity bytes back to DNA strands
+            // Parity symbols are arbitrary GF(256) values (0-255), unlike
+            // data strand bytes which are always a single to_bits() value
+            // (0-3) -- pack each parity byte into 4 bases so no value is
+            // silently dropped for exceeding the 2-bit range.
             for parity in &parity_bytes {
-                let bases: Vec<_> = parity.iter()
-                    .filter_map(|&b| nucle_codec::base::Nucleotide::from_bits(b).ok())
-                    .collect();
-                parity_strands.push(DnaStrand::new(bases));
+                parity_strands.push(DnaStrand::from_packed_bytes(parity));
             }
         }
 
@@ -475,14 +475,32 @@ impl NucleOS {
             .map(|g| g.first().cloned().unwrap_or_else(|| DnaStrand::new(Vec::new())))
             .collect();
 
+        // ── Layer 1: Codec ── set up ahead of the ECC step so its
+        // validator can be reused as the ECC retry's ground-truth check
+        // (see `consensus_then_rs_decode_with_retry`'s doc comment).
+        let codec_kind = CodecKind::from_codec_name(&dna_file.codec)
+            .ok_or_else(|| format!("unknown codec '{}' recorded for this file", dna_file.codec))?;
+        let codec = codec_kind.to_boxed();
+        let is_valid = |strands: &[DnaStrand]| -> bool {
+            if strands.is_empty() {
+                return false;
+            }
+            let collection = StrandCollection::from_strands(strands.to_vec(), dna_file.size);
+            let Ok(decoded) = codec.decode(&collection) else { return false };
+            let mut hasher = Sha256::new();
+            hasher.update(&decoded);
+            hasher.finalize()[..8].to_vec() == dna_file.content_hash
+        };
+
         let decoded_strands: Vec<DnaStrand> = if dna_file.parity_strand_count > 0 {
-            consensus_then_rs_decode(
+            consensus_then_rs_decode_with_retry(
                 &dense_data_groups,
                 &dense_parity_groups,
                 RsConfig::new(dna_file.rs_parity_per_stripe),
+                is_valid,
             )
         } else {
-            consensus_then_rs_decode(&dense_data_groups, &[], RsConfig::new(0))
+            consensus_then_rs_decode_with_retry(&dense_data_groups, &[], RsConfig::new(0), is_valid)
         };
 
         if decoded_strands.is_empty() {
@@ -493,12 +511,8 @@ impl NucleOS {
         // derived from the strands themselves rather than a profile estimate.
         let observed_error_distribution = compute_error_distribution(&pre_correction_strands, &decoded_strands);
 
-        // ── Layer 1: Codec ── decode DNA → binary
         let recovered_strands_count = decoded_strands.len();
         let collection = StrandCollection::from_strands(decoded_strands, dna_file.size);
-        let codec_kind = CodecKind::from_codec_name(&dna_file.codec)
-            .ok_or_else(|| format!("unknown codec '{}' recorded for this file", dna_file.codec))?;
-        let codec = codec_kind.to_boxed();
         let decoded = codec.decode(&collection)
             .map_err(|e| format!("codec decoding failed: {}", e))?;
 

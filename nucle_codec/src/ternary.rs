@@ -235,9 +235,40 @@ impl TernaryCodec {
             let end = (start + strand_len).min(trits.len());
             let mut segment = trits[start..end].to_vec();
 
-            // Pad the last segment to full strand length with zeros
+            // Pad the last segment to full strand length. This filler is
+            // discarded on decode (only the length-prefixed real data
+            // survives), so its *value* doesn't matter -- but a constant
+            // trit here is a real bug, not a harmless simplification: the
+            // rotating cipher maps a fixed trit to a fixed rotation
+            // relative to whatever base precedes it, and a fixed rotation
+            // applied repeatedly cycles through a short, fixed set of
+            // bases (e.g. trit 0 degenerates into a "TATATATA..." repeat
+            // once the cipher's running state lands on T or A). That
+            // self-inflicted tandem repeat is exactly the kind of region
+            // that's hardest for any downstream consensus/alignment
+            // scheme to recover correctly under indel noise, for reasons
+            // that have nothing to do with the real data -- confirmed as
+            // the actual cause of residual Nanopore consensus errors that
+            // looked, at first, like a fundamental alignment limitation.
+            //
+            // A cheap deterministic PRNG (xorshift32, fixed seed so
+            // encoding stays fully reproducible) breaks the periodicity.
+            // It has to fill in whole `byte_to_trits`-shaped groups of 6,
+            // not raw random trits one at a time: `trits_to_bytes` insists
+            // every 6-trit group decode to a valid byte (<=255) and only
+            // ~256 of the 3^6=729 possible 6-trit combinations qualify, a
+            // constraint the old constant-zero filler satisfied by luck
+            // (0 always decodes to byte 0) that a per-trit random filler
+            // would violate most of the time.
+            let mut filler_state: u32 = 0x9e37_79b9;
             while segment.len() < strand_len {
-                segment.push(0);
+                filler_state ^= filler_state << 13;
+                filler_state ^= filler_state >> 17;
+                filler_state ^= filler_state << 5;
+                let mut filler_trits = Vec::new();
+                Self::byte_to_trits((filler_state % 256) as u8, &mut filler_trits);
+                let remaining = strand_len - segment.len();
+                segment.extend(filler_trits.into_iter().take(remaining));
             }
 
             segments.push(segment);
@@ -249,6 +280,58 @@ impl TernaryCodec {
         }
 
         segments
+    }
+
+    /// A deterministic, position-addressable pseudo-random trit: the same
+    /// `position` always yields the same value, computed independently of
+    /// any other position (no sequential state to advance). That's the
+    /// property whitening needs here: overlapping segments each contain
+    /// the *same* absolute trit position more than once, and a strand's
+    /// own position range is only known (from its index header) one
+    /// strand at a time during decode, in whatever order retrieval
+    /// happens to return them -- a stateful "advance once per trit"
+    /// generator can't be replayed correctly under either condition, only
+    /// one addressed purely by position can. (A splitmix64-style mixing
+    /// round; not cryptographic, just a cheap decorrelator.)
+    fn whiten_value_at(position: usize) -> u8 {
+        let mut x = (position as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^= x >> 31;
+        (x % 3) as u8
+    }
+
+    /// XOR-add (mod 3) the position-addressable whitening stream onto
+    /// `trits`, starting at absolute position `base_pos`, in place.
+    ///
+    /// The rotating cipher maps a constant trit value to a constant
+    /// rotation relative to whatever base precedes it, so any long run of
+    /// a single trit value degenerates into a short, fixed-period base
+    /// cycle once fed through it (e.g. a run of trit `0` becomes a
+    /// "TATATATA..." repeat) -- a self-inflicted tandem repeat with
+    /// nothing to do with the real data, and exactly the kind of region
+    /// that's hardest for any downstream consensus/alignment scheme to
+    /// recover under indel noise. Such runs aren't a corner case: the
+    /// 4-byte big-endian length header this codec prepends to every
+    /// payload has at least one, usually several, leading zero *bytes*
+    /// for any file under 16MB, and a zero byte is 6 trits of value 0 --
+    /// so every encoded file starts with a real (if short) instance of
+    /// this bug, not just unlucky inputs.
+    ///
+    /// This is applied to a whole segment -- padding included, not just
+    /// the real data before it -- and reversed the same way per-strand at
+    /// decode (using that strand's own known index to recover its
+    /// `base_pos`), rather than applied once globally before segmentation
+    /// and reversed once after reassembly: decode doesn't know where any
+    /// given strand's real-data/padding boundary falls until *after*
+    /// decoding the length header, so unwhitening has to work without
+    /// needing that boundary, which per-segment/per-strand positioning
+    /// gives for free.
+    fn whiten_segment(segment: &mut [u8], base_pos: usize, reverse: bool) {
+        for (j, t) in segment.iter_mut().enumerate() {
+            let r = Self::whiten_value_at(base_pos + j);
+            *t = if reverse { (*t + 3 - r) % 3 } else { (*t + r) % 3 };
+        }
     }
 }
 
@@ -266,7 +349,20 @@ impl DnaCodec for TernaryCodec {
         let trits = Self::bytes_to_trits(data);
 
         // Step 2: Segment the trits into strand-length chunks
-        let segments = self.segment_trits(&trits);
+        let mut segments = self.segment_trits(&trits);
+
+        // Whiten every segment (including its padding, if any) before the
+        // rotating cipher ever sees it -- see `whiten_segment`'s doc
+        // comment for why a plain length-header + data trit stream is not
+        // safe to feed it directly.
+        let step = if self.config.overlap >= self.config.strand_length {
+            1
+        } else {
+            self.config.strand_length - self.config.overlap
+        };
+        for (idx, segment) in segments.iter_mut().enumerate() {
+            Self::whiten_segment(segment, idx * step, false);
+        }
 
         // Step 3: Encode each segment into nucleotides
         let mut collection = StrandCollection::new(data.len());
@@ -328,17 +424,29 @@ impl DnaCodec for TernaryCodec {
         // Step 2: Sort by index and reconstruct
         indexed_payloads.sort_by_key(|(idx, _)| *idx);
 
+        let step = if self.config.overlap >= self.config.strand_length {
+            1
+        } else {
+            self.config.strand_length - self.config.overlap
+        };
+
         // Step 3: Use the first strand set (no overlap reconstruction needed
         // for basic decoding — overlap provides redundancy for error correction)
         if self.config.overlap == 0 {
             // No overlap: concatenate all payloads in order
             let mut all_trits = Vec::new();
 
-            for (_idx, payload) in &indexed_payloads {
-                let trits = Self::nucleotides_to_trits(
+            for (idx, payload) in &indexed_payloads {
+                let mut trits = Self::nucleotides_to_trits(
                     payload,
                     self.config.seed_base,
                 )?;
+                // Reverse the per-segment whitening `encode` applied,
+                // using this strand's own index for its absolute
+                // position -- see `whiten_segment`'s doc comment for why
+                // this has to happen per-strand rather than once after
+                // reassembly.
+                Self::whiten_segment(&mut trits, *idx * step, true);
                 all_trits.extend(trits);
             }
 
@@ -381,19 +489,14 @@ impl DnaCodec for TernaryCodec {
             Ok(all_bytes[data_start..data_end].to_vec())
         } else {
             // With overlap: use the non-overlapping portions of each strand
-            let step = if self.config.overlap >= self.config.strand_length {
-                1
-            } else {
-                self.config.strand_length - self.config.overlap
-            };
-
             let mut all_trits = Vec::new();
 
-            for (i, (_idx, payload)) in indexed_payloads.iter().enumerate() {
-                let trits = Self::nucleotides_to_trits(
+            for (i, (idx, payload)) in indexed_payloads.iter().enumerate() {
+                let mut trits = Self::nucleotides_to_trits(
                     payload,
                     self.config.seed_base,
                 )?;
+                Self::whiten_segment(&mut trits, *idx * step, true);
 
                 if i == indexed_payloads.len() - 1 {
                     // Last strand: take all remaining trits
