@@ -16,10 +16,18 @@
 //! anchor's own errors -- and each read's individual drift -- corrupt every
 //! subsequent vote, whereas folding every read into a shared graph lets
 //! independent reads that agree on a base or an indel reinforce the same
-//! graph node regardless of which read happened to be processed first. The
-//! final consensus is the highest-support path through the graph. This is
-//! the same family of approach real long-read polishers (Racon, Medaka)
-//! use, simplified for DNA storage's much shorter strands.
+//! graph node regardless of which read happened to be processed first.
+//!
+//! A single pass still seeds the graph's column numbering from one raw
+//! (possibly indel-bearing) read, which can leave a small residual error
+//! even after voting otherwise corrects everything else. So
+//! [`build_consensus`] polishes: it reseeds a fresh graph from the
+//! previous pass's own (already-corrected) result and re-folds every
+//! read, repeating to a fixed point (capped) -- the same multi-round
+//! approach real long-read polishers (Racon, Medaka) use, simplified for
+//! DNA storage's much shorter strands. The reseed is unweighted (the
+//! backbone contributes no vote of its own) so a read doesn't get counted
+//! twice just because its content happens to already match the backbone.
 
 use nucle_codec::base::{DnaStrand, Nucleotide};
 
@@ -104,14 +112,30 @@ struct PoaGraph {
 }
 
 impl PoaGraph {
-    /// Seed the graph from a single read: a plain linear chain with
-    /// weight 1 throughout, representing that read's own vote.
+    /// Seed the graph from a single read that is itself one of the votes:
+    /// a plain linear chain with weight 1 throughout, representing that
+    /// read's own contribution.
     fn seed(read: &[Nucleotide]) -> Self {
+        Self::seed_with_weight(read, 1)
+    }
+
+    /// Seed the graph from a backbone sequence that is *not* itself a
+    /// vote -- e.g. a previous polishing pass's own result, used only to
+    /// fix the column numbering for a refinement pass where every real
+    /// read (including whichever one seeded the first pass) gets folded
+    /// in explicitly. Using `seed` here would double-count: its baked-in
+    /// weight of 1 plus every read's own fold would let some positions
+    /// out-vote their true coverage.
+    fn seed_unweighted(read: &[Nucleotide]) -> Self {
+        Self::seed_with_weight(read, 0)
+    }
+
+    fn seed_with_weight(read: &[Nucleotide], weight: usize) -> Self {
         let n = read.len();
         let preds: Vec<Vec<usize>> = (0..n).map(|i| if i == 0 { Vec::new() } else { vec![i - 1] }).collect();
-        let pred_weights = preds.iter().map(|p| vec![1; p.len()]).collect();
-        let start_weight = (0..n).map(|i| if i == 0 { 1 } else { 0 }).collect();
-        let terminal_weight = (0..n).map(|i| if i + 1 == n { 1 } else { 0 }).collect();
+        let pred_weights = preds.iter().map(|p| vec![weight; p.len()]).collect();
+        let start_weight = (0..n).map(|i| if i == 0 { weight } else { 0 }).collect();
+        let terminal_weight = (0..n).map(|i| if i + 1 == n { weight } else { 0 }).collect();
         let column = (0..n).map(|i| (i + 1, 0)).collect();
         PoaGraph { bases: read.to_vec(), preds, pred_weights, start_weight, terminal_weight, column }
     }
@@ -546,12 +570,45 @@ pub fn build_consensus(reads: &[DnaStrand]) -> Option<ConsensusResult> {
         });
     }
 
+    // First pass: fold every other read into a graph seeded from one raw
+    // (possibly error-prone) read.
     let mut graph = PoaGraph::seed(seed_bases);
     for (i, read) in reads.iter().enumerate() {
         if i == seed_idx {
             continue;
         }
         graph.align_and_merge(read.bases());
+    }
+    let mut current: Vec<Nucleotide> = graph.heaviest_path().iter().map(|&(n, _)| graph.bases[n]).collect();
+
+    // Polishing passes: rebuild from scratch seeded on the previous pass's
+    // own result (unweighted -- it's not itself a vote) and fold in
+    // *every* read, including the one that seeded pass one. A raw read's
+    // own indels don't just cost that one read a few wrong votes -- they
+    // reshape the graph's own column numbering for everything downstream
+    // of them, so an occasional residual error can survive voting even
+    // after the graph otherwise correctly outvotes every substitution.
+    // Seeding the next pass from a result that has already been
+    // majority-corrected removes that bias, the same way real long-read
+    // consensus tools (Racon, Medaka) run more than one polishing round
+    // rather than trusting a single raw read as ground truth for column
+    // identity. Iterate to a fixed point (capped, as a backstop against
+    // two columns trading places forever rather than settling) instead of
+    // a single fixed extra pass, since one round can still leave a
+    // smaller residual for the next round to fix.
+    const MAX_POLISH_ROUNDS: usize = 5;
+    let mut graph = PoaGraph::seed_unweighted(&current);
+    for _ in 0..MAX_POLISH_ROUNDS {
+        graph = PoaGraph::seed_unweighted(&current);
+        for read in reads {
+            graph.align_and_merge(read.bases());
+        }
+        let next: Vec<Nucleotide> = graph.heaviest_path().iter().map(|&(n, _)| graph.bases[n]).collect();
+        let converged = next == current;
+        current = next;
+        if converged {
+            break;
+        }
     }
 
     let path = graph.heaviest_path();
@@ -850,20 +907,18 @@ mod tests {
     /// solve at all: many reads, each independently carrying *several*
     /// simultaneous indels (a higher combined edit rate than real Nanopore
     /// noise, deliberately, to stress-test past it), rather than just one
-    /// indel each. Folding every read into a shared POA graph gets this
-    /// overwhelmingly right -- honestly verified here to land within 2
-    /// edits of the true 43-base sequence, not asserted as pixel-perfect,
-    /// because it isn't quite: a small residual (1 extra/wrong base) can
-    /// survive a single POA pass at this density, traced to column
-    /// identity occasionally fragmenting near a compounding cluster of
-    /// edits in the graph's own seed read. A naive attempt at fixing that
-    /// with iterative refinement (reseed from pass one's result, like
-    /// Racon/Medaka's polishing rounds) reduced but didn't eliminate the
-    /// residual, and caused a real regression elsewhere (a double-counted
-    /// vote weight briefly broke the working Illumina case) that had to be
-    /// caught and reverted -- see docs/architecture.md's "Current status"
-    /// for the honest account of what a single POA pass does and doesn't
-    /// fix, rather than re-litigating it in a comment here.
+    /// indel each. Folding every read into a shared, multi-round-polished
+    /// POA graph gets this overwhelmingly right -- honestly verified here
+    /// to land within 2 edits of the true 43-base sequence, not asserted
+    /// as pixel-perfect, because it isn't quite: a small residual (1
+    /// extra/wrong base) can survive even multiple polishing rounds at
+    /// this density, traced to column identity occasionally fragmenting
+    /// near a compounding cluster of edits in the graph's own initial
+    /// seed read. (An earlier attempt at polishing had a double-counted
+    /// vote weight that briefly broke the working Illumina case; that bug
+    /// is what `PoaGraph::seed_unweighted` exists to prevent, not
+    /// polishing itself, which is now verified safe -- see
+    /// docs/architecture.md's "Current status" for the fuller account.)
     #[test]
     fn test_consensus_gets_within_two_edits_under_many_simultaneous_indels_per_read() {
         let original = "ATCGATCGTACGATCGGATCCATGACTGATCGTACGGATCAGT";

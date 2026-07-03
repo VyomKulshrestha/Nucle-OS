@@ -259,14 +259,18 @@ carries several simultaneous indels at once (the real Nanopore regime),
 so `nucle_ecc::consensus` is now genuine partial-order alignment (POA) —
 every read folds into one shared graph with edge-weighted voting, so a
 majority correctly outvotes a minority stray insertion at any position,
-including the very first or last base (previously it couldn't). All three
-are fixed and covered by dedicated regression tests, including a
-crash found by fuzzing realistic-rate Nanopore noise at 50x coverage.
-`nucle benchmark -p nanopore -r 4` still fails today, even at 50x
-coverage and even after all three fixes — a single POA pass gets close
-(97%+ per-strand accuracy on a synthetic worst-case) but not all the way;
-actually fixing that needs multi-round polishing (what Racon/Medaka do) or
-a more sophisticated alignment scheme, and remains open. See
+including the very first or last base (previously it couldn't). Consensus
+now also polishes over multiple rounds (reseed from the previous round's
+own result, re-fold every read, repeat to a fixed point — what Racon/Medaka
+do), verified not to regress Illumina this time after an earlier attempt's
+double-counted vote weight briefly did. All of this is covered by dedicated
+regression tests, including a crash found by fuzzing realistic-rate
+Nanopore noise at 50x coverage. `nucle benchmark -p nanopore -r 4` still
+fails today, even at 50x coverage and even with polishing — a synthetic
+worst-case test lands 1 base off out of 43 after polishing converges,
+traced to column identity fragmenting near a compounding cluster of edits
+in the graph's own seed read. A more sophisticated alignment scheme to stop
+that fragmentation, rather than polish around it, remains open. See
 [docs/architecture.md](docs/architecture.md#current-status) for the detail.
 
 ### End-to-End Roundtrip: Encode → Noise → Recover
