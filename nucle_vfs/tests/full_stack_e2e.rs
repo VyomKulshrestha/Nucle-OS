@@ -380,14 +380,65 @@ fn test_roundtrip_survives_illumina_noise_via_consensus() {
 ///    never in the critical path here: consensus itself does not reliably
 ///    converge to the correct sequence at Nanopore's real per-base rate
 ///    (substitution 3% + insertion 2% + deletion 2%), before Reed-Solomon
-///    ever gets a chance to help. This is confirmed below to persist even
-///    at 50x coverage and 12 parity strands, which rules out "just not
-///    enough redundancy" from either direction now. Closing this needs a
-///    better consensus/alignment algorithm for extreme indel density, not
-///    a bigger parity budget, and remains open.
+///    ever gets a chance to help. Coverage/redundancy were originally
+///    pushed all the way to 50x/12 parity strands to rule out "just not
+///    enough redundancy" as hard as possible; that finding is preserved
+///    below (`..._thorough`, `#[ignore]`d), but each `PoaGraph` fold's
+///    O(read_len x graph_size) alignment DP makes total cost scale with
+///    coverage x redundancy x trials, and in an unoptimized debug build
+///    50x/12/5 alone takes minutes -- too slow to run on every `cargo
+///    test`. The always-run test below uses much smaller coverage/
+///    redundancy (fast: single-digit seconds); the underlying claim
+///    doesn't depend on the specific numbers; the same failure reproduces
+///    at every scale that's been tried. Closing this needs a better
+///    consensus/alignment algorithm for extreme indel density, not a
+///    bigger parity budget or more coverage, and remains open.
 
 #[test]
 fn test_nanopore_still_fails_at_realistic_indel_density_despite_alignment_fixes() {
+    let mut still_failing = 0;
+    let trials = 5;
+    for seed in 0..trials {
+        let noise_cfg = SimulationConfig {
+            seed,
+            coverage_depth: 3,
+            synthesis_profile: HardwareProfile::OxfordNanopore,
+            sequencing_profile: HardwareProfile::OxfordNanopore,
+            simulate_decay: false,
+            decay_rate: 0.0,
+            storage_time: 0.0,
+        };
+        let mut os = NucleOS::new(10).with_noise(noise_cfg);
+        let original = b"Consensus voting across coverage copies corrects \
+            substitution errors that Reed-Solomon alone cannot.";
+        os.dna_write("noisy_nanopore.txt", original, 1).unwrap();
+
+        let recovered = os.dna_read("noisy_nanopore.txt");
+        if recovered.is_err() || recovered.unwrap() != original.to_vec() {
+            still_failing += 1;
+        }
+    }
+    assert_eq!(
+        still_failing, trials,
+        "expected Nanopore roundtrip to still fail at realistic per-read indel density \
+         even at just 3x coverage / 1 parity strand (see doc comment) -- if this starts \
+         passing, multi-read consensus has been added and this test (and the docs \
+         describing the limitation) should be updated"
+    );
+}
+
+/// Same claim as the test above, at the original, much more expensive
+/// 50x coverage / 12 parity strands / 5 seeds this limitation was first
+/// diagnosed at -- kept as a thorough, `#[ignore]`d check (each `PoaGraph`
+/// fold's alignment DP is O(read_len x graph_size), so total cost scales
+/// with coverage x redundancy x trials, and an unoptimized debug build
+/// takes minutes at this scale). Run explicitly with
+/// `cargo test -p nucle_vfs -- --ignored test_nanopore_still_fails_at_realistic_indel_density_thorough`
+/// when you want the strongest version of the check rather than the fast
+/// one that runs on every `cargo test`.
+#[test]
+#[ignore]
+fn test_nanopore_still_fails_at_realistic_indel_density_thorough() {
     let mut still_failing = 0;
     let trials = 5;
     for seed in 0..trials {

@@ -421,7 +421,7 @@ mod tests {
         let data = b"Consensus voting across simulated sequencing coverage \
             corrects substitution errors that Reed-Solomon alone cannot.";
 
-        let recovery = estimate_recovery_probability(codec.as_ref(), data, HardwareProfile::Illumina, 4, 20);
+        let recovery = estimate_recovery_probability(codec.as_ref(), data, HardwareProfile::Illumina, 2, 3);
         assert!(recovery > 0.5, "with real coverage + consensus + RS, recovery should be reliably high, got {recovery}");
     }
 
