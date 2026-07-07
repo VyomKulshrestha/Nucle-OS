@@ -85,6 +85,15 @@ diagnostic shape, not two that can drift.
 > [docs/effects.md](effects.md) for the effect model — including how effects
 > propagate through function calls, not just literal operations.
 
+A TextMate grammar for `.nsl` files lives at
+`editors/vscode/nuclescript/syntaxes/nuclescript.tmLanguage.json`, derived
+from `docs/grammar.md`/the actual keyword sets in `lexer.rs`/`parser.rs`
+(not invented independently), and is snapshot-tested against every file in
+`docs/examples/` (`vscode-tmgrammar-snap`) so grammar/compiler drift shows
+up as a diff. This is purely presentational — no diagnostics, hover, or
+navigation — that needs a language server built on top of the same
+`check_source`/`Diagnostic` shape described above.
+
 ## NucleScript Playground
 
 The interactive playground has three tabs, each backed by the real engine rather than reimplemented or mocked logic, and ships two ways from the same source:

@@ -1,0 +1,157 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "NucleScript",
+  "scopeName": "source.nuclescript",
+  "fileTypes": ["nsl"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#confirmation-keywords" },
+    { "include": "#control-keywords" },
+    { "include": "#types" },
+    { "include": "#profile-constants" },
+    { "include": "#codec-constants" },
+    { "include": "#pool-state-constants" },
+    { "include": "#operators" },
+    { "include": "#function-calls" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.nuclescript",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.nuclescript",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.nuclescript",
+              "match": "\\\\[nrt\\\\\"]"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "comment": "date literal, e.g. 2025-01-01 -- must come before a plain number match",
+          "name": "constant.numeric.date.nuclescript",
+          "match": "\\b\\d{4}-\\d{2}-\\d{2}\\b"
+        },
+        {
+          "comment": "size-in-bytes literal, e.g. 10MB, 5kb",
+          "name": "constant.numeric.size.nuclescript",
+          "match": "\\b\\d+(mb|MB|kb|KB)\\b"
+        },
+        {
+          "comment": "percent literal, e.g. 99.5%, 0.35%",
+          "name": "constant.numeric.percentage.nuclescript",
+          "match": "\\b\\d+(\\.\\d+)?%"
+        },
+        {
+          "comment": "multiplier literal, e.g. 3x, 10X",
+          "name": "constant.numeric.multiplier.nuclescript",
+          "match": "\\b\\d+[xX]\\b"
+        },
+        {
+          "name": "constant.numeric.nuclescript",
+          "match": "\\b\\d+(\\.\\d+)?\\b"
+        }
+      ]
+    },
+    "confirmation-keywords": {
+      "comment": "confirm/hardware/physical_key gate every Synthesis/Sequencing/Destructive effect -- given a distinct scope so an editor theme can make them visually stand out from ordinary control flow, matching how load-bearing they are in the language's safety model. The parser matches keywords case-insensitively (eq_ignore_ascii_case), but every real example uses lowercase consistently -- matching that convention case-sensitively (rather than mirroring the parser's leniency) is what avoids 'strand' the keyword and 'Strand' the type name (and similarly seq/Sequence, recovery/Recovery) colliding on the exact same word.",
+      "patterns": [
+        {
+          "name": "keyword.control.confirmation.nuclescript",
+          "match": "\\b(confirm|hardware|physical_key)\\b"
+        }
+      ]
+    },
+    "control-keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.nuclescript",
+          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.nuclescript",
+          "match": "\\b(DnaPool|Pool|Strand|Sequence|File|DnaFile|Recovery|Void)\\b"
+        }
+      ]
+    },
+    "profile-constants": {
+      "comment": "Profile::parse (ast.rs) also accepts lowercase-hyphenated aliases -- included alongside the PascalCase forms every example actually uses",
+      "patterns": [
+        {
+          "name": "support.constant.profile.nuclescript",
+          "match": "\\b(Illumina|illumina|Nanopore|OxfordNanopore|oxfordnanopore|oxford-nanopore|Twist|TwistBioscience|twistbioscience|twist-bioscience)\\b"
+        }
+      ]
+    },
+    "codec-constants": {
+      "comment": "Codec::parse (ast.rs) also accepts lowercase-hyphenated aliases -- included alongside the PascalCase forms every example actually uses",
+      "patterns": [
+        {
+          "name": "support.constant.codec.nuclescript",
+          "match": "\\b(YinYang|yinyang|yin-yang|Ternary|ternary|ternary-rotating|ternary-rotating-cipher|Fountain|fountain|dna-fountain)\\b"
+        }
+      ]
+    },
+    "pool-state-constants": {
+      "patterns": [
+        {
+          "name": "support.constant.pool-state.nuclescript",
+          "match": "\\b(Amplified|Recovered)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.nuclescript",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.comparison.nuclescript",
+          "match": "[<>]"
+        },
+        {
+          "name": "keyword.operator.assignment.nuclescript",
+          "match": "="
+        }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        {
+          "comment": "an identifier immediately followed by '(' -- covers both user-declared function calls and the consensus_vote builtin (already scoped as a control keyword above, so this only fires for user calls since control-keywords is matched first in the patterns list)",
+          "name": "entity.name.function.nuclescript",
+          "match": "\\b([a-zA-Z][a-zA-Z0-9_-]*)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.nuclescript",
+          "match": "\\b[a-zA-Z][a-zA-Z0-9_-]*\\b"
+        }
+      ]
+    }
+  }
+}

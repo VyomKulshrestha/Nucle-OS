@@ -1,0 +1,55 @@
+>// Reusable function that encapsulates a store-with-recovery workflow.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archive(data: File, target: Pool<Illumina>, guarantee: Recovery) returns DnaFile {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#          ^ source.nuclescript
+#           ^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^^^^^ source.nuclescript variable.other.nuclescript
+#                             ^^ source.nuclescript
+#                               ^^^^ source.nuclescript storage.type.nuclescript
+#                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                    ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                             ^^ source.nuclescript
+#                                               ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                        ^^ source.nuclescript
+#                                                          ^^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                                  ^^ source.nuclescript
+#                                                                    ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                           ^ source.nuclescript
+#                                                                            ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                   ^^^ source.nuclescript
+>    let plan: DnaFile = protect data for guarantee
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^ source.nuclescript
+#                      ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                       ^ source.nuclescript
+#                        ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                               ^ source.nuclescript
+#                                ^^^^ source.nuclescript variable.other.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^ source.nuclescript keyword.control.nuclescript
+#                                        ^ source.nuclescript
+#                                         ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+>    store plan into target
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript keyword.control.nuclescript
+#         ^ source.nuclescript
+#          ^^^^ source.nuclescript variable.other.nuclescript
+#              ^ source.nuclescript
+#               ^^^^ source.nuclescript keyword.control.nuclescript
+#                   ^ source.nuclescript
+#                    ^^^^^^ source.nuclescript variable.other.nuclescript
+>}
+#^^ source.nuclescript
+>

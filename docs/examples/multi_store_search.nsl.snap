@@ -1,0 +1,102 @@
+>// Multiple stores followed by a broad retrieval/search query
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>pool archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 2x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>store "sample_a.txt" into archive {
+#^^^^^ source.nuclescript keyword.control.nuclescript
+#     ^ source.nuclescript
+#      ^ source.nuclescript string.quoted.double.nuclescript
+#       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                 ^^^ source.nuclescript
+>    tag: ["readme", "docs"]
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^^^ source.nuclescript
+#          ^ source.nuclescript string.quoted.double.nuclescript
+#           ^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                 ^ source.nuclescript string.quoted.double.nuclescript
+#                  ^^ source.nuclescript
+#                    ^ source.nuclescript string.quoted.double.nuclescript
+#                     ^^^^ source.nuclescript string.quoted.double.nuclescript
+#                         ^ source.nuclescript string.quoted.double.nuclescript
+#                          ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>store "sample_b.txt" into archive {
+#^^^^^ source.nuclescript keyword.control.nuclescript
+#     ^ source.nuclescript
+#      ^ source.nuclescript string.quoted.double.nuclescript
+#       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                 ^^^ source.nuclescript
+>    tag: ["license", "docs"]
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^^^ source.nuclescript
+#          ^ source.nuclescript string.quoted.double.nuclescript
+#           ^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                  ^ source.nuclescript string.quoted.double.nuclescript
+#                   ^^ source.nuclescript
+#                     ^ source.nuclescript string.quoted.double.nuclescript
+#                      ^^^^ source.nuclescript string.quoted.double.nuclescript
+#                          ^ source.nuclescript string.quoted.double.nuclescript
+#                           ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>retrieve from archive where {
+#^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#        ^ source.nuclescript
+#         ^^^^ source.nuclescript keyword.control.nuclescript
+#             ^ source.nuclescript
+#              ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                     ^ source.nuclescript
+#                      ^^^^^ source.nuclescript keyword.control.nuclescript
+#                           ^^^ source.nuclescript
+>    name contains "README"
+#^^^^ source.nuclescript
+#    ^^^^ source.nuclescript variable.other.nuclescript
+#        ^ source.nuclescript
+#         ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                 ^ source.nuclescript
+#                  ^ source.nuclescript string.quoted.double.nuclescript
+#                   ^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                         ^ source.nuclescript string.quoted.double.nuclescript
+>}
+#^^ source.nuclescript
+>

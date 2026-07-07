@@ -1,0 +1,60 @@
+>// Emits a warning: high recovery expectation at Nanopore 1x coverage
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>pool field_pool: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                        ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 1x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Nanopore
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>simulate store "sample_a.txt" into field_pool {
+#^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#        ^ source.nuclescript
+#         ^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^ source.nuclescript
+#               ^ source.nuclescript string.quoted.double.nuclescript
+#                ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                            ^ source.nuclescript string.quoted.double.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^ source.nuclescript keyword.control.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                             ^^^ source.nuclescript
+>    coverage: 1x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#            ^^ source.nuclescript
+#              ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                ^^ source.nuclescript
+>    expect recovery > 99.9%
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                   ^ source.nuclescript
+#                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                     ^ source.nuclescript
+#                      ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+>}
+#^^ source.nuclescript
+>

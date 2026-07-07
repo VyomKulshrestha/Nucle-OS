@@ -582,6 +582,21 @@ $ nucle explain docs/examples/critical_redundancy_warning.nsl
 - store 'sample_a.txt' (Synthesis): Synthesis effect. [CONFIRMED]
 ```
 
+### Editor Support
+
+A VS Code extension lives at
+[`editors/vscode/nuclescript/`](editors/vscode/nuclescript/) — syntax
+highlighting for `.nsl` files (keywords, types, profile/codec constants,
+strings, and the `3x`/`99.5%`/date/size-in-bytes number forms `lexer.rs`
+actually recognizes), derived directly from the real grammar so it can't
+highlight a token the compiler would reject. It's local-only for now (not
+published to the Marketplace) — see the extension's own README for install
+instructions. A snapshot test (`npm test` inside that directory) tokenizes
+every file in `docs/examples/` and diffs against committed snapshots, so a
+compiler keyword change that isn't mirrored in the grammar shows up as a
+CI-visible diff instead of silently going stale. Live diagnostics,
+hover, and go-to-definition need a language server, which isn't built yet.
+
 ### Playground
 
 **🧪 [Try it live in your browser](https://nuclescript.github.io/playground/)**

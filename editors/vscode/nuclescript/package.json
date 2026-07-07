@@ -1,0 +1,34 @@
+{
+  "name": "nuclescript",
+  "displayName": "NucleScript",
+  "description": "Syntax highlighting for NucleScript (.nsl), the declarative DNA-storage operations language for NucleOS.",
+  "version": "0.1.0",
+  "publisher": "nuclescript",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "nuclescript",
+        "aliases": ["NucleScript", "nuclescript"],
+        "extensions": [".nsl"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nuclescript",
+        "scopeName": "source.nuclescript",
+        "path": "./syntaxes/nuclescript.tmLanguage.json"
+      }
+    ]
+  },
+  "devDependencies": {
+    "vscode-tmgrammar-test": "^0.1.3"
+  },
+  "scripts": {
+    "test": "vscode-tmgrammar-snap -s source.nuclescript -g syntaxes/nuclescript.tmLanguage.json ../../../docs/examples/*.nsl"
+  }
+}

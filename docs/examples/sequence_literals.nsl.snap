@@ -1,0 +1,40 @@
+>// DNA-native sequence literals are validated by the compiler.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>seq primer_p0: Sequence = "ATCGATCGGCTAGCTA"
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript
+#                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                         ^ source.nuclescript
+#                          ^ source.nuclescript string.quoted.double.nuclescript
+#                           ^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                           ^ source.nuclescript string.quoted.double.nuclescript
+>
+>let primer_p1 = seq"ATCGATCG-GCTAGCTA"
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^ source.nuclescript
+#              ^ source.nuclescript keyword.operator.assignment.nuclescript
+#               ^ source.nuclescript
+#                ^^^ source.nuclescript keyword.control.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                     ^ source.nuclescript string.quoted.double.nuclescript
+>let primer_p2: Sequence = seq"GCTAGCTA-ATCGATCG"
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript
+#                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^ source.nuclescript keyword.control.nuclescript
+#                             ^ source.nuclescript string.quoted.double.nuclescript
+#                              ^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                               ^ source.nuclescript string.quoted.double.nuclescript
+>

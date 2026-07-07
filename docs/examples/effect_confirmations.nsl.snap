@@ -1,0 +1,115 @@
+>// Hardware and destructive operations require explicit confirmations.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>pool archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Twist
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>let strands: Pool<Twist, 0.03%> = synthesise archive via Twist confirm hardware
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^ source.nuclescript storage.type.nuclescript
+#                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                  ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                       ^^ source.nuclescript
+#                         ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                              ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                               ^ source.nuclescript
+#                                ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                            ^ source.nuclescript
+#                                             ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                    ^ source.nuclescript
+#                                                     ^^^ source.nuclescript keyword.control.nuclescript
+#                                                        ^ source.nuclescript
+#                                                         ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                              ^ source.nuclescript
+#                                                               ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                      ^ source.nuclescript
+#                                                                       ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>let reads: Pool<Illumina, 0.35%> = sequence strands via Illumina confirm hardware
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^ source.nuclescript storage.type.nuclescript
+#               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                        ^^ source.nuclescript
+#                          ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                ^ source.nuclescript
+#                                 ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                   ^ source.nuclescript
+#                                                    ^^^ source.nuclescript keyword.control.nuclescript
+#                                                       ^ source.nuclescript
+#                                                        ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                ^ source.nuclescript
+#                                                                 ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                        ^ source.nuclescript
+#                                                                         ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>let recovered: Pool<Recovered> = consensus_vote(reads, coverage: 10x)
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                              ^ source.nuclescript
+#                               ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                ^ source.nuclescript
+#                                 ^^^^^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                     ^^ source.nuclescript
+#                                                       ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                               ^^ source.nuclescript
+#                                                                 ^^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                                    ^^ source.nuclescript
+>
+>delete "old_archive.bin" from archive confirm physical_key
+#^^^^^^ source.nuclescript keyword.control.nuclescript
+#      ^ source.nuclescript
+#       ^ source.nuclescript string.quoted.double.nuclescript
+#        ^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                       ^ source.nuclescript string.quoted.double.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^ source.nuclescript keyword.control.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                             ^ source.nuclescript
+#                                              ^^^^^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>

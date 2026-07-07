@@ -1,0 +1,71 @@
+>// Probabilistic pool types track profile and error budget through recovery.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>pool archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^ source.nuclescript storage.type.nuclescript
+#               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                        ^^ source.nuclescript
+#                          ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                ^ source.nuclescript
+#                                 ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                   ^ source.nuclescript
+#                                                    ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                         ^ source.nuclescript
+#                                                          ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                              ^ source.nuclescript
+#                               ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                ^ source.nuclescript
+#                                 ^^^^^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                     ^^ source.nuclescript
+#                                                       ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                               ^^ source.nuclescript
+#                                                                 ^^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                                    ^^ source.nuclescript
+>

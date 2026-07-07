@@ -1,0 +1,84 @@
+>// Retrieve by declarative metadata query
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>pool archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>store "sample_a.txt" into archive {
+#^^^^^ source.nuclescript keyword.control.nuclescript
+#     ^ source.nuclescript
+#      ^ source.nuclescript string.quoted.double.nuclescript
+#       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                 ^^^ source.nuclescript
+>    tag: ["medical", "docs"]
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^^^ source.nuclescript
+#          ^ source.nuclescript string.quoted.double.nuclescript
+#           ^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                  ^ source.nuclescript string.quoted.double.nuclescript
+#                   ^^ source.nuclescript
+#                     ^ source.nuclescript string.quoted.double.nuclescript
+#                      ^^^^ source.nuclescript string.quoted.double.nuclescript
+#                          ^ source.nuclescript string.quoted.double.nuclescript
+#                           ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>retrieve from archive where {
+#^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#        ^ source.nuclescript
+#         ^^^^ source.nuclescript keyword.control.nuclescript
+#             ^ source.nuclescript
+#              ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                     ^ source.nuclescript
+#                      ^^^^^ source.nuclescript keyword.control.nuclescript
+#                           ^^^ source.nuclescript
+>    tag contains "medical",
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                ^ source.nuclescript
+#                 ^ source.nuclescript string.quoted.double.nuclescript
+#                  ^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                         ^ source.nuclescript string.quoted.double.nuclescript
+#                          ^^ source.nuclescript
+>    size < 10MB
+#^^^^ source.nuclescript
+#    ^^^^ source.nuclescript variable.other.nuclescript
+#        ^ source.nuclescript
+#         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#          ^ source.nuclescript
+#           ^^^^ source.nuclescript constant.numeric.size.nuclescript
+>}
+#^^ source.nuclescript
+>

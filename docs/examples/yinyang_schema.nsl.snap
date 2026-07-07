@@ -1,0 +1,57 @@
+>// Schema accepts future codecs; current executable backend warns and maps to VFS
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>pool archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^^ source.nuclescript
+>    codec: YinYang,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Twist
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>store "sample_a.txt" into archive {
+#^^^^^ source.nuclescript keyword.control.nuclescript
+#     ^ source.nuclescript
+#      ^ source.nuclescript string.quoted.double.nuclescript
+#       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                 ^^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    tag: ["future-codec"]
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^^^ source.nuclescript
+#          ^ source.nuclescript string.quoted.double.nuclescript
+#           ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                       ^ source.nuclescript string.quoted.double.nuclescript
+#                        ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
