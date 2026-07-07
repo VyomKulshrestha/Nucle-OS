@@ -433,6 +433,13 @@ impl Parser {
             let confirmed = self.consume_confirmation("hardware")?;
             Ok(Expr::SequencePool { source, profile, confirmed })
         } else if self.check_ident("consensus_vote") {
+            // Sugar over a call to the `consensus_vote` stdlib function
+            // (`stdlib::builtin_functions`) -- desugars straight to
+            // `Expr::FunctionCall` so every consumer downstream (typeck,
+            // effects, middle) resolves it exactly like a call to any
+            // user-defined function, with no separate AST node to keep in
+            // sync. `coverage: 10x`'s multiplier suffix is stripped here;
+            // only the numeric value survives past this point.
             self.advance();
             self.expect(TokenKind::LParen, "'(' after consensus_vote")?;
             let source = self.expect_ident_any("source pool binding")?;
@@ -441,13 +448,22 @@ impl Parser {
             self.expect(TokenKind::Colon, "':' after coverage")?;
             let coverage = self.expect_multiplier("coverage multiplier")?;
             self.expect(TokenKind::RParen, "')' after consensus_vote")?;
-            Ok(Expr::ConsensusVote { source, coverage })
+            Ok(Expr::FunctionCall {
+                name: "consensus_vote".to_string(),
+                args: vec![Expr::Variable(source), Expr::Number(coverage as f64)],
+            })
         } else if self.check_ident("protect") {
+            // Sugar over a call to the `protect` stdlib function -- see
+            // the `consensus_vote` case above for why this desugars to
+            // `Expr::FunctionCall` rather than its own AST node.
             self.advance();
             let data = self.expect_ident_any("data name")?;
             self.expect_ident_text("for")?;
             let guarantee = self.expect_ident_any("guarantee name")?;
-            Ok(Expr::Protect { data, guarantee })
+            Ok(Expr::FunctionCall {
+                name: "protect".to_string(),
+                args: vec![Expr::Variable(data), Expr::Variable(guarantee)],
+            })
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             let name = name.clone();
             if self.tokens.get(self.index + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {

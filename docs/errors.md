@@ -59,7 +59,8 @@ Codes are grouped by which declaration/operation they check, matching
 |------|-------|---------|
 | `E-CONSENSUS-INVALID-SOURCE` | error | `consensus_vote(source, ...)`'s `source` isn't a probabilistic pool binding (i.e. wasn't produced by `simulate`/`synthesize`/`sequence`). |
 | `E-CONSENSUS-NOOP-COVERAGE` | warning | `consensus_vote(..., coverage: 1x)` — voting across a single copy doesn't reduce the error budget at all. |
-| `E-FUNCTION-UNDECLARED` | error | A function call references a name with no matching `fn` declaration. Includes a "did you mean X?" suggestion against declared function names. |
+| `E-CONSENSUS-INVALID-COVERAGE` | error | `consensus_vote`'s second argument isn't a coverage number. Only reachable by hand-constructing an AST that bypasses the parser's `consensus_vote(source, coverage: N)` grammar — see [`docs/stdlib.md`](stdlib.md). |
+| `E-FUNCTION-UNDECLARED` | error | A function call references a name with no matching `fn` declaration, or a typo'd built-in (`consensus_vote`/`protect` — see [`docs/stdlib.md`](stdlib.md)). Includes a "did you mean X?" suggestion against declared function names. |
 | `E-FUNCTION-ARITY` | error | A function call passes the wrong number of arguments. |
 | `E-ARG-TYPE-INVALID` | error | An argument bound to a `Pool<...>`-typed parameter doesn't infer to a pool type at all. |
 | `E-ARG-TYPE-MISMATCH` | error | An argument's inferred pool state doesn't match the parameter's declared state. |

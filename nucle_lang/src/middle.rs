@@ -182,16 +182,28 @@ fn infer_binding(
         | Expr::SequencePool { profile, .. } => {
             Some((PoolState::Profile(*profile), profile_error_rate_percent(*profile)))
         }
-        Expr::ConsensusVote { source, coverage } => {
+        // `consensus_vote(source, coverage)` desugars to this shape at
+        // parse time (see `parser::parse_primary_expr` and
+        // `stdlib::builtin_functions`) -- its result genuinely depends on
+        // the source binding's inferred error rate and the requested
+        // coverage, so it needs this one intrinsic-recognition-by-name
+        // branch the same way `typeck::TypeChecker::infer_consensus_vote`
+        // does, even though arity/effects for it flow through the same
+        // shared `FunctionTable` machinery as any other call.
+        Expr::FunctionCall { name, args } if name == "consensus_vote" => {
+            let source = match args.first() {
+                Some(Expr::Variable(name)) => name,
+                _ => return None,
+            };
+            let coverage = match args.get(1) {
+                Some(Expr::Number(value)) => *value as usize,
+                _ => return None,
+            };
             let (_, error_rate_percent) = bindings.get(source)?;
-            Some((
-                PoolState::Recovered,
-                consensus_error_rate_percent(*error_rate_percent, *coverage),
-            ))
+            Some((PoolState::Recovered, consensus_error_rate_percent(*error_rate_percent, coverage)))
         }
         Expr::Variable(name) => bindings.get(name).cloned(),
         Expr::FunctionCall { .. }
-        | Expr::Protect { .. }
         | Expr::StringLiteral(_)
         | Expr::Number(_)
         | Expr::BinaryOp { .. }

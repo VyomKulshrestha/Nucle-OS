@@ -477,6 +477,12 @@ let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
 let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
 ```
 
+`consensus_vote` (and `protect`) are NucleScript's two built-in functions —
+ordinary `FunctionTable` entries resolved through the exact same lookup a
+call to your own `fn` goes through (arity checking, effect propagation,
+"did you mean X?" suggestions), not a separate hardcoded case per
+built-in. See [docs/stdlib.md](docs/stdlib.md) for both signatures.
+
 Effectful biological operations are explicit in the type system. Hardware-backed
 synthesis and sequencing require `confirm hardware`; destructive operations
 require `confirm physical_key`. The compiler lowers programs through a
@@ -780,11 +786,11 @@ nucle agent "pool status"
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 89 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls and `if`/`for` branches), compile-time `if`/`for` desugaring with comparison/boolean operators, canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests |
+| `nucle_lang` | 95 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **365 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **371 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

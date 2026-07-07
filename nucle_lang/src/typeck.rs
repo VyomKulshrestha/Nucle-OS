@@ -433,25 +433,9 @@ impl TypeChecker {
                     profile_error_rate_percent(*profile),
                 ))
             }
-            Expr::ConsensusVote { source, coverage } => {
-                let Some(source_type) = self.pool_bindings.get(source).cloned() else {
-                    self.report.error(span, "E-CONSENSUS-INVALID-SOURCE", format!("consensus_vote source '{}' is not a probabilistic pool binding", source));
-                    return None;
-                };
-                if *coverage == 1 {
-                    self.report.warning(span, "E-CONSENSUS-NOOP-COVERAGE", format!(
-                        "consensus_vote on '{}' uses 1x coverage; error budget is unchanged",
-                        source
-                    ));
-                }
-                Some(ProbPoolType::new(
-                    PoolState::Recovered,
-                    consensus_error_rate_percent(source_type.error_rate_percent, *coverage),
-                ))
-            }
             Expr::FunctionCall { name, args } => {
-                let Some(func) = self.functions.get(name).cloned() else {
-                    let candidates: Vec<String> = self.functions.keys().cloned().collect();
+                let Some(func) = self.lookup_function(name) else {
+                    let candidates = self.function_name_candidates();
                     let suggestion = suggest_name(name, &candidates);
                     self.report.error(span, "E-FUNCTION-UNDECLARED", format!("function '{}' is undeclared{}", name, did_you_mean(suggestion)));
                     return None;
@@ -480,6 +464,23 @@ impl TypeChecker {
                         }
                     }
                 }
+
+                // `consensus_vote`'s result genuinely depends on its
+                // *argument values* (the source binding's inferred error
+                // rate and the requested coverage), not just a fixed
+                // declared signature -- arity and effect classification
+                // for it already went through the exact same
+                // `FunctionTable`-based machinery above as any user
+                // function (see `stdlib::builtin_functions`), but this
+                // one intrinsic-recognition-by-name branch is still
+                // needed for its actual return type, the same way a real
+                // compiler special-cases a handful of true intrinsics
+                // rather than pretending every one of them fits an
+                // ordinary statically-typed function signature.
+                if name == "consensus_vote" {
+                    return self.infer_consensus_vote(args, span);
+                }
+
                 match &func.return_type {
                     TypeExpr::Pool(pool_type) => Some(ProbPoolType {
                         state: pool_type.state.clone(),
@@ -488,7 +489,6 @@ impl TypeChecker {
                     _ => None,
                 }
             }
-            Expr::Protect { .. } => None,
             Expr::Variable(name) => {
                 if let Some(pool) = self.pool_bindings.get(name).cloned() {
                     Some(pool)
@@ -520,6 +520,59 @@ impl TypeChecker {
             .cloned()
             .collect();
         suggest_name(target, &candidates)
+    }
+
+    /// Resolves a call target against user-declared functions first, then
+    /// falls back to the built-ins (`stdlib::builtin_functions`) -- a
+    /// program redeclaring a built-in's name shadows it, the same
+    /// precedence `effects::function_table` gives it.
+    fn lookup_function(&self, name: &str) -> Option<FunctionDecl> {
+        self.functions.get(name).cloned().or_else(|| crate::stdlib::builtin_functions().get(name).cloned())
+    }
+
+    /// Every name `Expr::FunctionCall` could resolve to -- user-declared
+    /// functions plus built-ins -- for "did you mean X?" suggestions on
+    /// an undeclared/typo'd call.
+    fn function_name_candidates(&self) -> Vec<String> {
+        self.functions.keys().cloned().chain(crate::stdlib::builtin_functions().into_keys()).collect()
+    }
+
+    /// `consensus_vote(source, coverage)`'s intrinsic return-type
+    /// computation -- see the call site in `infer_expr` for why this
+    /// can't just be `func.return_type`. Both arguments are exactly what
+    /// the parser's `consensus_vote(...)` desugaring always produces
+    /// (`Expr::Variable`, `Expr::Number`); the fallback error branches
+    /// below only matter if that invariant is ever violated (e.g. by a
+    /// future change letting `consensus_vote` be called via the general
+    /// `name(args...)` syntax with arbitrary expressions), so they report
+    /// a clear diagnostic instead of panicking rather than because
+    /// they're expected to fire today.
+    fn infer_consensus_vote(&mut self, args: &[Expr], span: Span) -> Option<ProbPoolType> {
+        let source_name = match args.first() {
+            Some(Expr::Variable(name)) => name.clone(),
+            _ => {
+                self.report.error(span, "E-CONSENSUS-INVALID-SOURCE", "consensus_vote's first argument must be a probabilistic pool binding");
+                return None;
+            }
+        };
+        let coverage = match args.get(1) {
+            Some(Expr::Number(value)) => *value as usize,
+            _ => {
+                self.report.error(span, "E-CONSENSUS-INVALID-COVERAGE", "consensus_vote's second argument must be a coverage number");
+                return None;
+            }
+        };
+        let Some(source_type) = self.pool_bindings.get(&source_name).cloned() else {
+            self.report.error(span, "E-CONSENSUS-INVALID-SOURCE", format!("consensus_vote source '{}' is not a probabilistic pool binding", source_name));
+            return None;
+        };
+        if coverage == 1 {
+            self.report.warning(span, "E-CONSENSUS-NOOP-COVERAGE", format!(
+                "consensus_vote on '{}' uses 1x coverage; error budget is unchanged",
+                source_name
+            ));
+        }
+        Some(ProbPoolType::new(PoolState::Recovered, consensus_error_rate_percent(source_type.error_rate_percent, coverage)))
     }
 
     fn check_function(&mut self, func: &FunctionDecl) -> FunctionDecl {
@@ -906,12 +959,10 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
         Expr::SequencePool { source, profile, confirmed } => {
             Expr::SequencePool { source: sub(source), profile: *profile, confirmed: *confirmed }
         }
-        Expr::ConsensusVote { source, coverage } => Expr::ConsensusVote { source: sub(source), coverage: *coverage },
         Expr::FunctionCall { name, args } => Expr::FunctionCall {
             name: name.clone(),
             args: args.iter().map(|arg| substitute_expr(arg, binding, value)).collect(),
         },
-        Expr::Protect { data, guarantee } => Expr::Protect { data: sub(data), guarantee: guarantee.clone() },
         Expr::Variable(name) => Expr::Variable(sub(name)),
         Expr::StringLiteral(s) => Expr::StringLiteral(s.clone()),
         Expr::Number(n) => Expr::Number(*n),
@@ -1013,9 +1064,9 @@ mod tests {
                         state: PoolState::Recovered,
                         error_rate_percent: None,
                     }),
-                    expr: Expr::ConsensusVote {
-                        source: "noisy".into(),
-                        coverage: 10,
+                    expr: Expr::FunctionCall {
+                        name: "consensus_vote".into(),
+                        args: vec![Expr::Variable("noisy".into()), Expr::Number(10.0)],
                     },
                     span: Span::default(),
                 }),

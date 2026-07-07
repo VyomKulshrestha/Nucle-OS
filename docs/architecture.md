@@ -96,9 +96,33 @@ rustc-style snippet — `file:line:column`, the offending source line, and a
 as JSON, so both a CLI and a future editor integration read from one
 diagnostic shape, not two that can drift.
 
-> See [docs/grammar.md](grammar.md) for the full formal syntax reference and
+> See [docs/grammar.md](grammar.md) for the full formal syntax reference,
 > [docs/effects.md](effects.md) for the effect model — including how effects
-> propagate through function calls, not just literal operations.
+> propagate through function calls, not just literal operations — and
+> [docs/stdlib.md](stdlib.md) for `consensus_vote`/`protect`, NucleScript's
+> two built-in functions.
+
+`consensus_vote` and `protect` are ordinary `FunctionTable` entries
+(`stdlib::builtin_functions`), not separate AST nodes with their own
+hardcoded type-checking/effect logic. The parser still accepts their
+existing keyword-sugar surface syntax (`consensus_vote(source, coverage:
+N)`, `protect data for guarantee`) but desugars both directly to
+`Expr::FunctionCall` at parse time, so arity checking, effect propagation,
+and "did you mean X?" suggestions all flow through the exact same path a
+call to a user-defined `fn` does — `effects::function_table` seeds a
+program's function table from the built-ins before overlaying its own `fn`
+declarations, and `typeck::TypeChecker::lookup_function` does the same for
+type-checking. `consensus_vote`'s actual return type still needs one
+narrow, explicit intrinsic-recognition branch
+(`TypeChecker::infer_consensus_vote`), because its result genuinely
+depends on its *argument values* (the source binding's inferred error
+rate, the requested coverage) — a real compiler-level computation no
+fixed declared signature could express, not something Step 4/6's shared
+function-call machinery skipped by accident.
+`simulate`/`synthesize`/`sequence` stay as dedicated grammar forms rather
+than joining the stdlib, since their `confirm hardware` effect-
+confirmation semantics are load-bearing enough to want a real grammar
+production of their own.
 
 A TextMate grammar for `.nsl` files lives at
 `editors/vscode/nuclescript/syntaxes/nuclescript.tmLanguage.json`, derived

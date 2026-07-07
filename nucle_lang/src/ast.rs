@@ -240,9 +240,15 @@ pub enum Expr {
         profile: Profile,
         confirmed: bool,
     },
-    ConsensusVote { source: String, coverage: usize },
+    /// A call to a user-defined `fn`, or to a built-in like
+    /// `consensus_vote`/`protect` -- both are ordinary `FunctionTable`
+    /// entries (see `stdlib::builtin_functions`), resolved through the
+    /// exact same lookup, so there's only ever this one call
+    /// representation, not a separate AST node per built-in. The parser
+    /// still accepts `consensus_vote(...)`'s and `protect ... for ...`'s
+    /// friendly surface syntax, desugaring both to this variant at parse
+    /// time (see `parser::parse_primary_expr`).
     FunctionCall { name: String, args: Vec<Expr> },
-    Protect { data: String, guarantee: String },
     Variable(String),
     StringLiteral(String),
     /// A bare number literal in expression position, e.g. the `5.0` in

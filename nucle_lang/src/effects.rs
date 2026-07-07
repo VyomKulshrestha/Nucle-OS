@@ -15,24 +15,27 @@ pub type FunctionTable = HashMap<String, FunctionDecl>;
 /// a fresh one per call, or the cycle guard can't see the call in progress.
 pub type ResolvingSet = HashSet<String>;
 
+/// Every function a program can call: the built-ins
+/// (`stdlib::builtin_functions`) plus whatever `fn` declarations the
+/// program itself declares. Built-ins are seeded first so a program
+/// redeclaring one of their names (unusual, but not forbidden) shadows
+/// it, the same precedence an ordinary language stdlib gives user code.
 pub fn function_table(program: &Program) -> FunctionTable {
-    program
-        .declarations
-        .iter()
-        .filter_map(|decl| match decl {
-            Declaration::Function(func) => Some((func.name.clone(), func.clone())),
-            _ => None,
-        })
-        .collect()
+    let mut table = crate::stdlib::builtin_functions();
+    table.extend(program.declarations.iter().filter_map(|decl| match decl {
+        Declaration::Function(func) => Some((func.name.clone(), func.clone())),
+        _ => None,
+    }));
+    table
 }
 
 pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, resolving: &mut ResolvingSet) -> Effect {
     match expr {
-        Expr::SimulatePool { .. } | Expr::ConsensusVote { .. } => Effect::Pure,
+        Expr::SimulatePool { .. } => Effect::Pure,
         Expr::SynthesizePool { .. } => Effect::Synthesis,
         Expr::SequencePool { .. } => Effect::Sequencing,
         Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, resolving).0,
-        Expr::Protect { .. } | Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => Effect::Pure,
+        Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => Effect::Pure,
         Expr::BinaryOp { left, right, .. } => {
             join_effects(expr_effect(left, funcs, resolving), expr_effect(right, funcs, resolving))
         }
@@ -51,10 +54,10 @@ pub fn operation_effect(operation: &Operation) -> Effect {
 
 pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, resolving: &mut ResolvingSet) -> bool {
     match expr {
-        Expr::SimulatePool { .. } | Expr::ConsensusVote { .. } => true,
+        Expr::SimulatePool { .. } => true,
         Expr::SynthesizePool { confirmed, .. } | Expr::SequencePool { confirmed, .. } => *confirmed,
         Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, resolving).1,
-        Expr::Protect { .. } | Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => true,
+        Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => true,
         Expr::BinaryOp { left, right, .. } => {
             expr_has_required_confirmation(left, funcs, resolving) && expr_has_required_confirmation(right, funcs, resolving)
         }

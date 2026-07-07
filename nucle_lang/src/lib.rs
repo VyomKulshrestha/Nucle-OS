@@ -16,6 +16,7 @@ pub mod parser;
 pub mod playground;
 pub mod probabilistic;
 pub mod sim_backend;
+pub mod stdlib;
 pub mod typeck;
 pub mod diagnostics;
 pub mod formatter;
