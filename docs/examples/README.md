@@ -23,6 +23,7 @@ nucle run docs/examples/store.nsl
 | `effect_confirmations.nsl` | Synthesis, sequencing, and destructive effect confirmations |
 | `preset_imports.nsl` | Built-in preset imports for package registry readiness |
 | `yinyang_schema.nsl` | Future codec schema parsing with current-backend compatibility warning |
+| `control_flow.nsl` | Compile-time `if`/`for`: a boolean-combined error-rate condition picking a recovery branch, and a `for` loop unrolled into a `store` |
 
 `sample_a.txt` and `sample_b.txt` are small payloads used by the examples.
 

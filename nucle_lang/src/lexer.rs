@@ -26,6 +26,20 @@ pub enum TokenKind {
     Gt,
     Lt,
     Arrow,
+    /// `==`
+    EqEq,
+    /// `!=`
+    NotEq,
+    /// `<=`
+    Le,
+    /// `>=`
+    Ge,
+    /// `&&`
+    AndAnd,
+    /// `||`
+    OrOr,
+    /// `!`
+    Bang,
     Eof,
 }
 
@@ -68,9 +82,16 @@ impl<'a> Lexer<'a> {
                 ')' => { self.bump(); TokenKind::RParen }
                 ':' => { self.bump(); TokenKind::Colon }
                 ',' => { self.bump(); TokenKind::Comma }
+                '=' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::EqEq }
                 '=' => { self.bump(); TokenKind::Eq }
+                '!' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::NotEq }
+                '!' => { self.bump(); TokenKind::Bang }
+                '>' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::Ge }
                 '>' => { self.bump(); TokenKind::Gt }
+                '<' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::Le }
                 '<' => { self.bump(); TokenKind::Lt }
+                '&' if self.peek_next() == Some('&') => { self.bump(); self.bump(); TokenKind::AndAnd }
+                '|' if self.peek_next() == Some('|') => { self.bump(); self.bump(); TokenKind::OrOr }
                 '-' if self.peek_next() == Some('>') => {
                     self.bump();
                     self.bump();

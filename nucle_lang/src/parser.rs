@@ -46,9 +46,89 @@ impl Parser {
             self.parse_delete().map(|op| Declaration::Operation(Operation::Delete(op)))
         } else if self.check_ident("pipeline") {
             self.parse_pipeline().map(Declaration::Pipeline)
+        } else if self.check_ident("if") {
+            self.parse_if().map(Declaration::If)
+        } else if self.check_ident("for") {
+            self.parse_for().map(Declaration::For)
         } else {
-            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, store, retrieve, delete, simulate, or pipeline"))
+            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, store, retrieve, delete, simulate, pipeline, if, or for"))
         }
+    }
+
+    /// `if` <expr> `{` <declaration>* `}` (`else` `{` <declaration>* `}`)?
+    fn parse_if(&mut self) -> Result<IfDecl, ParseError> {
+        let start = self.start_span();
+        self.expect_ident_text("if")?;
+        let condition = self.parse_expr()?;
+        self.expect(TokenKind::LBrace, "'{' to start if body")?;
+        let then_branch = self.parse_declaration_block()?;
+        self.expect(TokenKind::RBrace, "'}' to end if body")?;
+
+        let else_branch = if self.check_ident("else") {
+            self.advance();
+            self.expect(TokenKind::LBrace, "'{' to start else body")?;
+            let declarations = self.parse_declaration_block()?;
+            self.expect(TokenKind::RBrace, "'}' to end else body")?;
+            Some(declarations)
+        } else {
+            None
+        };
+
+        Ok(IfDecl { condition, then_branch, else_branch, span: self.span_since(start) })
+    }
+
+    /// `for` Identifier `in` `[` (Identifier | StringLiteral) (',' ...)* `]` `{` <declaration>* `}`
+    fn parse_for(&mut self) -> Result<ForDecl, ParseError> {
+        let start = self.start_span();
+        self.expect_ident_text("for")?;
+        let binding = self.expect_ident_any("loop binding name")?;
+        self.expect_ident_text("in")?;
+        let items = self.parse_ident_or_string_list()?;
+        self.expect(TokenKind::LBrace, "'{' to start for body")?;
+        let body = self.parse_declaration_block()?;
+        self.expect(TokenKind::RBrace, "'}' to end for body")?;
+        Ok(ForDecl { binding, items, body, span: self.span_since(start) })
+    }
+
+    /// Shared by `if`/`for`/function bodies: zero or more declarations up
+    /// to (but not consuming) the closing `}`, skipping stray commas the
+    /// same way `parse_program`/`parse_function_decl` already do.
+    fn parse_declaration_block(&mut self) -> Result<Vec<Declaration>, ParseError> {
+        let mut declarations = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            if self.consume_comma() {
+                continue;
+            }
+            declarations.push(self.parse_declaration()?);
+        }
+        Ok(declarations)
+    }
+
+    /// `[` (Identifier | StringLiteral) (',' ...)* `]` or a single bare
+    /// item -- mirrors `parse_string_list`'s "bracketed list or singleton"
+    /// shape but also accepts identifiers (e.g. pool names), collapsing
+    /// both into `String` per `ForDecl::items`.
+    fn parse_ident_or_string_list(&mut self) -> Result<Vec<String>, ParseError> {
+        let parse_item = |p: &mut Self| -> Result<String, ParseError> {
+            if p.check(TokenKind::String(String::new())) {
+                p.expect_string("for-loop item")
+            } else {
+                p.expect_ident_any("for-loop item")
+            }
+        };
+        if !self.check(TokenKind::LBracket) {
+            return Ok(vec![parse_item(self)?]);
+        }
+        self.expect(TokenKind::LBracket, "'[' to start item list")?;
+        let mut values = Vec::new();
+        while !self.check(TokenKind::RBracket) {
+            values.push(parse_item(self)?);
+            if !self.consume_comma() && !self.check(TokenKind::RBracket) {
+                return Err(self.error_here("expected ',' or ']' in item list"));
+            }
+        }
+        self.expect(TokenKind::RBracket, "']' after item list")?;
+        Ok(values)
     }
 
     fn parse_function_decl(&mut self) -> Result<FunctionDecl, ParseError> {
@@ -251,7 +331,81 @@ impl Parser {
         }
     }
 
+    /// Top-level expression entry point: precedence-climbing over the new
+    /// boolean/comparison operators, bottoming out at `parse_primary_expr`
+    /// (the pre-existing keyword-dispatch logic, unchanged) for anything
+    /// that isn't one of them. Every existing call site keeps calling
+    /// `parse_expr()`, so a program using none of the new operators parses
+    /// identically to before -- this is purely additive.
+    ///
+    /// Precedence, loosest to tightest: `||`, `&&`, unary `!`, then a
+    /// single (non-chaining) comparison, then a primary expression. There
+    /// is no arithmetic (`+`/`-`/`*`/`/`) -- NucleScript's only numeric
+    /// operands today are literal numbers and a probabilistic pool
+    /// binding's inferred error rate (see `typeck::resolve_numeric`), and
+    /// nothing yet needs to combine those beyond comparing them.
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+        self.parse_or_expr()
+    }
+
+    fn parse_or_expr(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_and_expr()?;
+        while self.check(TokenKind::OrOr) {
+            self.advance();
+            let right = self.parse_and_expr()?;
+            left = Expr::BinaryOp { op: BinOp::Or, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn parse_and_expr(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_not_expr()?;
+        while self.check(TokenKind::AndAnd) {
+            self.advance();
+            let right = self.parse_not_expr()?;
+            left = Expr::BinaryOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn parse_not_expr(&mut self) -> Result<Expr, ParseError> {
+        if self.check(TokenKind::Bang) {
+            self.advance();
+            let inner = self.parse_not_expr()?;
+            return Ok(Expr::Not(Box::new(inner)));
+        }
+        self.parse_comparison_expr()
+    }
+
+    fn parse_comparison_expr(&mut self) -> Result<Expr, ParseError> {
+        let left = self.parse_primary_expr()?;
+        let op = if self.check(TokenKind::EqEq) {
+            BinOp::Eq
+        } else if self.check(TokenKind::NotEq) {
+            BinOp::Ne
+        } else if self.check(TokenKind::Le) {
+            BinOp::Le
+        } else if self.check(TokenKind::Ge) {
+            BinOp::Ge
+        } else if self.check(TokenKind::Lt) {
+            BinOp::Lt
+        } else if self.check(TokenKind::Gt) {
+            BinOp::Gt
+        } else {
+            return Ok(left);
+        };
+        self.advance();
+        let right = self.parse_primary_expr()?;
+        Ok(Expr::BinaryOp { op, left: Box::new(left), right: Box::new(right) })
+    }
+
+    fn parse_primary_expr(&mut self) -> Result<Expr, ParseError> {
+        if self.check(TokenKind::LParen) {
+            self.advance();
+            let inner = self.parse_expr()?;
+            self.expect(TokenKind::RParen, "')' to close parenthesized expression")?;
+            return Ok(inner);
+        }
         if self.check_ident("simulate") {
             self.advance();
             let pool = self.expect_ident_any("pool name")?;
@@ -315,6 +469,10 @@ impl Parser {
         } else if self.check(TokenKind::String(String::new())) {
             let val = self.expect_string("string literal")?;
             Ok(Expr::StringLiteral(val))
+        } else if self.check(TokenKind::Number(String::new())) {
+            let raw = self.expect_number("number literal")?;
+            let value = raw.parse::<f64>().map_err(|_| self.error_previous(format!("invalid number literal '{}'", raw)))?;
+            Ok(Expr::Number(value))
         } else {
             Err(self.error_here("expected expression"))
         }

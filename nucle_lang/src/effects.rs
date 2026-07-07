@@ -32,7 +32,11 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, resolving: &mut Resolving
         Expr::SynthesizePool { .. } => Effect::Synthesis,
         Expr::SequencePool { .. } => Effect::Sequencing,
         Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, resolving).0,
-        Expr::Protect { .. } | Expr::Variable(_) | Expr::StringLiteral(_) => Effect::Pure,
+        Expr::Protect { .. } | Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => Effect::Pure,
+        Expr::BinaryOp { left, right, .. } => {
+            join_effects(expr_effect(left, funcs, resolving), expr_effect(right, funcs, resolving))
+        }
+        Expr::Not(inner) => expr_effect(inner, funcs, resolving),
     }
 }
 
@@ -50,7 +54,11 @@ pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, resolv
         Expr::SimulatePool { .. } | Expr::ConsensusVote { .. } => true,
         Expr::SynthesizePool { confirmed, .. } | Expr::SequencePool { confirmed, .. } => *confirmed,
         Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, resolving).1,
-        Expr::Protect { .. } | Expr::Variable(_) | Expr::StringLiteral(_) => true,
+        Expr::Protect { .. } | Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => true,
+        Expr::BinaryOp { left, right, .. } => {
+            expr_has_required_confirmation(left, funcs, resolving) && expr_has_required_confirmation(right, funcs, resolving)
+        }
+        Expr::Not(inner) => expr_has_required_confirmation(inner, funcs, resolving),
     }
 }
 
@@ -220,6 +228,44 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, resolving: &m
             confirmation_required: false,
             confirmed: true,
         },
+        // `if`/`for` are resolved away by `typeck::check_and_desugar` before
+        // codegen ever runs, but effect classification can still see the
+        // pre-desugared form (e.g. via `nucle-cli explain` on raw source),
+        // so this joins across every branch/the loop body conservatively --
+        // a function's effect is the worst case over anything it might run.
+        Declaration::If(if_decl) => {
+            let mut joint_effect = Effect::Pure;
+            let mut req = false;
+            let mut conf = true;
+            let branches = if_decl.then_branch.iter().chain(if_decl.else_branch.iter().flatten());
+            for inner in branches {
+                let info = decl_effect_info(inner, funcs, resolving);
+                joint_effect = join_effects(joint_effect, info.effect);
+                if info.confirmation_required {
+                    req = true;
+                    if !info.confirmed {
+                        conf = false;
+                    }
+                }
+            }
+            DeclEffect { name: "if".into(), kind: "if".into(), effect: joint_effect, confirmation_required: req, confirmed: conf }
+        }
+        Declaration::For(for_decl) => {
+            let mut joint_effect = Effect::Pure;
+            let mut req = false;
+            let mut conf = true;
+            for inner in &for_decl.body {
+                let info = decl_effect_info(inner, funcs, resolving);
+                joint_effect = join_effects(joint_effect, info.effect);
+                if info.confirmation_required {
+                    req = true;
+                    if !info.confirmed {
+                        conf = false;
+                    }
+                }
+            }
+            DeclEffect { name: for_decl.binding.clone(), kind: "for".into(), effect: joint_effect, confirmation_required: req, confirmed: conf }
+        }
     }
 }
 

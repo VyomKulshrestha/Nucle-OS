@@ -82,7 +82,19 @@ impl fmt::Display for DiagnosticLevel {
 }
 
 pub fn check_program(program: &Program) -> TypeReport {
-    check_program_with_symbols(program).0
+    check_and_desugar(program).0
+}
+
+/// Type-checks `program` and resolves every `if`/`for` away, producing a
+/// plain, control-flow-free `Program` -- `codegen`/`middle`/`sim_backend`
+/// consume this output, never the original `program`, so they never need
+/// to know `Declaration::If`/`Declaration::For` exist. See `IfDecl`'s and
+/// `ForDecl`'s doc comments in `ast.rs` for why this is a compile-time
+/// desugaring pass rather than runtime branching.
+pub fn check_and_desugar(program: &Program) -> (TypeReport, Program) {
+    let mut checker = TypeChecker::default();
+    let desugared = checker.check(program);
+    (checker.report, desugared)
 }
 
 /// Same check as `check_program`, but also returns every top-level
@@ -95,7 +107,7 @@ pub fn check_program(program: &Program) -> TypeReport {
 /// without a second, per-scope symbol table design.
 pub fn check_program_with_symbols(program: &Program) -> (TypeReport, SymbolTable) {
     let mut checker = TypeChecker::default();
-    checker.check(program);
+    let _ = checker.check(program);
     let symbols = SymbolTable {
         pools: checker.pools,
         functions: checker.functions,
@@ -130,24 +142,166 @@ struct TypeChecker {
 }
 
 impl TypeChecker {
-    fn check(&mut self, program: &Program) {
+    /// Type-checks every declaration and returns the desugared program:
+    /// each `Declaration::If`/`Declaration::For` is replaced by the
+    /// declarations of its resolved branch/unrolled iterations, so the
+    /// result never contains either variant.
+    fn check(&mut self, program: &Program) -> Program {
+        let mut declarations = Vec::new();
         for declaration in &program.declarations {
-            self.check_declaration_single(declaration);
+            declarations.extend(self.check_declaration_single(declaration));
+        }
+        Program { declarations }
+    }
+
+    /// Checks one declaration and returns its desugared form: every
+    /// variant except `If`/`For` type-checks itself and passes through
+    /// unchanged (as a one-element `Vec`); `If`/`For` expand into zero or
+    /// more declarations from their resolved branch/unrolled body. A
+    /// nested `Function`'s body is recursively desugared the same way, so
+    /// control flow inside a function body is resolved too.
+    fn check_declaration_single(&mut self, declaration: &Declaration) -> Vec<Declaration> {
+        match declaration {
+            Declaration::Import(import) => {
+                self.check_import(import);
+                vec![declaration.clone()]
+            }
+            Declaration::Pool(pool) => {
+                self.check_pool(pool);
+                vec![declaration.clone()]
+            }
+            Declaration::Strand(strand) => {
+                self.check_strand(strand);
+                vec![declaration.clone()]
+            }
+            Declaration::Sequence(sequence) => {
+                self.check_sequence(sequence);
+                vec![declaration.clone()]
+            }
+            Declaration::Let(binding) => {
+                self.check_let(binding);
+                vec![declaration.clone()]
+            }
+            Declaration::Operation(Operation::Store(store)) => {
+                self.check_store(store);
+                vec![declaration.clone()]
+            }
+            Declaration::Operation(Operation::Retrieve(retrieve)) => {
+                self.check_retrieve(retrieve);
+                vec![declaration.clone()]
+            }
+            Declaration::Operation(Operation::Delete(delete)) => {
+                self.check_delete(delete);
+                vec![declaration.clone()]
+            }
+            Declaration::Pipeline(pipeline) => {
+                self.check_pipeline(pipeline);
+                vec![declaration.clone()]
+            }
+            Declaration::Function(func) => vec![Declaration::Function(self.check_function(func))],
+            Declaration::If(if_decl) => self.check_if(if_decl),
+            Declaration::For(for_decl) => self.check_for(for_decl),
         }
     }
 
-    fn check_declaration_single(&mut self, declaration: &Declaration) {
-        match declaration {
-            Declaration::Import(import) => self.check_import(import),
-            Declaration::Pool(pool) => self.check_pool(pool),
-            Declaration::Strand(strand) => self.check_strand(strand),
-            Declaration::Sequence(sequence) => self.check_sequence(sequence),
-            Declaration::Let(binding) => self.check_let(binding),
-            Declaration::Operation(Operation::Store(store)) => self.check_store(store),
-            Declaration::Operation(Operation::Retrieve(retrieve)) => self.check_retrieve(retrieve),
-            Declaration::Operation(Operation::Delete(delete)) => self.check_delete(delete),
-            Declaration::Pipeline(pipeline) => self.check_pipeline(pipeline),
-            Declaration::Function(func) => self.check_function(func),
+    /// Evaluates `condition` at compile time and type-checks only the
+    /// taken branch (the untaken branch is never checked at all, matching
+    /// `#[cfg(...)]` more than a runtime `if` -- see `IfDecl`'s doc
+    /// comment). Returns that branch's desugared declarations, or an empty
+    /// `Vec` if `condition` couldn't be evaluated (the error is already
+    /// recorded by `eval_condition`).
+    fn check_if(&mut self, if_decl: &IfDecl) -> Vec<Declaration> {
+        let Some(taken) = self.eval_condition(&if_decl.condition, if_decl.span) else {
+            return Vec::new();
+        };
+        let branch: &[Declaration] = if taken {
+            &if_decl.then_branch
+        } else {
+            if_decl.else_branch.as_deref().unwrap_or(&[])
+        };
+        let mut out = Vec::new();
+        for decl in branch {
+            out.extend(self.check_declaration_single(decl));
+        }
+        out
+    }
+
+    /// Unrolls the loop by substituting `binding` with each item's literal
+    /// value in a fresh copy of `body`, type-checking each copy
+    /// independently -- see `ForDecl`'s doc comment.
+    fn check_for(&mut self, for_decl: &ForDecl) -> Vec<Declaration> {
+        let mut out = Vec::new();
+        for item in &for_decl.items {
+            for body_decl in &for_decl.body {
+                let substituted = substitute_declaration(body_decl, &for_decl.binding, item);
+                out.extend(self.check_declaration_single(&substituted));
+            }
+        }
+        out
+    }
+
+    /// Resolves a numeric operand in an `if` condition: either a literal
+    /// number, or (the deliberate coercion this design relies on so
+    /// conditions can inspect "the pool's observed error rate" without
+    /// inventing general field-access syntax) a probabilistic pool
+    /// binding's name, which resolves to its inferred `error_rate_percent`.
+    fn eval_numeric(&mut self, expr: &Expr, span: Span) -> Option<f64> {
+        match expr {
+            Expr::Number(value) => Some(*value),
+            Expr::Variable(name) => {
+                if let Some(pool) = self.pool_bindings.get(name) {
+                    Some(pool.error_rate_percent)
+                } else {
+                    let suggestion = self.suggest_pool_name(name);
+                    self.report.error(span, "E-IF-CONDITION-UNDECLARED", format!(
+                        "condition references undeclared probabilistic pool binding '{}'{}",
+                        name, did_you_mean(suggestion)
+                    ));
+                    None
+                }
+            }
+            _ => {
+                self.report.error(span, "E-IF-CONDITION-NOT-NUMERIC", "expected a number or a probabilistic pool binding's error rate");
+                None
+            }
+        }
+    }
+
+    /// Evaluates an `if`/loop-free boolean expression to a concrete
+    /// `bool` at type-check time -- `condition` must reduce entirely to
+    /// comparisons/`&&`/`||`/`!` over numbers and pool bindings, since
+    /// there is no runtime to defer evaluation to.
+    fn eval_condition(&mut self, expr: &Expr, span: Span) -> Option<bool> {
+        match expr {
+            Expr::BinaryOp { op: BinOp::And, left, right } => {
+                let left = self.eval_condition(left, span);
+                let right = self.eval_condition(right, span);
+                Some(left? && right?)
+            }
+            Expr::BinaryOp { op: BinOp::Or, left, right } => {
+                let left = self.eval_condition(left, span);
+                let right = self.eval_condition(right, span);
+                Some(left? || right?)
+            }
+            Expr::BinaryOp { op, left, right } => {
+                let left = self.eval_numeric(left, span);
+                let right = self.eval_numeric(right, span);
+                let (left, right) = (left?, right?);
+                Some(match op {
+                    BinOp::Eq => (left - right).abs() < f64::EPSILON,
+                    BinOp::Ne => (left - right).abs() >= f64::EPSILON,
+                    BinOp::Lt => left < right,
+                    BinOp::Gt => left > right,
+                    BinOp::Le => left <= right,
+                    BinOp::Ge => left >= right,
+                    BinOp::And | BinOp::Or => unreachable!("handled above"),
+                })
+            }
+            Expr::Not(inner) => self.eval_condition(inner, span).map(|value| !value),
+            _ => {
+                self.report.error(span, "E-IF-CONDITION-NOT-BOOLEAN", "if condition must be a comparison, or a boolean combination of comparisons using && / || / !");
+                None
+            }
         }
     }
 
@@ -346,7 +500,11 @@ impl TypeChecker {
                     None
                 }
             }
-            Expr::StringLiteral(_) => None,
+            // These never produce a `Pool<...>` value -- they only ever
+            // appear as the plain string/boolean/numeric operands of an
+            // `if` condition (see `eval_condition`/`eval_numeric`), which
+            // is evaluated separately and doesn't route through here.
+            Expr::StringLiteral(_) | Expr::Number(_) | Expr::BinaryOp { .. } | Expr::Not(_) => None,
         }
     }
 
@@ -364,10 +522,10 @@ impl TypeChecker {
         suggest_name(target, &candidates)
     }
 
-    fn check_function(&mut self, func: &FunctionDecl) {
+    fn check_function(&mut self, func: &FunctionDecl) -> FunctionDecl {
         if self.functions.contains_key(&func.name) {
             self.report.error(func.span, "E-FUNCTION-DUPLICATE", format!("function '{}' is declared more than once", func.name));
-            return;
+            return func.clone();
         }
         self.functions.insert(func.name.clone(), func.clone());
 
@@ -405,8 +563,9 @@ impl TypeChecker {
             }
         }
 
+        let mut desugared_body = Vec::new();
         for decl in &func.body {
-            body_checker.check_declaration_single(decl);
+            desugared_body.extend(body_checker.check_declaration_single(decl));
         }
 
         // Return-type validation: the language has no explicit `return`
@@ -419,7 +578,7 @@ impl TypeChecker {
         // there's no reliable inferred value to compare against without
         // inventing semantics the AST doesn't otherwise support.
         if let TypeExpr::Pool(expected) = &func.return_type {
-            match func.body.last() {
+            match desugared_body.last() {
                 Some(Declaration::Let(last_binding)) => {
                     match body_checker.pool_bindings.get(&last_binding.name) {
                         Some(actual) => {
@@ -448,6 +607,14 @@ impl TypeChecker {
         }
 
         self.report.diagnostics.extend(body_checker.report.diagnostics);
+
+        FunctionDecl {
+            name: func.name.clone(),
+            params: func.params.clone(),
+            return_type: func.return_type.clone(),
+            body: desugared_body,
+            span: func.span,
+        }
     }
 
     fn check_strand(&mut self, strand: &StrandDecl) {
@@ -659,6 +826,101 @@ fn did_you_mean(suggestion: Option<String>) -> String {
     match suggestion {
         Some(name) => format!(" (did you mean '{}'?)", name),
         None => String::new(),
+    }
+}
+
+/// Substitutes every bare occurrence of `binding` (a pool name, file
+/// variable, or `Expr::Variable`) with `value` inside a single `for`-loop
+/// body declaration -- how `TypeChecker::check_for` "unrolls" a loop: one
+/// substituted copy per item, each checked independently as if
+/// hand-written. Declarations that carry no identifier fields at all
+/// (`Import`/`Pool`/`Strand`/`Sequence`/`Pipeline`/`Function`) pass through
+/// unchanged -- a loop is only useful for repeating operations/bindings
+/// that reference the loop variable, and those are the variants handled
+/// below.
+fn substitute_declaration(decl: &Declaration, binding: &str, value: &str) -> Declaration {
+    let sub = |s: &str| -> String { if s == binding { value.to_string() } else { s.to_string() } };
+    match decl {
+        Declaration::Let(d) => Declaration::Let(LetDecl {
+            name: d.name.clone(),
+            annotation: d.annotation.clone(),
+            expr: substitute_expr(&d.expr, binding, value),
+            span: d.span,
+        }),
+        Declaration::Operation(Operation::Store(op)) => Declaration::Operation(Operation::Store(StoreOp {
+            simulate: op.simulate,
+            file: sub(&op.file),
+            pool: sub(&op.pool),
+            options: op.options.clone(),
+            span: op.span,
+        })),
+        Declaration::Operation(Operation::Retrieve(op)) => Declaration::Operation(Operation::Retrieve(RetrieveOp {
+            pool: sub(&op.pool),
+            query: op.query.clone(),
+            span: op.span,
+        })),
+        Declaration::Operation(Operation::Delete(op)) => Declaration::Operation(Operation::Delete(DeleteOp {
+            file: sub(&op.file),
+            pool: sub(&op.pool),
+            confirmed: op.confirmed,
+            span: op.span,
+        })),
+        Declaration::If(d) => Declaration::If(IfDecl {
+            condition: substitute_expr(&d.condition, binding, value),
+            then_branch: d.then_branch.iter().map(|inner| substitute_declaration(inner, binding, value)).collect(),
+            else_branch: d
+                .else_branch
+                .as_ref()
+                .map(|branch| branch.iter().map(|inner| substitute_declaration(inner, binding, value)).collect()),
+            span: d.span,
+        }),
+        Declaration::For(d) => Declaration::For(ForDecl {
+            binding: d.binding.clone(),
+            items: d.items.iter().map(|item| sub(item)).collect(),
+            // An inner loop reusing the same binding name shadows the
+            // outer one within its own body, matching ordinary lexical
+            // scoping -- don't substitute through it.
+            body: if d.binding == binding {
+                d.body.clone()
+            } else {
+                d.body.iter().map(|inner| substitute_declaration(inner, binding, value)).collect()
+            },
+            span: d.span,
+        }),
+        Declaration::Import(_)
+        | Declaration::Pool(_)
+        | Declaration::Strand(_)
+        | Declaration::Sequence(_)
+        | Declaration::Pipeline(_)
+        | Declaration::Function(_) => decl.clone(),
+    }
+}
+
+fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
+    let sub = |s: &str| -> String { if s == binding { value.to_string() } else { s.to_string() } };
+    match expr {
+        Expr::SimulatePool { pool, profile } => Expr::SimulatePool { pool: sub(pool), profile: *profile },
+        Expr::SynthesizePool { source, profile, confirmed } => {
+            Expr::SynthesizePool { source: sub(source), profile: *profile, confirmed: *confirmed }
+        }
+        Expr::SequencePool { source, profile, confirmed } => {
+            Expr::SequencePool { source: sub(source), profile: *profile, confirmed: *confirmed }
+        }
+        Expr::ConsensusVote { source, coverage } => Expr::ConsensusVote { source: sub(source), coverage: *coverage },
+        Expr::FunctionCall { name, args } => Expr::FunctionCall {
+            name: name.clone(),
+            args: args.iter().map(|arg| substitute_expr(arg, binding, value)).collect(),
+        },
+        Expr::Protect { data, guarantee } => Expr::Protect { data: sub(data), guarantee: guarantee.clone() },
+        Expr::Variable(name) => Expr::Variable(sub(name)),
+        Expr::StringLiteral(s) => Expr::StringLiteral(s.clone()),
+        Expr::Number(n) => Expr::Number(*n),
+        Expr::BinaryOp { op, left, right } => Expr::BinaryOp {
+            op: *op,
+            left: Box::new(substitute_expr(left, binding, value)),
+            right: Box::new(substitute_expr(right, binding, value)),
+        },
+        Expr::Not(inner) => Expr::Not(Box::new(substitute_expr(inner, binding, value))),
     }
 }
 

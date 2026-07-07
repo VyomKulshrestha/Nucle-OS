@@ -43,6 +43,8 @@ pub enum Declaration {
     Operation(Operation),
     Pipeline(PipelineDecl),
     Function(FunctionDecl),
+    If(IfDecl),
+    For(ForDecl),
 }
 
 impl Declaration {
@@ -59,8 +61,58 @@ impl Declaration {
             Declaration::Operation(op) => op.span(),
             Declaration::Pipeline(d) => d.span,
             Declaration::Function(d) => d.span,
+            Declaration::If(d) => d.span,
+            Declaration::For(d) => d.span,
         }
     }
+}
+
+/// `if condition { ... } else { ... }` -- resolved at compile time, not a
+/// runtime branch: NucleScript's execution model is "compile a static
+/// plan, then run it," and `condition` is always evaluable from
+/// already-known probabilistic pool types, so there's no need to invent
+/// runtime branching to support it. `typeck::check_program` evaluates
+/// `condition` once, type-checks and keeps *only* the taken branch
+/// (extending the enclosing scope, the same way a function's parameters
+/// extend its body's scope) and produces a `Program` with every `If`
+/// already resolved away -- `codegen`/`middle`/`sim_backend` never see
+/// this variant. This mirrors Rust's `#[cfg(...)]` more than a runtime
+/// `if`: the untaken branch is not type-checked at all, not merely
+/// skipped at "runtime".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IfDecl {
+    pub condition: Expr,
+    pub then_branch: Vec<Declaration>,
+    pub else_branch: Option<Vec<Declaration>>,
+    pub span: Span,
+}
+
+/// `for binding in [item, ...] { ... }` -- always over a literal,
+/// statically-known list (of identifiers and/or string literals, matching
+/// the same "StringLiteral | Identifier -> one String" convention
+/// `StoreOp`/`DeleteOp`/etc. already use), never an open-ended `while`.
+/// Resolved by `typeck::check_program` via substitution: `binding` is
+/// textually replaced by each item's value in a fresh copy of `body`,
+/// each copy is type-checked and concatenated into the output program --
+/// same "compile-time construct, not runtime" reasoning as `IfDecl`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForDecl {
+    pub binding: String,
+    pub items: Vec<String>,
+    pub body: Vec<Declaration>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BinOp {
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -193,6 +245,13 @@ pub enum Expr {
     Protect { data: String, guarantee: String },
     Variable(String),
     StringLiteral(String),
+    /// A bare number literal in expression position, e.g. the `5.0` in
+    /// `noisy > 5.0`. Distinct from the multiplier/percent/size-in-bytes
+    /// literal forms parsed contextually elsewhere in the grammar
+    /// (`3x`, `99.5%`, `10MB`) -- this is a plain, suffix-free number.
+    Number(f64),
+    BinaryOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },
+    Not(Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

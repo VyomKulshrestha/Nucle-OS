@@ -1,0 +1,24 @@
+// `if`/`for` are resolved at compile time: the type checker evaluates the
+// condition once and keeps only the taken branch, and unrolls the loop by
+// substituting the binding with each item -- see docs/grammar.md's
+// "Control Flow (if / for)" section.
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+
+// `noisy` resolves to its inferred error-rate percent (0.35) in this
+// numeric comparison: "if the pool's observed error rate exceeds 0.1%,
+// recover with higher coverage; otherwise a light pass is enough."
+if noisy > 0.1 && noisy < 5.0 {
+    let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+} else {
+    let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 2x)
+}
+
+for target in [archive] {
+    store "sample_a.txt" into target { redundancy: 4x, tag: ["control-flow-demo"] }
+}

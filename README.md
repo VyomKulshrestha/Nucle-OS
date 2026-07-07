@@ -489,6 +489,27 @@ let reads: Pool<Illumina, 0.35%> = sequence strands via Illumina confirm hardwar
 delete "old_archive.bin" from archive confirm physical_key
 ```
 
+`if`/`for` and comparison/boolean operators (`==`, `!=`, `<`, `>`, `<=`, `>=`,
+`&&`, `||`, `!`) let a program branch on a pool's inferred error rate or repeat
+an operation over a list of pool names, without hand-duplicating blocks. Both
+are resolved entirely at **compile time** — the type checker evaluates the
+condition once and keeps only the taken branch, and unrolls a `for` by
+substitution — so the compiled plan itself never contains a branch or loop:
+
+```nuclescript
+let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+
+if noisy > 0.1 {
+    let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+} else {
+    let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 2x)
+}
+
+for target in [archive] {
+    store "sample_a.txt" into target { redundancy: 4x }
+}
+```
+
 For ecosystem growth, the compiler also exposes stable integration surfaces:
 built-in preset imports, a serializable playground analysis API, and hardware
 bridge request extraction for effectful plans.
@@ -543,6 +564,7 @@ Current NucleScript result summary:
 | `docs/examples/probabilistic_recovery.nsl` | - | - | - | - | - | - | - | Compile-time error-budget propagation |
 | `docs/examples/effect_confirmations.nsl` | - | - | - | - | - | - | - | Effect confirmation and planning |
 | `docs/examples/preset_imports.nsl` | - | - | - | - | - | - | - | Built-in preset import validation |
+| `docs/examples/control_flow.nsl` | 31 B | 2 | 4 | 6 | 3012 nt | 502 nt | 3.00× | Compile-time `if`/`for` desugaring, then stored via VFS |
 
 Compiler diagnostics are surfaced before execution. For example,
 `docs/examples/critical_redundancy_warning.nsl` warns when critical data uses
@@ -752,10 +774,10 @@ nucle agent "pool status"
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 71 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests |
+| `nucle_lang` | 78 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls and `if`/`for` branches), compile-time `if`/`for` desugaring with comparison/boolean operators, MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
-| **Total** | **342 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **349 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

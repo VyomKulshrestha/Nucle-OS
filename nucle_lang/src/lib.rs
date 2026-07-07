@@ -147,22 +147,22 @@ pub fn check_source_file(path: impl AsRef<Path>) -> Result<CheckReport, CompileE
 pub fn compile(source: &str) -> Result<CompiledPlan, CompileError> {
     let tokens = Lexer::new(source).tokenize()?;
     let program = Parser::new(tokens).parse_program()?;
-    let report = typeck::check_program(&program);
+    let (report, desugared) = typeck::check_and_desugar(&program);
     if report.has_errors() {
         return Err(CompileError::Type(report));
     }
-    Ok(codegen::compile_program(program, report))
+    Ok(codegen::compile_program(desugared, report))
 }
 
 /// Compile source text into a no-hardware simulation plan.
 pub fn compile_for_simulation(source: &str) -> Result<SimulationPlan, CompileError> {
     let tokens = Lexer::new(source).tokenize()?;
     let program = Parser::new(tokens).parse_program()?;
-    let report = typeck::check_program(&program);
+    let (report, desugared) = typeck::check_and_desugar(&program);
     if report.has_errors() {
         return Err(CompileError::Type(report));
     }
-    Ok(sim_backend::compile_simulation(program, report))
+    Ok(sim_backend::compile_simulation(desugared, report))
 }
 
 /// Compile and execute a NucleScript source file against a fresh in-memory NucleOS instance.

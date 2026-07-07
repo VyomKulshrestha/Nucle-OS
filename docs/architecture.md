@@ -39,7 +39,8 @@ Dependencies flow strictly downward. No layer ever imports from a layer above it
 NucleScript source (.nsl)
     → lexer
     → parser / AST
-    → semantic + biological constraint checks
+    → semantic + biological constraint checks, including
+      compile-time if/for desugaring (typeck::check_and_desugar)
     → bio-aware MIR
     → redundancy/profile optimizer
     → VFS backend or simulation backend
@@ -48,16 +49,30 @@ NucleScript source (.nsl)
 
 The compiler currently supports declarative pool definitions, store/retrieve
 operations, simulation options, pipeline programs, DNA-native `Sequence`
-literals such as `seq"ATCGATCG-GCTAGCTA"`, and probabilistic pool annotations
-such as `Pool<Illumina, 0.35%>`. Sequence literals are validated at compile
-time for DNA alphabet, GC balance, homopolymer length, and hairpin-prone
-palindromes. Probabilistic pool bindings are checked for profile/state
-compatibility and propagate an error budget through consensus recovery.
-Effect checking classifies operations as `Pure`, `Synthesis`, `Sequencing`, or
+literals such as `seq"ATCGATCG-GCTAGCTA"`, probabilistic pool annotations
+such as `Pool<Illumina, 0.35%>`, and compile-time `if`/`for` control flow
+with comparison/boolean operators (`==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`,
+`||`, `!`). Sequence literals are validated at compile time for DNA
+alphabet, GC balance, homopolymer length, and hairpin-prone palindromes.
+Probabilistic pool bindings are checked for profile/state compatibility and
+propagate an error budget through consensus recovery. Effect checking
+classifies operations as `Pure`, `Synthesis`, `Sequencing`, or
 `Destructive`; hardware effects require `confirm hardware`, and destructive
 effects require `confirm physical_key`. The MIR optimizer raises insufficient
 redundancy for the selected profile and coverage before either executable VFS
 lowering or no-hardware simulation planning.
+
+`if`/`for` are resolved entirely inside `typeck::check_and_desugar`, before
+any of that MIR/optimizer/backend machinery runs — NucleScript's execution
+model is "compile a static plan, then run it," so there is no runtime branch
+or loop anywhere in a compiled program. `check_and_desugar` evaluates each
+`if` condition once and keeps only the taken branch (the untaken branch is
+never type-checked, closer to `#[cfg(...)]` than a real conditional), and
+unrolls each `for` by substituting the loop binding with every item in its
+literal list. The result is a plain, control-flow-free `Program` — `middle`,
+`codegen`, and `sim_backend` never see an `if`/`for` node at all. See
+[docs/grammar.md](grammar.md#control-flow-if--for) for the full semantics
+and a worked example.
 
 The language layer now exposes ecosystem-facing integration points:
 

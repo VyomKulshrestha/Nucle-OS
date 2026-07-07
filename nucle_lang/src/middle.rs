@@ -120,7 +120,16 @@ pub fn lower_program(program: &Program) -> MirProgram {
                     ops.push(op);
                 }
             }
-            Declaration::Import(_) | Declaration::Strand(_) | Declaration::Sequence(_) | Declaration::Function(_) => {}
+            // `if`/`for` never reach here in the real `compile`/`compile_for_simulation`
+            // pipeline -- `typeck::check_and_desugar` resolves them into their taken
+            // branch/unrolled body first. This arm only matters for callers (tests,
+            // `nucle-cli explain`) that lower a raw, pre-desugared `Program` directly.
+            Declaration::Import(_)
+            | Declaration::Strand(_)
+            | Declaration::Sequence(_)
+            | Declaration::Function(_)
+            | Declaration::If(_)
+            | Declaration::For(_) => {}
         }
     }
 
@@ -181,7 +190,12 @@ fn infer_binding(
             ))
         }
         Expr::Variable(name) => bindings.get(name).cloned(),
-        Expr::FunctionCall { .. } | Expr::Protect { .. } | Expr::StringLiteral(_) => None,
+        Expr::FunctionCall { .. }
+        | Expr::Protect { .. }
+        | Expr::StringLiteral(_)
+        | Expr::Number(_)
+        | Expr::BinaryOp { .. }
+        | Expr::Not(_) => None,
     }
 }
 

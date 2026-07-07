@@ -127,6 +127,16 @@ Codes are grouped by which declaration/operation they check, matching
 
 **Fix:** declare the target pool, or filter on an indexed field.
 
+## Control flow (`if` / `for`)
+
+| Code | Level | Meaning |
+|------|-------|---------|
+| `E-IF-CONDITION-NOT-BOOLEAN` | error | An `if` condition isn't a comparison or a `&&`/`\|\|`/`!` combination of comparisons — e.g. a bare pool binding with no comparison operator. `if`/`for` are resolved entirely at compile time (see [`grammar.md`](grammar.md#control-flow-if--for)), so the condition must reduce to a concrete `bool` during type checking. |
+| `E-IF-CONDITION-NOT-NUMERIC` | error | One side of a comparison inside an `if` condition isn't a number literal or a probabilistic pool binding's name. |
+| `E-IF-CONDITION-UNDECLARED` | error | A comparison inside an `if` condition references a pool binding name that isn't declared. Includes a "did you mean X?" suggestion. |
+
+**Fix:** rewrite the condition as a comparison (`binding > 0.5`) or boolean combination of comparisons, ensure both sides of every comparison are a number literal or a declared probabilistic pool binding, and fix any typo'd binding name.
+
 ## Pipelines
 
 | Code | Level | Meaning |

@@ -82,7 +82,7 @@
       "patterns": [
         {
           "name": "keyword.control.nuclescript",
-          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for)\\b"
+          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in)\\b"
         }
       ]
     },
@@ -127,8 +127,14 @@
           "match": "->"
         },
         {
+          "comment": "multi-character comparison forms must be listed as alternatives here (not as separate, later patterns) so they win over the single-character '<'/'>' match at the same position",
           "name": "keyword.operator.comparison.nuclescript",
-          "match": "[<>]"
+          "match": "==|!=|<=|>=|[<>]"
+        },
+        {
+          "comment": "&&/||/! -- '!' alone only matches here when it isn't part of '!=', which the comparison pattern above already claims",
+          "name": "keyword.operator.logical.nuclescript",
+          "match": "&&|\\|\\||!"
         },
         {
           "name": "keyword.operator.assignment.nuclescript",
