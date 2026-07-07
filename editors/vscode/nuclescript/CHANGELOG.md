@@ -6,6 +6,11 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 ## [Unreleased]
 
+- **`Format Document` / format-on-save** (`src/formatProvider.ts`) —
+  NucleScript's one canonical style, applied by shelling out to
+  `nucle-cli fmt -` over stdin. New `nuclescript.cliPath` setting (default
+  `nucle-cli`, looked up on `PATH`) points the extension at the CLI
+  binary; unlike `nucle-lsp` there's no download fallback for it yet.
 - Marketplace packaging groundwork: bundled icon, this changelog, and a
   `nucle-lsp` binary auto-download step (`src/serverDownload.ts`) so an
   installed-from-marketplace extension doesn't require a local Rust

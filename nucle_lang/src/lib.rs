@@ -18,12 +18,14 @@ pub mod probabilistic;
 pub mod sim_backend;
 pub mod typeck;
 pub mod diagnostics;
+pub mod formatter;
 
 use std::fmt;
 use std::path::Path;
 
 pub use ast::*;
 pub use codegen::{execute_program, CompiledPlan, ExecutionReport, VfsCall};
+pub use formatter::{format_source, is_formatted, FormatError};
 pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
 pub use playground::{analyze_source, PlaygroundDiagnostic, PlaygroundReport};

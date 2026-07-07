@@ -24,6 +24,7 @@
 #                   ^ source.nuclescript string.quoted.double.nuclescript
 #                    ^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
 #                                     ^ source.nuclescript string.quoted.double.nuclescript
+>
 >let primer_p2: Sequence = seq"GCTAGCTA-ATCGATCG"
 #^^^ source.nuclescript keyword.control.nuclescript
 #   ^ source.nuclescript

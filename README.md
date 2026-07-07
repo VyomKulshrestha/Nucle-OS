@@ -736,6 +736,12 @@ nucle check docs/examples/store.nsl --json
 # Explain effect summary and optimizer decisions in plain language
 nucle explain docs/examples/critical_redundancy_warning.nsl
 
+# Format a NucleScript source file in its one canonical style (gofmt-style,
+# zero configuration). Prints to stdout by default.
+nucle fmt docs/examples/store.nsl
+nucle fmt docs/examples/store.nsl --write     # rewrite the file in place
+nucle fmt docs/examples/store.nsl --check     # exit non-zero if not already formatted (for CI)
+
 # Show an optimized no-hardware NucleScript plan
 nucle plan docs/examples/probabilistic_recovery.nsl
 
@@ -772,12 +778,13 @@ nucle agent "pool status"
 | `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
 | `nucle_ecc` | 39 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
-| `nucle_vfs` | 50 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips |
+| `nucle_vfs` | 50 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 78 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls and `if`/`for` branches), compile-time `if`/`for` desugaring with comparison/boolean operators, MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests |
+| `nucle_lang` | 89 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls and `if`/`for` branches), compile-time `if`/`for` desugaring with comparison/boolean operators, canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
-| **Total** | **349 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
+| **Total** | **365 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

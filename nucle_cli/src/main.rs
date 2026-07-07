@@ -173,6 +173,20 @@ enum Commands {
         source: String,
     },
 
+    /// Format a NucleScript source file in its one canonical style
+    Fmt {
+        /// NucleScript source file to format, or '-' to read from stdin
+        /// (stdin mode always prints to stdout; --check/--write don't apply)
+        source: String,
+        /// Exit non-zero if the file isn't already canonically formatted,
+        /// without changing it -- for CI
+        #[arg(long)]
+        check: bool,
+        /// Rewrite the file in place instead of printing to stdout
+        #[arg(long)]
+        write: bool,
+    },
+
     /// Run a NucleScript source file (.nsl)
     Run {
         /// NucleScript source file to compile and execute
@@ -278,6 +292,7 @@ fn main() {
         }
         Commands::Check { source, json } => cmd_check(&source, cli.json || json),
         Commands::Explain { source } => cmd_explain(&source),
+        Commands::Fmt { source, check, write } => cmd_fmt(&source, check, write),
         Commands::Run { source } => cmd_run(&source),
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
@@ -930,6 +945,73 @@ fn cmd_explain(source: &str) {
 
     let explanation = nucle_lang::diagnostics::generate_explanation(&notes, &summary);
     println!("{}", explanation);
+}
+
+fn cmd_fmt(source: &str, check: bool, write: bool) {
+    // `-` reads the buffer to format from stdin instead of a file --
+    // what the VS Code extension's format-on-save provider uses, since
+    // it must format the in-memory (possibly unsaved) document content,
+    // not whatever is currently on disk. There is no file to write back
+    // to in that mode.
+    let is_stdin = source == "-";
+    if is_stdin && write {
+        eprintln!("--write cannot be used when formatting stdin ('-'): there is no file to write to");
+        std::process::exit(1);
+    }
+
+    let source_content = if is_stdin {
+        let mut buffer = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer) {
+            eprintln!("Error reading stdin: {}", e);
+            std::process::exit(1);
+        }
+        buffer
+    } else {
+        match std::fs::read_to_string(source) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("Error reading file '{}': {}", source, e);
+                std::process::exit(1);
+            }
+        }
+    };
+
+    let formatted = match nucle_lang::format_source(&source_content) {
+        Ok(formatted) => formatted,
+        Err(e) => {
+            eprintln!("Format failed: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    if is_stdin {
+        print!("{}", formatted);
+        return;
+    }
+
+    if check {
+        if formatted == source_content {
+            println!("{} is already formatted", source);
+        } else {
+            eprintln!("{} is not formatted; run `nucle fmt --write {}` to fix", source, source);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if write {
+        if formatted == source_content {
+            println!("{} is already formatted", source);
+        } else if let Err(e) = std::fs::write(source, &formatted) {
+            eprintln!("Error writing file '{}': {}", source, e);
+            std::process::exit(1);
+        } else {
+            println!("Formatted {}", source);
+        }
+        return;
+    }
+
+    print!("{}", formatted);
 }
 
 fn cmd_run(source: &str) {

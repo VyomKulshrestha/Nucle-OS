@@ -6,7 +6,9 @@ pool archive: DnaPool {
 }
 
 let strands: Pool<Twist, 0.03%> = synthesise archive via Twist confirm hardware
+
 let reads: Pool<Illumina, 0.35%> = sequence strands via Illumina confirm hardware
+
 let recovered: Pool<Recovered> = consensus_vote(reads, coverage: 10x)
 
 delete "old_archive.bin" from archive confirm physical_key

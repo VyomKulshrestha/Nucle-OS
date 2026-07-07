@@ -6,11 +6,14 @@
 
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
+import { registerFormattingProvider } from "./formatProvider";
 import { resolveServerPath } from "./serverDownload";
 
 let client: LanguageClient | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  registerFormattingProvider(context);
+
   let command: string;
   try {
     command = await resolveServerPath(context);

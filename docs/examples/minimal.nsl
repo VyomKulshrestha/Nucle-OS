@@ -6,4 +6,5 @@ pool archive: DnaPool {
 }
 
 store "sample_a.txt" into archive
+
 retrieve from archive

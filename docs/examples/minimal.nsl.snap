@@ -37,6 +37,7 @@
 #                     ^^^^ source.nuclescript keyword.control.nuclescript
 #                         ^ source.nuclescript
 #                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+>
 >retrieve from archive
 #^^^^^^^^ source.nuclescript keyword.control.nuclescript
 #        ^ source.nuclescript

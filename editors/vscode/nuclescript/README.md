@@ -27,6 +27,15 @@ below for exactly what's left and why it isn't automated.
   - **Go to definition** — jump from a use site to its declaration.
   - **Document outline** — every top-level symbol, for the editor's
     breadcrumb/outline view.
+- **`Format Document` / format-on-save** (`src/formatProvider.ts`) —
+  NucleScript's one canonical, zero-configuration style (`gofmt`-style),
+  applied by shelling out to `nucle-cli fmt -` (the buffer's current
+  content, piped over stdin, so it formats unsaved edits too — not
+  reimplemented in TypeScript). Enable it the normal VS Code way, e.g. a
+  workspace setting:
+  ```json
+  { "[nuclescript]": { "editor.formatOnSave": true } }
+  ```
 
 Not included yet: autocomplete, rename/refactoring, or semantic-token
 highlighting (the TextMate grammar already covers highlighting) — see the
@@ -52,6 +61,16 @@ The extension needs a `nucle-lsp` binary, resolved in this order (see
    install work without a local Rust toolchain. If no prebuilt binary
    exists for your platform, the extension shows an error telling you to
    build one and point `nuclescript.serverPath` at it.
+
+Formatting needs a separate `nucle-cli` binary (the language server and
+CLI are different executables), resolved via the `nuclescript.cliPath`
+setting (default `nucle-cli`, looked up on `PATH`). Build it with:
+```bash
+cargo build -p nucle_cli --release
+```
+Unlike `nucle-lsp`, there's currently no download fallback for
+`nucle-cli` — if it isn't on `PATH`, `Format Document` shows an error
+naming the setting to point at it instead.
 
 ## Installing locally
 

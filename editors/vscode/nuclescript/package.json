@@ -45,6 +45,11 @@
           "type": "string",
           "default": "nucle-lsp",
           "description": "Path to the nucle-lsp binary. Defaults to looking it up on PATH first (e.g. a local `cargo build` for development); if not found there, a prebuilt binary for your platform is downloaded once from GitHub Releases and cached. Set an absolute path to override both."
+        },
+        "nuclescript.cliPath": {
+          "type": "string",
+          "default": "nucle-cli",
+          "description": "Path to the nucle-cli binary, used for `Format Document`/format-on-save (`nucle fmt`). Defaults to looking it up on PATH (e.g. a local `cargo build -p nucle_cli`). Set an absolute path if it isn't on PATH."
         }
       }
     }

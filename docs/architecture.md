@@ -152,6 +152,39 @@ install (no local Rust toolchain) needs. Publishing the extension itself
 remains a deliberate manual step (registering a Marketplace publisher,
 adding a `VSCE_PAT` repository secret) — see the extension's own README.
 
+### Formatter (`nucle fmt`)
+
+One canonical, zero-configuration style, `gofmt`-style: there is exactly
+one way `nucle fmt` writes a given program, so a diff never contains
+unrelated whitespace churn. `nucle_lang::formatter::format_source`
+deliberately does **not** print from the AST — the AST drops comments and
+normalizes literal spellings by design (see `ast.rs`), so printing from it
+would silently delete every `//` comment. Instead it re-renders the real
+token stream (`lexer::Lexer`, which already carries each token's
+line/column from Step 0's span work) plus a small dedicated scan for
+comments (the one thing tokenizing discards), consulting the parsed
+`Program` for exactly one thing: each top-level declaration's start line,
+used to force exactly one blank line between top-level declarations
+without splitting a leading doc comment away from the declaration it
+documents.
+
+Concretely, formatting keeps every line-break the input already has (no
+line-wrapping heuristics for this first cut, matching how `gofmt` leaves
+most multi-line constructs alone), recomputes indentation from bracket-
+nesting depth, recomputes inter-token spacing from a small rule table, and
+collapses blank-line runs to at most one everywhere. Because every rule is
+a pure function of (tokens, comments, which line-breaks exist), running
+the formatter on its own output is a no-op by construction, verified by
+`nucle_lang/tests/formatter.rs` sweeping every file under `docs/examples/`
+for both idempotence and "formatting never changes the parsed program."
+`nucle_cli`'s `Fmt` command exposes `--check` (CI, exits non-zero if not
+already formatted) and `--write` (rewrite in place); `nucle fmt -` reads
+the buffer to format from stdin instead of a file, which is what the VS
+Code extension's `Format Document`/format-on-save provider
+(`src/formatProvider.ts`) shells out to, so there's exactly one formatting
+implementation rather than a second one duplicated in TypeScript or the
+language server.
+
 ## NucleScript Playground
 
 The interactive playground has three tabs, each backed by the real engine rather than reimplemented or mocked logic, and ships two ways from the same source:

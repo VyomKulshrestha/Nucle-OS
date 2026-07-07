@@ -52,6 +52,7 @@
 #                                                               ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
 #                                                                      ^ source.nuclescript
 #                                                                       ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>
 >let reads: Pool<Illumina, 0.35%> = sequence strands via Illumina confirm hardware
 #^^^ source.nuclescript keyword.control.nuclescript
 #   ^ source.nuclescript
@@ -77,6 +78,7 @@
 #                                                                 ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
 #                                                                        ^ source.nuclescript
 #                                                                         ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>
 >let recovered: Pool<Recovered> = consensus_vote(reads, coverage: 10x)
 #^^^ source.nuclescript keyword.control.nuclescript
 #   ^ source.nuclescript
