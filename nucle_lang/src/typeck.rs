@@ -17,16 +17,18 @@ pub struct TypeReport {
 }
 
 impl TypeReport {
-    /// Record an error at `span` -- every check site has some declaration
-    /// or operation in scope to take a span from, so this is the only
-    /// entry point: there is no spanless fallback, on purpose, so a new
-    /// check can't silently skip attaching a source location.
-    pub fn error(&mut self, span: Span, message: impl Into<String>) {
-        self.diagnostics.push(Diagnostic { level: DiagnosticLevel::Error, message: message.into(), span });
+    /// Record an error at `span` with a stable `code` -- every check site
+    /// has some declaration or operation in scope to take a span from, and
+    /// a fixed mnemonic identifying which check fired, so this is the only
+    /// entry point: there is no fallback that omits either, on purpose, so
+    /// a new check can't silently ship without something `docs/errors.md`
+    /// and an editor can link to.
+    pub fn error(&mut self, span: Span, code: &'static str, message: impl Into<String>) {
+        self.diagnostics.push(Diagnostic { level: DiagnosticLevel::Error, code: code.to_string(), message: message.into(), span });
     }
 
-    pub fn warning(&mut self, span: Span, message: impl Into<String>) {
-        self.diagnostics.push(Diagnostic { level: DiagnosticLevel::Warning, message: message.into(), span });
+    pub fn warning(&mut self, span: Span, code: &'static str, message: impl Into<String>) {
+        self.diagnostics.push(Diagnostic { level: DiagnosticLevel::Warning, code: code.to_string(), message: message.into(), span });
     }
 
     pub fn has_errors(&self) -> bool {
@@ -44,7 +46,7 @@ impl fmt::Display for TypeReport {
             return write!(f, "no diagnostics");
         }
         for diagnostic in &self.diagnostics {
-            writeln!(f, "{}:{}: {}: {}", diagnostic.span.line, diagnostic.span.column, diagnostic.level, diagnostic.message)?;
+            writeln!(f, "{}:{}: {} [{}]: {}", diagnostic.span.line, diagnostic.span.column, diagnostic.level, diagnostic.code, diagnostic.message)?;
         }
         Ok(())
     }
@@ -53,9 +55,15 @@ impl fmt::Display for TypeReport {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,
+    #[serde(default = "default_code")]
+    pub code: String,
     pub message: String,
     #[serde(default)]
     pub span: Span,
+}
+
+fn default_code() -> String {
+    "E-UNKNOWN".to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -113,17 +121,17 @@ impl TypeChecker {
 
     fn check_pool(&mut self, pool: &PoolDecl) {
         if self.pools.contains_key(&pool.name) {
-            self.report.error(pool.span, format!("pool '{}' is declared more than once", pool.name));
+            self.report.error(pool.span, "E-POOL-DUPLICATE", format!("pool '{}' is declared more than once", pool.name));
             return;
         }
         if pool.redundancy == 1 {
-            self.report.warning(pool.span, format!(
+            self.report.warning(pool.span, "E-POOL-LOW-REDUNDANCY", format!(
                 "pool '{}' has 1x redundancy; critical files should use at least 2x",
                 pool.name
             ));
         }
         if pool.codec == Codec::Fountain {
-            self.report.warning(pool.span, format!(
+            self.report.warning(pool.span, "E-POOL-UNSUPPORTED-CODEC", format!(
                 "pool '{}' declares Fountain codec; the VFS backend only executes Ternary and YinYang end-to-end",
                 pool.name
             ));
@@ -133,14 +141,16 @@ impl TypeChecker {
 
     fn check_import(&mut self, import: &ImportDecl) {
         if !package_exists(&import.source) {
-            self.report.error(import.span, format!("import source '{}' is not available", import.source));
+            self.report.error(import.span, "E-IMPORT-UNKNOWN-SOURCE", format!("import source '{}' is not available", import.source));
             return;
         }
         for item in &import.items {
             if resolve_import(&import.source, &item.name).is_none() {
-                self.report.error(import.span, format!(
-                    "import '{}' is not exported by '{}'",
-                    item.name, import.source
+                let candidates = crate::package::exported_names(&import.source);
+                let suggestion = suggest_name(&item.name, &candidates);
+                self.report.error(import.span, "E-IMPORT-UNKNOWN-ITEM", format!(
+                    "import '{}' is not exported by '{}'{}",
+                    item.name, import.source, did_you_mean(suggestion)
                 ));
             }
         }
@@ -148,7 +158,7 @@ impl TypeChecker {
 
     fn check_let(&mut self, binding: &LetDecl) {
         if self.pool_bindings.contains_key(&binding.name) || self.pools.contains_key(&binding.name) {
-            self.report.error(binding.span, format!("binding '{}' is declared more than once", binding.name));
+            self.report.error(binding.span, "E-BINDING-DUPLICATE", format!("binding '{}' is declared more than once", binding.name));
             return;
         }
 
@@ -161,7 +171,7 @@ impl TypeChecker {
         // exactly that case.
         let effect = expr_effect(&binding.expr, &self.functions, &mut std::collections::HashSet::new());
         if !expr_has_required_confirmation(&binding.expr, &self.functions, &mut std::collections::HashSet::new()) {
-            self.report.error(binding.span, format!(
+            self.report.error(binding.span, "E-SYNTHESIS-UNCONFIRMED", format!(
                 "binding '{}' has {} effect and requires explicit hardware confirmation",
                 binding.name, effect
             ));
@@ -175,7 +185,7 @@ impl TypeChecker {
         match &binding.annotation {
             TypeExpr::Pool(expected) => {
                 if expected.state != inferred.state {
-                    self.report.error(binding.span, format!(
+                    self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
                         "binding '{}' is annotated as Pool<{}> but expression produces Pool<{}>",
                         binding.name, expected.state, inferred.state
                     ));
@@ -183,7 +193,7 @@ impl TypeChecker {
                 if let Some(expected_error) = expected.error_rate_percent {
                     let delta = (expected_error - inferred.error_rate_percent).abs();
                     if delta > 0.01 {
-                        self.report.error(binding.span, format!(
+                        self.report.error(binding.span, "E-BINDING-ERROR-RATE-MISMATCH", format!(
                             "binding '{}' is annotated with {:.4}% error but expression infers {:.4}%",
                             binding.name, expected_error, inferred.error_rate_percent
                         ));
@@ -205,7 +215,8 @@ impl TypeChecker {
         match expr {
             Expr::SimulatePool { pool, profile } => {
                 if !self.pools.contains_key(pool) && !self.pool_bindings.contains_key(pool) {
-                    self.report.error(span, format!("simulate source pool '{}' is not declared", pool));
+                    let suggestion = self.suggest_pool_name(pool);
+                    self.report.error(span, "E-POOL-UNDECLARED", format!("simulate source pool '{}' is not declared{}", pool, did_you_mean(suggestion)));
                     return None;
                 }
                 Some(ProbPoolType::new(
@@ -215,7 +226,8 @@ impl TypeChecker {
             }
             Expr::SynthesizePool { source, profile, .. } => {
                 if !self.pools.contains_key(source) && !self.pool_bindings.contains_key(source) {
-                    self.report.error(span, format!("synthesise source pool '{}' is not declared", source));
+                    let suggestion = self.suggest_pool_name(source);
+                    self.report.error(span, "E-POOL-UNDECLARED", format!("synthesise source pool '{}' is not declared{}", source, did_you_mean(suggestion)));
                     return None;
                 }
                 Some(ProbPoolType::new(
@@ -225,7 +237,8 @@ impl TypeChecker {
             }
             Expr::SequencePool { source, profile, .. } => {
                 if !self.pools.contains_key(source) && !self.pool_bindings.contains_key(source) {
-                    self.report.error(span, format!("sequence source pool '{}' is not declared", source));
+                    let suggestion = self.suggest_pool_name(source);
+                    self.report.error(span, "E-POOL-UNDECLARED", format!("sequence source pool '{}' is not declared{}", source, did_you_mean(suggestion)));
                     return None;
                 }
                 Some(ProbPoolType::new(
@@ -235,11 +248,11 @@ impl TypeChecker {
             }
             Expr::ConsensusVote { source, coverage } => {
                 let Some(source_type) = self.pool_bindings.get(source).cloned() else {
-                    self.report.error(span, format!("consensus_vote source '{}' is not a probabilistic pool binding", source));
+                    self.report.error(span, "E-CONSENSUS-INVALID-SOURCE", format!("consensus_vote source '{}' is not a probabilistic pool binding", source));
                     return None;
                 };
                 if *coverage == 1 {
-                    self.report.warning(span, format!(
+                    self.report.warning(span, "E-CONSENSUS-NOOP-COVERAGE", format!(
                         "consensus_vote on '{}' uses 1x coverage; error budget is unchanged",
                         source
                     ));
@@ -251,11 +264,13 @@ impl TypeChecker {
             }
             Expr::FunctionCall { name, args } => {
                 let Some(func) = self.functions.get(name).cloned() else {
-                    self.report.error(span, format!("function '{}' is undeclared", name));
+                    let candidates: Vec<String> = self.functions.keys().cloned().collect();
+                    let suggestion = suggest_name(name, &candidates);
+                    self.report.error(span, "E-FUNCTION-UNDECLARED", format!("function '{}' is undeclared{}", name, did_you_mean(suggestion)));
                     return None;
                 };
                 if func.params.len() != args.len() {
-                    self.report.error(span, format!(
+                    self.report.error(span, "E-FUNCTION-ARITY", format!(
                         "function '{}' expects {} arguments, but {} were provided",
                         name, func.params.len(), args.len()
                     ));
@@ -264,14 +279,14 @@ impl TypeChecker {
                 for (param, arg) in func.params.iter().zip(args.iter()) {
                     if let TypeExpr::Pool(expected_pool) = &param.ty {
                         let Some(inferred_arg) = self.infer_expr(arg, span) else {
-                            self.report.error(span, format!(
+                            self.report.error(span, "E-ARG-TYPE-INVALID", format!(
                                 "argument for parameter '{}' must be a Pool type",
                                 param.name
                             ));
                             continue;
                         };
                         if expected_pool.state != inferred_arg.state {
-                            self.report.error(span, format!(
+                            self.report.error(span, "E-ARG-TYPE-MISMATCH", format!(
                                 "argument for parameter '{}' expects Pool<{}>, but got Pool<{}>",
                                 param.name, expected_pool.state, inferred_arg.state
                             ));
@@ -293,7 +308,8 @@ impl TypeChecker {
                 } else if self.strands.contains(name) || self.sequences.contains(name) || self.pools.contains_key(name) {
                     None
                 } else {
-                    self.report.error(span, format!("variable '{}' is undeclared", name));
+                    let suggestion = self.suggest_pool_name(name);
+                    self.report.error(span, "E-VARIABLE-UNDECLARED", format!("variable '{}' is undeclared{}", name, did_you_mean(suggestion)));
                     None
                 }
             }
@@ -301,9 +317,23 @@ impl TypeChecker {
         }
     }
 
+    /// "did you mean X?" candidate for an unresolved pool/variable name --
+    /// pools, pool bindings, strands, and sequences are all valid targets
+    /// for `Expr::Variable`/pool-source references, so the suggestion
+    /// pool spans all of them, not just one namespace.
+    fn suggest_pool_name(&self, target: &str) -> Option<String> {
+        let candidates: Vec<String> = self.pools.keys()
+            .chain(self.pool_bindings.keys())
+            .chain(self.strands.iter())
+            .chain(self.sequences.iter())
+            .cloned()
+            .collect();
+        suggest_name(target, &candidates)
+    }
+
     fn check_function(&mut self, func: &FunctionDecl) {
         if self.functions.contains_key(&func.name) {
-            self.report.error(func.span, format!("function '{}' is declared more than once", func.name));
+            self.report.error(func.span, "E-FUNCTION-DUPLICATE", format!("function '{}' is declared more than once", func.name));
             return;
         }
         self.functions.insert(func.name.clone(), func.clone());
@@ -311,7 +341,7 @@ impl TypeChecker {
         let mut param_names = HashSet::new();
         for param in &func.params {
             if !param_names.insert(&param.name) {
-                self.report.error(func.span, format!("duplicate parameter name '{}' in function '{}'", param.name, func.name));
+                self.report.error(func.span, "E-PARAM-DUPLICATE", format!("duplicate parameter name '{}' in function '{}'", param.name, func.name));
             }
         }
 
@@ -358,14 +388,14 @@ impl TypeChecker {
                     match body_checker.pool_bindings.get(&last_binding.name) {
                         Some(actual) => {
                             if actual.state != expected.state {
-                                self.report.error(last_binding.span, format!(
+                                self.report.error(last_binding.span, "E-RETURN-TYPE-MISMATCH", format!(
                                     "function '{}' is declared to return Pool<{}> but its body produces Pool<{}>",
                                     func.name, expected.state, actual.state
                                 ));
                             }
                         }
                         None => {
-                            self.report.error(last_binding.span, format!(
+                            self.report.error(last_binding.span, "E-RETURN-TYPE-MISMATCH", format!(
                                 "function '{}' is declared to return Pool<{}> but its last binding does not produce a pool type",
                                 func.name, expected.state
                             ));
@@ -373,7 +403,7 @@ impl TypeChecker {
                     }
                 }
                 _ => {
-                    self.report.error(func.span, format!(
+                    self.report.error(func.span, "E-RETURN-TYPE-MISMATCH", format!(
                         "function '{}' is declared to return Pool<{}> but its body does not end in a binding that produces one",
                         func.name, expected.state
                     ));
@@ -386,19 +416,19 @@ impl TypeChecker {
 
     fn check_strand(&mut self, strand: &StrandDecl) {
         if !self.strands.insert(strand.name.clone()) {
-            self.report.error(strand.span, format!("strand '{}' is declared more than once", strand.name));
+            self.report.error(strand.span, "E-STRAND-DUPLICATE", format!("strand '{}' is declared more than once", strand.name));
         }
         let parsed = match DnaStrand::from_str(&strand.sequence) {
             Ok(parsed) => parsed,
             Err(err) => {
-                self.report.error(strand.span, format!("strand '{}' is not valid DNA: {}", strand.name, err));
+                self.report.error(strand.span, "E-STRAND-INVALID-DNA", format!("strand '{}' is not valid DNA: {}", strand.name, err));
                 return;
             }
         };
         let validator = ConstraintValidator::new(nuclescript_constraints());
         let result = validator.validate(&parsed);
         for violation in result.violations {
-            self.report.error(strand.span, format!(
+            self.report.error(strand.span, "E-STRAND-CONSTRAINT-VIOLATION", format!(
                 "strand '{}' violates NucleScript biological constraint: {}",
                 strand.name, violation
             ));
@@ -407,26 +437,26 @@ impl TypeChecker {
 
     fn check_sequence(&mut self, sequence: &SequenceDecl) {
         if !self.sequences.insert(sequence.name.clone()) {
-            self.report.error(sequence.span, format!("sequence '{}' is declared more than once", sequence.name));
+            self.report.error(sequence.span, "E-SEQUENCE-DUPLICATE", format!("sequence '{}' is declared more than once", sequence.name));
         }
         let normalized = match normalize_sequence_literal(&sequence.sequence) {
             Ok(normalized) => normalized,
             Err(err) => {
-                self.report.error(sequence.span, format!("sequence '{}' is not valid DNA: {}", sequence.name, err));
+                self.report.error(sequence.span, "E-SEQUENCE-INVALID-DNA", format!("sequence '{}' is not valid DNA: {}", sequence.name, err));
                 return;
             }
         };
         let parsed = match DnaStrand::from_str(&normalized) {
             Ok(parsed) => parsed,
             Err(err) => {
-                self.report.error(sequence.span, format!("sequence '{}' is not valid DNA: {}", sequence.name, err));
+                self.report.error(sequence.span, "E-SEQUENCE-INVALID-DNA", format!("sequence '{}' is not valid DNA: {}", sequence.name, err));
                 return;
             }
         };
         let validator = ConstraintValidator::new(sequence_literal_constraints());
         let result = validator.validate(&parsed);
         for violation in result.violations {
-            self.report.error(sequence.span, format!(
+            self.report.error(sequence.span, "E-SEQUENCE-CONSTRAINT-VIOLATION", format!(
                 "sequence '{}' violates NucleScript biological constraint: {}",
                 sequence.name, violation
             ));
@@ -436,7 +466,7 @@ impl TypeChecker {
     fn check_store(&mut self, store: &StoreOp) {
         let effect = operation_effect(&Operation::Store(store.clone()));
         if effect == Effect::Synthesis && !store.simulate {
-            self.report.warning(store.span, format!(
+            self.report.warning(store.span, "E-STORE-SYNTHESIS-WITHOUT-SIMULATE", format!(
                 "store '{}' has Synthesis effect; use simulate store for no-hardware execution",
                 store.file
             ));
@@ -459,12 +489,13 @@ impl TypeChecker {
                 span: store.span,
             }
         } else {
-            self.report.error(store.span, format!("store target pool '{}' is not declared", store.pool));
+            let suggestion = self.suggest_pool_name(&store.pool);
+            self.report.error(store.span, "E-STORE-POOL-UNDECLARED", format!("store target pool '{}' is not declared{}", store.pool, did_you_mean(suggestion)));
             return;
         };
         let redundancy = store.options.redundancy.unwrap_or(pool.redundancy);
         if redundancy == 1 && store.options.tags.iter().any(|tag| tag.eq_ignore_ascii_case("critical")) {
-            self.report.warning(store.span, format!(
+            self.report.warning(store.span, "E-STORE-CRITICAL-LOW-REDUNDANCY", format!(
                 "store '{}' is tagged critical but uses only 1x redundancy",
                 store.file
             ));
@@ -474,13 +505,13 @@ impl TypeChecker {
             && coverage <= 1
             && store.options.expect_recovery_gt.is_some_and(|recovery| recovery > 99.5)
         {
-            self.report.warning(store.span, format!(
+            self.report.warning(store.span, "E-STORE-UNSATISFIABLE-RECOVERY", format!(
                 "expect recovery > 99.5% is statistically unsatisfiable for Nanopore at {}x coverage",
                 coverage
             ));
         }
         if store.simulate && store.options.coverage.is_none() {
-            self.report.warning(store.span, format!(
+            self.report.warning(store.span, "E-STORE-IMPLICIT-COVERAGE", format!(
                 "simulate store '{}' uses implicit {}x coverage from redundancy",
                 store.file, coverage
             ));
@@ -489,10 +520,11 @@ impl TypeChecker {
 
     fn check_delete(&mut self, delete: &DeleteOp) {
         if !self.pools.contains_key(&delete.pool) && !self.pool_bindings.contains_key(&delete.pool) {
-            self.report.error(delete.span, format!("delete target pool '{}' is not declared", delete.pool));
+            let suggestion = self.suggest_pool_name(&delete.pool);
+            self.report.error(delete.span, "E-DELETE-POOL-UNDECLARED", format!("delete target pool '{}' is not declared{}", delete.pool, did_you_mean(suggestion)));
         }
         if !delete_has_required_confirmation(delete) {
-            self.report.error(delete.span, format!(
+            self.report.error(delete.span, "E-DELETE-UNCONFIRMED", format!(
                 "delete '{}' from '{}' has Destructive effect and requires explicit physical key confirmation",
                 delete.file, delete.pool
             ));
@@ -501,12 +533,13 @@ impl TypeChecker {
 
     fn check_retrieve(&mut self, retrieve: &RetrieveOp) {
         if !self.pools.contains_key(&retrieve.pool) && !self.pool_bindings.contains_key(&retrieve.pool) {
-            self.report.error(retrieve.span, format!("retrieve source pool '{}' is not declared", retrieve.pool));
+            let suggestion = self.suggest_pool_name(&retrieve.pool);
+            self.report.error(retrieve.span, "E-RETRIEVE-POOL-UNDECLARED", format!("retrieve source pool '{}' is not declared{}", retrieve.pool, did_you_mean(suggestion)));
         }
         for predicate in &retrieve.query {
             match predicate.field.to_ascii_lowercase().as_str() {
                 "tag" | "date" | "size" | "name" | "type" => {}
-                other => self.report.warning(retrieve.span, format!(
+                other => self.report.warning(retrieve.span, "E-RETRIEVE-UNINDEXED-FIELD", format!(
                     "query field '{}' is not indexed by the current VFS search backend",
                     other
                 )),
@@ -523,7 +556,7 @@ impl TypeChecker {
                 PipelineStep::Encode { codec, .. } => {
                     saw_encode = true;
                     if *codec == Codec::Fountain {
-                        self.report.warning(pipeline.span, format!(
+                        self.report.warning(pipeline.span, "E-PIPELINE-UNSUPPORTED-CODEC", format!(
                             "pipeline '{}' uses Fountain codec; the VFS backend only executes Ternary and YinYang end-to-end",
                             pipeline.name
                         ));
@@ -532,24 +565,64 @@ impl TypeChecker {
                 PipelineStep::Protect { redundancy } => {
                     saw_protect = true;
                     if *redundancy == 1 {
-                        self.report.warning(pipeline.span, format!("pipeline '{}' protects with only 1x redundancy", pipeline.name));
+                        self.report.warning(pipeline.span, "E-PIPELINE-LOW-REDUNDANCY", format!("pipeline '{}' protects with only 1x redundancy", pipeline.name));
                     }
                 }
                 PipelineStep::Store { pool } => {
                     saw_store = true;
                     if !self.pools.contains_key(pool) {
-                        self.report.error(pipeline.span, format!("pipeline '{}' stores into undeclared pool '{}'", pipeline.name, pool));
+                        let suggestion = self.suggest_pool_name(pool);
+                        self.report.error(pipeline.span, "E-PIPELINE-POOL-UNDECLARED", format!("pipeline '{}' stores into undeclared pool '{}'{}", pipeline.name, pool, did_you_mean(suggestion)));
                     }
                 }
                 PipelineStep::VerifyRoundtrip => {}
             }
         }
         if saw_store && !saw_encode {
-            self.report.error(pipeline.span, format!("pipeline '{}' stores data before an encode step", pipeline.name));
+            self.report.error(pipeline.span, "E-PIPELINE-STORE-BEFORE-ENCODE", format!("pipeline '{}' stores data before an encode step", pipeline.name));
         }
         if saw_store && !saw_protect {
-            self.report.warning(pipeline.span, format!("pipeline '{}' stores without an explicit protect step", pipeline.name));
+            self.report.warning(pipeline.span, "E-PIPELINE-STORE-WITHOUT-PROTECT", format!("pipeline '{}' stores without an explicit protect step", pipeline.name));
         }
+    }
+}
+
+/// Levenshtein edit distance (case-insensitive), used only for "did you
+/// mean X?" suggestions -- inputs are identifier-length strings against at
+/// most a few dozen candidates per scope, so the classic O(nm) DP table is
+/// plenty fast; no need for a fuzzy-matching crate at this scale.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.to_ascii_lowercase().chars().collect();
+    let b: Vec<char> = b.to_ascii_lowercase().chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        curr[0] = i;
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+/// The closest name to `target` among `candidates` within edit distance 2
+/// (typo-sized) -- `None` if nothing is close enough to be worth
+/// suggesting, so a "did you mean X?" never fires on a wild guess.
+fn suggest_name(target: &str, candidates: &[String]) -> Option<String> {
+    candidates
+        .iter()
+        .map(|c| (c.clone(), edit_distance(target, c)))
+        .filter(|(_, dist)| *dist <= 2 && *dist > 0)
+        .min_by_key(|(_, dist)| *dist)
+        .map(|(name, _)| name)
+}
+
+fn did_you_mean(suggestion: Option<String>) -> String {
+    match suggestion {
+        Some(name) => format!(" (did you mean '{}'?)", name),
+        None => String::new(),
     }
 }
 

@@ -33,6 +33,7 @@ fn test_check_lex_error() {
         d.level == DiagnosticLevel::Error && d.message.contains("lex error")
     });
     let diagnostic = diagnostic.expect("Expected diagnostics to contain 'lex error'");
+    assert_eq!(diagnostic.code, "E-LEX-ERROR");
     assert_ne!(diagnostic.span.line, 0, "lex error diagnostic has no real source span");
     assert!(
         line_at(src, diagnostic).contains("README.md"),
@@ -54,6 +55,7 @@ fn test_check_parse_error() {
         d.level == DiagnosticLevel::Error && d.message.contains("parse error")
     });
     let diagnostic = diagnostic.expect("Expected diagnostics to contain 'parse error'");
+    assert_eq!(diagnostic.code, "E-PARSE-ERROR");
     assert_ne!(diagnostic.span.line, 0, "parse error diagnostic has no real source span");
     assert!(
         line_at(src, diagnostic).contains("archive"),
@@ -74,6 +76,7 @@ fn test_check_type_error() {
         d.level == DiagnosticLevel::Error && (d.message.contains("is not declared") || d.message.contains("undeclared"))
     });
     let diagnostic = diagnostic.expect("Expected diagnostics to contain 'is not declared'");
+    assert_eq!(diagnostic.code, "E-STORE-POOL-UNDECLARED");
     assert_ne!(diagnostic.span.line, 0, "type error diagnostic has no real source span");
     assert!(
         line_at(src, diagnostic).contains("store"),
@@ -95,10 +98,62 @@ fn test_check_effect_confirmation_error() {
         d.level == DiagnosticLevel::Error && d.message.contains("requires explicit physical key confirmation")
     });
     let diagnostic = diagnostic.expect("Expected diagnostics to contain confirmation error");
+    assert_eq!(diagnostic.code, "E-DELETE-UNCONFIRMED");
     assert_ne!(diagnostic.span.line, 0, "effect confirmation diagnostic has no real source span");
     assert!(
         line_at(src, diagnostic).contains("delete"),
         "confirmation error span should point at the delete statement's line, got line {}: {:?}",
         diagnostic.span.line, line_at(src, diagnostic)
+    );
+}
+
+#[test]
+fn test_check_suggests_similar_pool_name_on_typo() {
+    let src = r#"
+        pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+        store "README.md" into archiv
+    "#;
+    let report = check_source(src);
+    assert!(!report.ok);
+    let diagnostic = report.diagnostics.iter().find(|d| d.code == "E-STORE-POOL-UNDECLARED");
+    let diagnostic = diagnostic.expect("Expected an E-STORE-POOL-UNDECLARED diagnostic");
+    assert!(
+        diagnostic.message.contains("did you mean 'archive'?"),
+        "Expected a same-scope near-match suggestion, got: {:?}",
+        diagnostic.message
+    );
+}
+
+#[test]
+fn test_check_suggests_similar_import_name_on_typo() {
+    let src = r#"import { medical_archiv } from "nuclescript/presets""#;
+    let report = check_source(src);
+    assert!(!report.ok);
+    let diagnostic = report.diagnostics.iter().find(|d| d.code == "E-IMPORT-UNKNOWN-ITEM");
+    let diagnostic = diagnostic.expect("Expected an E-IMPORT-UNKNOWN-ITEM diagnostic");
+    assert!(
+        diagnostic.message.contains("did you mean 'medical_archive'?"),
+        "Expected a same-scope near-match suggestion, got: {:?}",
+        diagnostic.message
+    );
+}
+
+#[test]
+fn test_check_suggests_similar_function_name_on_typo() {
+    let src = r#"
+        pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+        fn archiv_it(source: Pool<Illumina>) -> Pool<Recovered> {
+            let result: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+        }
+        let out: Pool<Recovered> = archive_it(archive)
+    "#;
+    let report = check_source(src);
+    assert!(!report.ok);
+    let diagnostic = report.diagnostics.iter().find(|d| d.code == "E-FUNCTION-UNDECLARED");
+    let diagnostic = diagnostic.expect("Expected an E-FUNCTION-UNDECLARED diagnostic");
+    assert!(
+        diagnostic.message.contains("did you mean 'archiv_it'?"),
+        "Expected a same-scope near-match suggestion, got: {:?}",
+        diagnostic.message
     );
 }

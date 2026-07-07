@@ -20,6 +20,8 @@ pub struct PlaygroundReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlaygroundDiagnostic {
     pub level: String,
+    #[serde(default)]
+    pub code: String,
     pub message: String,
     #[serde(default)]
     pub span: Span,
@@ -33,6 +35,7 @@ pub fn analyze_source(source: &str) -> PlaygroundReport {
                 ok: false,
                 diagnostics: vec![PlaygroundDiagnostic {
                     level: "error".into(),
+                    code: "E-LEX-ERROR".into(),
                     message: format!("lex error: {}", err),
                     span: Span::point(err.line, err.column),
                 }],
@@ -50,6 +53,7 @@ pub fn analyze_source(source: &str) -> PlaygroundReport {
                 ok: false,
                 diagnostics: vec![PlaygroundDiagnostic {
                     level: "error".into(),
+                    code: "E-PARSE-ERROR".into(),
                     message: format!("parse error: {}", err),
                     span: Span::point(err.line, err.column),
                 }],
@@ -69,6 +73,7 @@ pub fn analyze_source(source: &str) -> PlaygroundReport {
                 DiagnosticLevel::Error => "error".into(),
                 DiagnosticLevel::Warning => "warning".into(),
             },
+            code: diagnostic.code.clone(),
             message: diagnostic.message.clone(),
             span: diagnostic.span,
         })

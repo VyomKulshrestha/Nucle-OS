@@ -209,6 +209,17 @@ pub fn package_exists(source: &str) -> bool {
     get_registry().lock().unwrap().contains_key(source)
 }
 
+/// Every export name a package declares, for "did you mean X?" suggestions
+/// when an imported item isn't found.
+pub fn exported_names(source: &str) -> Vec<String> {
+    get_registry()
+        .lock()
+        .unwrap()
+        .get(source)
+        .map(|m| m.exports.iter().map(|e| e.name.clone()).collect())
+        .unwrap_or_default()
+}
+
 pub fn register_package(manifest: PackageManifest) {
     get_registry().lock().unwrap().insert(manifest.import_source.clone(), manifest);
 }

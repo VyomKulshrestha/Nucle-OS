@@ -887,12 +887,9 @@ fn cmd_check(source: &str, json: bool) {
         if report.ok {
             println!("Check status: OK (no errors or warnings)");
         } else {
+            let source_text = std::fs::read_to_string(source).unwrap_or_default();
             for diagnostic in &report.diagnostics {
-                if diagnostic.span.line > 0 {
-                    println!("{}:{}:{}: {}: {}", source, diagnostic.span.line, diagnostic.span.column, diagnostic.level, diagnostic.message);
-                } else {
-                    println!("{}: {}", diagnostic.level, diagnostic.message);
-                }
+                println!("{}", nucle_lang::diagnostics::render_snippet(source, &source_text, diagnostic));
             }
         }
     }

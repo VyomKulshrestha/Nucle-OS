@@ -45,6 +45,7 @@ pub fn check_source(source: &str) -> CheckReport {
                 ok: false,
                 diagnostics: vec![Diagnostic {
                     level: DiagnosticLevel::Error,
+                    code: "E-LEX-ERROR".to_string(),
                     message: format!("lex error: {}", err),
                     span: Span::point(err.line, err.column),
                 }],
@@ -59,6 +60,7 @@ pub fn check_source(source: &str) -> CheckReport {
                 ok: false,
                 diagnostics: vec![Diagnostic {
                     level: DiagnosticLevel::Error,
+                    code: "E-PARSE-ERROR".to_string(),
                     message: format!("parse error: {}", err),
                     span: Span::point(err.line, err.column),
                 }],

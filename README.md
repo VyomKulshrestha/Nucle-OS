@@ -551,13 +551,17 @@ only `1x` redundancy.
 `nucle check` runs lex → parse → typecheck without touching hardware or
 executing anything — the fast path for CI or an editor integration. Every
 diagnostic carries a real `file:line:column` (threaded from the lexer's
-token positions through the parser's AST and into the type checker — see
-[actions.md](actions.md) Step 0), not just a message with no source
-location to jump to:
+token positions through the parser's AST and into the type checker), a
+stable error code, and a rustc-style source snippet — not just a message
+with no source location to jump to. See [docs/errors.md](docs/errors.md)
+for the full list of codes:
 
 ```bash
 $ nucle check docs/examples/failures/missing_confirmation.nsl
-docs/examples/failures/missing_confirmation.nsl:11:1: error: delete 'old_archive.bin' from 'archive' has Destructive effect and requires explicit physical key confirmation
+docs/examples/failures/missing_confirmation.nsl:11:1: error [E-DELETE-UNCONFIRMED]: delete 'old_archive.bin' from 'archive' has Destructive effect and requires explicit physical key confirmation
+   |
+11 | delete "old_archive.bin" from archive
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ```
 
 `nucle explain` goes further, turning MIR optimizer notes and the program's
@@ -712,9 +716,9 @@ nucle agent "pool status"
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 66 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, `nucle check`/`nucle explain` integration tests |
+| `nucle_lang` | 69 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, `nucle check`/`nucle explain` integration tests |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
-| **Total** | **326 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **329 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

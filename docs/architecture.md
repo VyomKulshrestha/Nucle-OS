@@ -72,11 +72,14 @@ The language layer now exposes ecosystem-facing integration points:
 Every declaration/operation in the AST (`PoolDecl`, `LetDecl`, `StoreOp`, and
 so on) carries a `Span { line, column, end_line, end_column }`, threaded from
 the lexer's token positions through the parser and into every diagnostic
-`typeck::check_program` produces — `nucle check` and the playground API
-report a real `file:line:column` per error, not just a message with nothing
-to jump to. This is the foundation the editor tooling in
-[actions.md](../actions.md) builds on (syntax highlighting, then a language
-server that reuses the exact same diagnostic shape live in an editor).
+`typeck::check_program` produces. Every diagnostic also carries a stable
+`code` (see [docs/errors.md](errors.md)) and, for the most common
+undeclared-name mistakes, a "did you mean X?" suggestion via edit-distance
+matching against names actually in scope. `nucle check` renders this as a
+rustc-style snippet — `file:line:column`, the offending source line, and a
+`^^^` underline — and the playground API exposes the same structured data
+as JSON, so both a CLI and a future editor integration read from one
+diagnostic shape, not two that can drift.
 
 > See [docs/grammar.md](grammar.md) for the full formal syntax reference and
 > [docs/effects.md](effects.md) for the effect model — including how effects
