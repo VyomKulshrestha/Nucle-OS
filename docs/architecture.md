@@ -69,6 +69,15 @@ The language layer now exposes ecosystem-facing integration points:
   requests from effectful MIR so a hardware bridge can submit them without
   changing NucleScript source syntax.
 
+Every declaration/operation in the AST (`PoolDecl`, `LetDecl`, `StoreOp`, and
+so on) carries a `Span { line, column, end_line, end_column }`, threaded from
+the lexer's token positions through the parser and into every diagnostic
+`typeck::check_program` produces — `nucle check` and the playground API
+report a real `file:line:column` per error, not just a message with nothing
+to jump to. This is the foundation the editor tooling in
+[actions.md](../actions.md) builds on (syntax highlighting, then a language
+server that reuses the exact same diagnostic shape live in an editor).
+
 > See [docs/grammar.md](grammar.md) for the full formal syntax reference and
 > [docs/effects.md](effects.md) for the effect model — including how effects
 > propagate through function calls, not just literal operations.

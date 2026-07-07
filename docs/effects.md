@@ -71,9 +71,11 @@ corresponding tests (`test_calling_destructive_function_requires_confirmation`,
 ## What surfaces this
 
 - **`nucle check --json`** — every confirmation failure is a `Diagnostic`
-  with `level: "error"` in the `diagnostics` array; `ok` is `false` if any
-  exist. This is the same `typeck::check_program` pass that `nucle run`
-  and `nucle plan` use internally.
+  with `level: "error"` and a real `span: { line, column, end_line,
+  end_column }` pointing at the unconfirmed declaration, in the
+  `diagnostics` array; `ok` is `false` if any exist. This is the same
+  `typeck::check_program` pass that `nucle run` and `nucle plan` use
+  internally.
 - **`nucle explain <source.nsl>`** — prints an effect summary for every
   top-level declaration (`nucle_lang::effects::effect_summary`), including
   functions: each entry shows its effect and one of `SAFE (Pure)`,

@@ -246,7 +246,9 @@ mod tests {
                 file: "archive.bin".into(),
                 pool: "archive".into(),
                 confirmed,
+                span: Span::default(),
             }))],
+            span: Span::default(),
         }
     }
 
@@ -279,7 +281,7 @@ mod tests {
         let mut funcs = FunctionTable::new();
         funcs.insert(
             "noop".into(),
-            FunctionDecl { name: "noop".into(), params: vec![], return_type: TypeExpr::Void, body: vec![] },
+            FunctionDecl { name: "noop".into(), params: vec![], return_type: TypeExpr::Void, body: vec![], span: Span::default() },
         );
         let call = Expr::FunctionCall { name: "noop".into(), args: vec![] };
         assert_eq!(expr_effect(&call, &funcs, &mut ResolvingSet::new()), Effect::Pure);
@@ -307,7 +309,9 @@ mod tests {
                     name: "x".into(),
                     annotation: TypeExpr::Void,
                     expr: Expr::FunctionCall { name: "loop_fn".into(), args: vec![] },
+                    span: Span::default(),
                 })],
+                span: Span::default(),
             },
         );
         let call = Expr::FunctionCall { name: "loop_fn".into(), args: vec![] };

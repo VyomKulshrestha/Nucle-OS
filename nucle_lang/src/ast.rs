@@ -2,6 +2,32 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A source location range, in 1-based line/column coordinates matching
+/// `lexer::Token`. Every top-level declaration (and the operations nested
+/// inside one) carries its own `Span` so diagnostics produced anywhere in
+/// the pipeline (typeck, effects) can point back at the exact source text
+/// that caused them, instead of just naming the construct by value (e.g.
+/// "pool 'archive'") and leaving the reader to search for it.
+///
+/// `Span::default()` (all zeros) marks a synthetic node with no real
+/// source position -- used only by hand-built `Program`s in tests, never
+/// produced by the parser.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Span {
+    pub line: usize,
+    pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+impl Span {
+    /// A span covering just the single point `(line, column)` -- used
+    /// before an end position is known.
+    pub fn point(line: usize, column: usize) -> Self {
+        Self { line, column, end_line: line, end_column: column }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Program {
     pub declarations: Vec<Declaration>,
@@ -19,10 +45,30 @@ pub enum Declaration {
     Function(FunctionDecl),
 }
 
+impl Declaration {
+    /// The source span of this declaration, regardless of variant --
+    /// callers that just need "where does this diagnostic point" shouldn't
+    /// have to match on every declaration kind themselves.
+    pub fn span(&self) -> Span {
+        match self {
+            Declaration::Import(d) => d.span,
+            Declaration::Pool(d) => d.span,
+            Declaration::Strand(d) => d.span,
+            Declaration::Sequence(d) => d.span,
+            Declaration::Let(d) => d.span,
+            Declaration::Operation(op) => op.span(),
+            Declaration::Pipeline(d) => d.span,
+            Declaration::Function(d) => d.span,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImportDecl {
     pub source: String,
     pub items: Vec<ImportItem>,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,18 +83,24 @@ pub struct PoolDecl {
     pub codec: Codec,
     pub redundancy: usize,
     pub profile: Profile,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrandDecl {
     pub name: String,
     pub sequence: String,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SequenceDecl {
     pub name: String,
     pub sequence: String,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -56,6 +108,8 @@ pub struct LetDecl {
     pub name: String,
     pub annotation: TypeExpr,
     pub expr: Expr,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,6 +118,8 @@ pub struct FunctionDecl {
     pub params: Vec<FnParam>,
     pub return_type: TypeExpr,
     pub body: Vec<Declaration>,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -166,12 +222,24 @@ pub enum Operation {
     Delete(DeleteOp),
 }
 
+impl Operation {
+    pub fn span(&self) -> Span {
+        match self {
+            Operation::Store(op) => op.span,
+            Operation::Retrieve(op) => op.span,
+            Operation::Delete(op) => op.span,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoreOp {
     pub simulate: bool,
     pub file: String,
     pub pool: String,
     pub options: StoreOptions,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -186,6 +254,8 @@ pub struct StoreOptions {
 pub struct RetrieveOp {
     pub pool: String,
     pub query: Vec<QueryPredicate>,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -193,6 +263,8 @@ pub struct DeleteOp {
     pub file: String,
     pub pool: String,
     pub confirmed: bool,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -223,6 +295,8 @@ pub enum QueryValue {
 pub struct PipelineDecl {
     pub name: String,
     pub steps: Vec<PipelineStep>,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

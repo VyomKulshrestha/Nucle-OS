@@ -1,5 +1,6 @@
 //! Playground-facing compiler API.
 
+use crate::ast::Span;
 use crate::codegen;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -20,6 +21,8 @@ pub struct PlaygroundReport {
 pub struct PlaygroundDiagnostic {
     pub level: String,
     pub message: String,
+    #[serde(default)]
+    pub span: Span,
 }
 
 pub fn analyze_source(source: &str) -> PlaygroundReport {
@@ -31,6 +34,7 @@ pub fn analyze_source(source: &str) -> PlaygroundReport {
                 diagnostics: vec![PlaygroundDiagnostic {
                     level: "error".into(),
                     message: format!("lex error: {}", err),
+                    span: Span::point(err.line, err.column),
                 }],
                 simulation_steps: Vec::new(),
                 optimiser_notes: Vec::new(),
@@ -47,6 +51,7 @@ pub fn analyze_source(source: &str) -> PlaygroundReport {
                 diagnostics: vec![PlaygroundDiagnostic {
                     level: "error".into(),
                     message: format!("parse error: {}", err),
+                    span: Span::point(err.line, err.column),
                 }],
                 simulation_steps: Vec::new(),
                 optimiser_notes: Vec::new(),
@@ -65,6 +70,7 @@ pub fn analyze_source(source: &str) -> PlaygroundReport {
                 DiagnosticLevel::Warning => "warning".into(),
             },
             message: diagnostic.message.clone(),
+            span: diagnostic.span,
         })
         .collect::<Vec<_>>();
 

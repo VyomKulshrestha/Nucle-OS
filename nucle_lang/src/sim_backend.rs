@@ -178,6 +178,7 @@ mod tests {
                     codec: Codec::Ternary,
                     redundancy: 3,
                     profile: Profile::Illumina,
+                    span: Span::default(),
                 }),
                 Declaration::Let(LetDecl {
                     name: "noisy".into(),
@@ -189,6 +190,7 @@ mod tests {
                         pool: "archive".into(),
                         profile: Profile::Illumina,
                     },
+                    span: Span::default(),
                 }),
             ],
         };

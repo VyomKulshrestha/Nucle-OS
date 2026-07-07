@@ -52,6 +52,7 @@ impl Parser {
     }
 
     fn parse_function_decl(&mut self) -> Result<FunctionDecl, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("fn")?;
         let name = self.expect_ident_any("function name")?;
         self.expect(TokenKind::LParen, "'(' after function name")?;
@@ -99,10 +100,12 @@ impl Parser {
             params,
             return_type,
             body,
+            span: self.span_since(start),
         })
     }
 
     fn parse_import(&mut self) -> Result<ImportDecl, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("import")?;
         self.expect(TokenKind::LBrace, "'{' after import")?;
         let mut items = Vec::new();
@@ -122,10 +125,11 @@ impl Parser {
         self.expect(TokenKind::RBrace, "'}' after import list")?;
         self.expect_ident_text("from")?;
         let source = self.expect_string("import source")?;
-        Ok(ImportDecl { source, items })
+        Ok(ImportDecl { source, items, span: self.span_since(start) })
     }
 
     fn parse_pool(&mut self) -> Result<PoolDecl, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("pool")?;
         let name = self.expect_ident_any("pool name")?;
         self.expect(TokenKind::Colon, "':' after pool name")?;
@@ -160,30 +164,34 @@ impl Parser {
             codec: codec.ok_or_else(|| self.error_here("pool missing codec"))?,
             redundancy: redundancy.unwrap_or(1),
             profile: profile.ok_or_else(|| self.error_here("pool missing profile"))?,
+            span: self.span_since(start),
         })
     }
 
     fn parse_strand(&mut self) -> Result<StrandDecl, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("strand")?;
         let name = self.expect_ident_any("strand name")?;
         self.expect(TokenKind::Colon, "':' after strand name")?;
         self.expect_ident_text("Strand")?;
         self.expect(TokenKind::Eq, "'=' before strand literal")?;
         let sequence = self.expect_string("strand sequence")?;
-        Ok(StrandDecl { name, sequence })
+        Ok(StrandDecl { name, sequence, span: self.span_since(start) })
     }
 
     fn parse_sequence_decl(&mut self) -> Result<SequenceDecl, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("seq")?;
         let name = self.expect_ident_any("sequence name")?;
         self.expect(TokenKind::Colon, "':' after sequence name")?;
         self.expect_ident_text("Sequence")?;
         self.expect(TokenKind::Eq, "'=' before sequence literal")?;
         let sequence = self.expect_string("sequence literal")?;
-        Ok(SequenceDecl { name, sequence })
+        Ok(SequenceDecl { name, sequence, span: self.span_since(start) })
     }
 
     fn parse_let_decl(&mut self) -> Result<Declaration, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("let")?;
         let name = self.expect_ident_any("binding name")?;
         if self.check(TokenKind::Colon) {
@@ -193,17 +201,17 @@ impl Parser {
                 self.expect(TokenKind::Eq, "'=' before binding expression")?;
                 self.expect_ident_text("seq")?;
                 let sequence = self.expect_string("sequence literal")?;
-                return Ok(Declaration::Sequence(SequenceDecl { name, sequence }));
+                return Ok(Declaration::Sequence(SequenceDecl { name, sequence, span: self.span_since(start) }));
             }
             let annotation = self.parse_type_expr()?;
             self.expect(TokenKind::Eq, "'=' before binding expression")?;
             let expr = self.parse_expr()?;
-            return Ok(Declaration::Let(LetDecl { name, annotation, expr }));
+            return Ok(Declaration::Let(LetDecl { name, annotation, expr, span: self.span_since(start) }));
         }
         self.expect(TokenKind::Eq, "'=' before binding expression")?;
         self.expect_ident_text("seq")?;
         let sequence = self.expect_string("sequence literal")?;
-        Ok(Declaration::Sequence(SequenceDecl { name, sequence }))
+        Ok(Declaration::Sequence(SequenceDecl { name, sequence, span: self.span_since(start) }))
     }
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
@@ -322,6 +330,7 @@ impl Parser {
     }
 
     fn parse_store(&mut self) -> Result<StoreOp, ParseError> {
+        let start = self.start_span();
         let simulate = if self.check_ident("simulate") {
             self.advance();
             self.expect_ident_text("store")?;
@@ -342,7 +351,7 @@ impl Parser {
         } else {
             StoreOptions::default()
         };
-        Ok(StoreOp { simulate, file, pool, options })
+        Ok(StoreOp { simulate, file, pool, options, span: self.span_since(start) })
     }
 
     fn parse_store_options(&mut self) -> Result<StoreOptions, ParseError> {
@@ -371,6 +380,7 @@ impl Parser {
     }
 
     fn parse_retrieve(&mut self) -> Result<RetrieveOp, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("retrieve")?;
         self.expect_ident_text("from")?;
         let pool = self.expect_ident_any("pool name")?;
@@ -384,10 +394,11 @@ impl Parser {
             }
             self.expect(TokenKind::RBrace, "'}' after query")?;
         }
-        Ok(RetrieveOp { pool, query })
+        Ok(RetrieveOp { pool, query, span: self.span_since(start) })
     }
 
     fn parse_delete(&mut self) -> Result<DeleteOp, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("delete")?;
         let file = if self.check(TokenKind::String(String::new())) {
             self.expect_string("file path")?
@@ -397,7 +408,7 @@ impl Parser {
         self.expect_ident_text("from")?;
         let pool = self.expect_ident_any("pool name")?;
         let confirmed = self.consume_confirmation("physical_key")?;
-        Ok(DeleteOp { file, pool, confirmed })
+        Ok(DeleteOp { file, pool, confirmed, span: self.span_since(start) })
     }
 
     fn parse_query_predicate(&mut self) -> Result<QueryPredicate, ParseError> {
@@ -443,6 +454,7 @@ impl Parser {
     }
 
     fn parse_pipeline(&mut self) -> Result<PipelineDecl, ParseError> {
+        let start = self.start_span();
         self.expect_ident_text("pipeline")?;
         let name = self.expect_ident_any("pipeline name")?;
         self.expect(TokenKind::LBrace, "'{' to start pipeline")?;
@@ -476,7 +488,7 @@ impl Parser {
             self.consume_comma();
         }
         self.expect(TokenKind::RBrace, "'}' after pipeline")?;
-        Ok(PipelineDecl { name, steps })
+        Ok(PipelineDecl { name, steps, span: self.span_since(start) })
     }
 
     fn parse_string_list(&mut self) -> Result<Vec<String>, ParseError> {
@@ -568,6 +580,22 @@ impl Parser {
         } else {
             false
         }
+    }
+
+    /// Line/column of the next token, to be paired with `span_since` once
+    /// the declaration/operation that starts there has finished parsing.
+    fn start_span(&self) -> (usize, usize) {
+        let token = self.peek();
+        (token.line, token.column)
+    }
+
+    /// Build a `Span` from a `start_span()` point to the last token this
+    /// parser actually consumed -- good enough to underline "this
+    /// declaration" in an editor without needing per-character end
+    /// tracking in the lexer.
+    fn span_since(&self, start: (usize, usize)) -> Span {
+        let end = &self.tokens[self.index.saturating_sub(1)];
+        Span { line: start.0, column: start.1, end_line: end.line, end_column: end.column }
     }
 
     fn is_eof(&self) -> bool {

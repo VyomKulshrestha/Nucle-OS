@@ -111,6 +111,7 @@ mod tests {
                     codec: Codec::Ternary,
                     redundancy: 3,
                     profile: Profile::Twist,
+                    span: Span::default(),
                 }),
                 Declaration::Let(LetDecl {
                     name: "strands".into(),
@@ -123,6 +124,7 @@ mod tests {
                         profile: Profile::Twist,
                         confirmed: true,
                     },
+                    span: Span::default(),
                 }),
             ],
         };

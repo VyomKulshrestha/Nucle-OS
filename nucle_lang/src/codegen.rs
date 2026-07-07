@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn lowers_pipeline_to_store_call() {
-        let pool = PoolDecl { name: "archive".into(), codec: Codec::Ternary, redundancy: 3, profile: Profile::Illumina };
+        let pool = PoolDecl { name: "archive".into(), codec: Codec::Ternary, redundancy: 3, profile: Profile::Illumina, span: Span::default() };
         let pipeline = PipelineDecl {
             name: "backup".into(),
             steps: vec![
@@ -207,6 +207,7 @@ mod tests {
                 PipelineStep::Store { pool: "archive".into() },
                 PipelineStep::VerifyRoundtrip,
             ],
+            span: Span::default(),
         };
         let program = Program {
             declarations: vec![Declaration::Pool(pool), Declaration::Pipeline(pipeline)],

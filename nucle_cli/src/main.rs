@@ -888,7 +888,11 @@ fn cmd_check(source: &str, json: bool) {
             println!("Check status: OK (no errors or warnings)");
         } else {
             for diagnostic in &report.diagnostics {
-                println!("{}: {}", diagnostic.level, diagnostic.message);
+                if diagnostic.span.line > 0 {
+                    println!("{}:{}:{}: {}: {}", source, diagnostic.span.line, diagnostic.span.column, diagnostic.level, diagnostic.message);
+                } else {
+                    println!("{}: {}", diagnostic.level, diagnostic.message);
+                }
             }
         }
     }

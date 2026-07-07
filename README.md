@@ -549,11 +549,15 @@ Compiler diagnostics are surfaced before execution. For example,
 only `1x` redundancy.
 
 `nucle check` runs lex → parse → typecheck without touching hardware or
-executing anything — the fast path for CI or an editor integration:
+executing anything — the fast path for CI or an editor integration. Every
+diagnostic carries a real `file:line:column` (threaded from the lexer's
+token positions through the parser's AST and into the type checker — see
+[actions.md](actions.md) Step 0), not just a message with no source
+location to jump to:
 
 ```bash
 $ nucle check docs/examples/failures/missing_confirmation.nsl
-error: delete 'old_archive.bin' from 'archive' has Destructive effect and requires explicit physical key confirmation
+docs/examples/failures/missing_confirmation.nsl:11:1: error: delete 'old_archive.bin' from 'archive' has Destructive effect and requires explicit physical key confirmation
 ```
 
 `nucle explain` goes further, turning MIR optimizer notes and the program's
