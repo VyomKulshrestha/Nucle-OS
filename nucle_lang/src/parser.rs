@@ -26,36 +26,87 @@ impl Parser {
     }
 
     fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
+        // `///` doc comments immediately preceding a declaration attach to
+        // it (see `ast::PoolDecl::doc`'s doc comment) -- only `pool`/
+        // `strand`/`seq`/`fn`/`pipeline` have somewhere to put one. Every
+        // other declaration kind rejects a leading doc comment outright
+        // (`reject_doc_comment` below) rather than silently discarding
+        // it, so a `///` in the wrong place is a clear mistake to fix,
+        // not documentation that quietly went nowhere.
+        let doc = self.consume_doc_comment();
         if self.check_ident("import") {
+            self.reject_doc_comment(&doc, "import")?;
             self.parse_import().map(Declaration::Import)
         } else if self.check_ident("pool") {
-            self.parse_pool().map(Declaration::Pool)
+            self.parse_pool(doc).map(Declaration::Pool)
         } else if self.check_ident("strand") {
-            self.parse_strand().map(Declaration::Strand)
+            self.parse_strand(doc).map(Declaration::Strand)
         } else if self.check_ident("seq") {
-            self.parse_sequence_decl().map(Declaration::Sequence)
+            self.parse_sequence_decl(doc).map(Declaration::Sequence)
         } else if self.check_ident("let") {
-            self.parse_let_decl()
+            self.parse_let_decl(doc)
         } else if self.check_ident("fn") {
-            self.parse_function_decl().map(Declaration::Function)
+            self.parse_function_decl(doc).map(Declaration::Function)
         } else if self.check_ident("store") || self.check_ident("simulate") {
+            self.reject_doc_comment(&doc, "store")?;
             self.parse_store().map(|op| Declaration::Operation(Operation::Store(op)))
         } else if self.check_ident("retrieve") {
+            self.reject_doc_comment(&doc, "retrieve")?;
             self.parse_retrieve().map(|op| Declaration::Operation(Operation::Retrieve(op)))
         } else if self.check_ident("delete") {
+            self.reject_doc_comment(&doc, "delete")?;
             self.parse_delete().map(|op| Declaration::Operation(Operation::Delete(op)))
         } else if self.check_ident("assert") {
+            self.reject_doc_comment(&doc, "assert")?;
             self.parse_assert().map(|op| Declaration::Operation(Operation::Assert(op)))
         } else if self.check_ident("pipeline") {
-            self.parse_pipeline().map(Declaration::Pipeline)
+            self.parse_pipeline(doc).map(Declaration::Pipeline)
         } else if self.check_ident("if") {
+            self.reject_doc_comment(&doc, "if")?;
             self.parse_if().map(Declaration::If)
         } else if self.check_ident("for") {
+            self.reject_doc_comment(&doc, "for")?;
             self.parse_for().map(Declaration::For)
         } else if self.check_ident("test") {
+            self.reject_doc_comment(&doc, "test")?;
             self.parse_test().map(Declaration::Test)
+        } else if doc.is_some() {
+            Err(self.error_here("expected a documentable declaration (pool, strand, seq, fn, or pipeline) after a doc comment"))
         } else {
             Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, store, retrieve, delete, assert, simulate, pipeline, if, for, or test"))
+        }
+    }
+
+    /// Doc comments only attach to `pool`/`strand`/`seq`/`fn`/`pipeline`
+    /// (see `ast::PoolDecl::doc`) -- a `///` immediately before anything
+    /// else is rejected here rather than silently dropped, so it reads as
+    /// a mistake to fix, not documentation that quietly went nowhere.
+    /// `let` is handled separately (see `parse_let_decl`) since it can
+    /// desugar to a documentable `SequenceDecl` depending on which form
+    /// is written.
+    fn reject_doc_comment(&self, doc: &Option<String>, keyword: &str) -> Result<(), ParseError> {
+        if doc.is_some() {
+            Err(self.error_here(format!(
+                "doc comments can only precede pool/strand/seq/fn/pipeline declarations, not '{}'",
+                keyword
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Accumulates every consecutive `///` line into one `\n`-joined doc
+    /// string, or `None` if the next token isn't a doc comment at all.
+    fn consume_doc_comment(&mut self) -> Option<String> {
+        let mut lines = Vec::new();
+        while let TokenKind::DocComment(text) = &self.peek().kind {
+            lines.push(text.clone());
+            self.advance();
+        }
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
         }
     }
 
@@ -155,7 +206,7 @@ impl Parser {
         Ok(values)
     }
 
-    fn parse_function_decl(&mut self) -> Result<FunctionDecl, ParseError> {
+    fn parse_function_decl(&mut self, doc: Option<String>) -> Result<FunctionDecl, ParseError> {
         let start = self.start_span();
         self.expect_ident_text("fn")?;
         let name = self.expect_ident_any("function name")?;
@@ -205,6 +256,7 @@ impl Parser {
             return_type,
             body,
             span: self.span_since(start),
+            doc,
         })
     }
 
@@ -232,7 +284,7 @@ impl Parser {
         Ok(ImportDecl { source, items, span: self.span_since(start) })
     }
 
-    fn parse_pool(&mut self) -> Result<PoolDecl, ParseError> {
+    fn parse_pool(&mut self, doc: Option<String>) -> Result<PoolDecl, ParseError> {
         let start = self.start_span();
         self.expect_ident_text("pool")?;
         let name = self.expect_ident_any("pool name")?;
@@ -269,10 +321,11 @@ impl Parser {
             redundancy: redundancy.unwrap_or(1),
             profile: profile.ok_or_else(|| self.error_here("pool missing profile"))?,
             span: self.span_since(start),
+            doc,
         })
     }
 
-    fn parse_strand(&mut self) -> Result<StrandDecl, ParseError> {
+    fn parse_strand(&mut self, doc: Option<String>) -> Result<StrandDecl, ParseError> {
         let start = self.start_span();
         self.expect_ident_text("strand")?;
         let name = self.expect_ident_any("strand name")?;
@@ -280,10 +333,10 @@ impl Parser {
         self.expect_ident_text("Strand")?;
         self.expect(TokenKind::Eq, "'=' before strand literal")?;
         let sequence = self.expect_string("strand sequence")?;
-        Ok(StrandDecl { name, sequence, span: self.span_since(start) })
+        Ok(StrandDecl { name, sequence, span: self.span_since(start), doc })
     }
 
-    fn parse_sequence_decl(&mut self) -> Result<SequenceDecl, ParseError> {
+    fn parse_sequence_decl(&mut self, doc: Option<String>) -> Result<SequenceDecl, ParseError> {
         let start = self.start_span();
         self.expect_ident_text("seq")?;
         let name = self.expect_ident_any("sequence name")?;
@@ -291,10 +344,10 @@ impl Parser {
         self.expect_ident_text("Sequence")?;
         self.expect(TokenKind::Eq, "'=' before sequence literal")?;
         let sequence = self.expect_string("sequence literal")?;
-        Ok(SequenceDecl { name, sequence, span: self.span_since(start) })
+        Ok(SequenceDecl { name, sequence, span: self.span_since(start), doc })
     }
 
-    fn parse_let_decl(&mut self) -> Result<Declaration, ParseError> {
+    fn parse_let_decl(&mut self, doc: Option<String>) -> Result<Declaration, ParseError> {
         let start = self.start_span();
         self.expect_ident_text("let")?;
         let name = self.expect_ident_any("binding name")?;
@@ -305,7 +358,10 @@ impl Parser {
                 self.expect(TokenKind::Eq, "'=' before binding expression")?;
                 self.expect_ident_text("seq")?;
                 let sequence = self.expect_string("sequence literal")?;
-                return Ok(Declaration::Sequence(SequenceDecl { name, sequence, span: self.span_since(start) }));
+                return Ok(Declaration::Sequence(SequenceDecl { name, sequence, span: self.span_since(start), doc }));
+            }
+            if doc.is_some() {
+                return Err(self.error_here("doc comments can only precede pool/strand/seq/fn/pipeline declarations, not 'let'"));
             }
             let annotation = self.parse_type_expr()?;
             self.expect(TokenKind::Eq, "'=' before binding expression")?;
@@ -315,7 +371,7 @@ impl Parser {
         self.expect(TokenKind::Eq, "'=' before binding expression")?;
         self.expect_ident_text("seq")?;
         let sequence = self.expect_string("sequence literal")?;
-        Ok(Declaration::Sequence(SequenceDecl { name, sequence, span: self.span_since(start) }))
+        Ok(Declaration::Sequence(SequenceDecl { name, sequence, span: self.span_since(start), doc }))
     }
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
@@ -651,7 +707,7 @@ impl Parser {
         }
     }
 
-    fn parse_pipeline(&mut self) -> Result<PipelineDecl, ParseError> {
+    fn parse_pipeline(&mut self, doc: Option<String>) -> Result<PipelineDecl, ParseError> {
         let start = self.start_span();
         self.expect_ident_text("pipeline")?;
         let name = self.expect_ident_any("pipeline name")?;
@@ -686,7 +742,7 @@ impl Parser {
             self.consume_comma();
         }
         self.expect(TokenKind::RBrace, "'}' after pipeline")?;
-        Ok(PipelineDecl { name, steps, span: self.span_since(start) })
+        Ok(PipelineDecl { name, steps, span: self.span_since(start), doc })
     }
 
     fn parse_string_list(&mut self) -> Result<Vec<String>, ParseError> {
@@ -907,5 +963,35 @@ mod tests {
         };
         assert_eq!(import.items.len(), 2);
         assert_eq!(import.items[1].alias.as_deref(), Some("store_recipe"));
+    }
+
+    #[test]
+    fn attaches_a_doc_comment_to_a_pool_declaration() {
+        let src = "/// The main archive.\npool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }";
+        let program = parse(src);
+        let Declaration::Pool(pool) = &program.declarations[0] else { panic!("expected pool declaration") };
+        assert_eq!(pool.doc.as_deref(), Some("The main archive."));
+    }
+
+    #[test]
+    fn joins_consecutive_doc_comment_lines() {
+        let src = "/// Line one.\n/// Line two.\nfn helper(x: Void) returns Void {\n}";
+        let program = parse(src);
+        let Declaration::Function(func) = &program.declarations[0] else { panic!("expected function declaration") };
+        assert_eq!(func.doc.as_deref(), Some("Line one.\nLine two."));
+    }
+
+    #[test]
+    fn rejects_a_doc_comment_before_a_declaration_that_cannot_carry_one() {
+        for src in [
+            "pool a: DnaPool { codec: Ternary, redundancy: 1x, profile: Illumina }\n/// bad\nstore \"x\" into a",
+            "pool a: DnaPool { codec: Ternary, redundancy: 1x, profile: Illumina }\n/// bad\nlet noisy: Pool<Illumina, 0.35%> = simulate a under Illumina",
+            "/// bad\nif 1.0 > 0.5 {\n}",
+            "/// bad\ntest \"x\" {\n}",
+        ] {
+            let tokens = Lexer::new(src).tokenize().unwrap();
+            let result = Parser::new(tokens).parse_program();
+            assert!(result.is_err(), "expected a parse error for: {src}");
+        }
     }
 }

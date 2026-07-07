@@ -246,6 +246,41 @@ Not implemented: wiring `nucle test --json` into VS Code's native Test
 Explorer API, an optional stretch goal the plan itself flagged as likely
 to slip — the CLI command was the stated acceptance bar.
 
+### Doc comments and `nucle doc`
+
+`///` is a real, distinct token (`lexer::TokenKind::DocComment`), not a
+plain `//` comment with an extra slash discarded during tokenizing.
+`parser::Parser::consume_doc_comment` accumulates every consecutive `///`
+line immediately before a declaration into one `\n`-joined string, and
+attaches it to a `doc: Option<String>` field -- present only on
+`PoolDecl`/`StrandDecl`/`SequenceDecl`/`FunctionDecl`/`PipelineDecl`, the
+five kinds of declaration with a real name and signature worth looking up
+in generated docs. A `///` before anything else (a `let`, an operation,
+`if`/`for`/`test`) is rejected with a parse error naming the offending
+keyword (`reject_doc_comment`) rather than silently discarded — there's
+no field to attach it to, so it's always a mistake worth surfacing.
+
+`docgen::generate_docs` walks a `Program`'s top-level declarations of
+those five kinds and renders one Markdown document, grouped by kind: each
+entry gets its doc text (if any), its real NucleScript signature (not a
+paraphrase), and its effect (via the same `effects::decl_effect_info` the
+playground/`nucle explain` use, so a function that ends up `Synthesis`
+because it calls `store` shows that, not just its declared return type).
+An *un*documented declaration still gets an entry — the output is meant
+to be a complete reference, not just whatever a program's author
+remembered to comment. `nucle doc <source> [--output <file>]` exposes this;
+default is stdout.
+
+### Project scaffolding (`nucle new`)
+
+`nucle new <name>` creates a directory with `main.nsl` (a self-contained
+probabilistic-pool program that needs no external sample file, so `nucle
+check`/`nucle run` succeed against it completely unmodified), a
+`README.md` with the basic command reference, and an empty `nucle.lock`
+(`lockfile::LockFile::default()`, serialized the same way `nucle package
+lock` writes a populated one) — ready for `nucle package install` to
+start populating once the project actually depends on something.
+
 ## NucleScript Playground
 
 The interactive playground has three tabs, each backed by the real engine rather than reimplemented or mocked logic, and ships two ways from the same source:

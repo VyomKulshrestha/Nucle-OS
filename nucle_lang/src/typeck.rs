@@ -719,6 +719,7 @@ impl TypeChecker {
             return_type: func.return_type.clone(),
             body: desugared_body,
             span: func.span,
+            doc: func.doc.clone(),
         }
     }
 
@@ -795,6 +796,7 @@ impl TypeChecker {
                 // real `pool` declaration -- there is no separate span to
                 // point to, so borrow the enclosing `store`'s.
                 span: store.span,
+                doc: None,
             }
         } else {
             let suggestion = self.suggest_pool_name(&store.pool);
@@ -1110,6 +1112,7 @@ mod tests {
                     redundancy: 3,
                     profile: Profile::Illumina,
                     span: Span::default(),
+                    doc: None,
                 }),
                 Declaration::Let(LetDecl {
                     name: "noisy".into(),
@@ -1150,6 +1153,7 @@ mod tests {
                     redundancy: 3,
                     profile: Profile::Illumina,
                     span: Span::default(),
+                    doc: None,
                 }),
                 Declaration::Let(LetDecl {
                     name: "noisy".into(),
@@ -1178,6 +1182,7 @@ mod tests {
                     redundancy: 3,
                     profile: Profile::Twist,
                     span: Span::default(),
+                    doc: None,
                 }),
                 Declaration::Let(LetDecl {
                     name: "strands".into(),
@@ -1207,6 +1212,7 @@ mod tests {
                     redundancy: 3,
                     profile: Profile::Twist,
                     span: Span::default(),
+                    doc: None,
                 }),
                 Declaration::Let(LetDecl {
                     name: "strands".into(),
@@ -1242,6 +1248,7 @@ mod tests {
                     redundancy: 3,
                     profile: Profile::Illumina,
                     span: Span::default(),
+                    doc: None,
                 }),
                 Declaration::Operation(Operation::Delete(DeleteOp {
                     file: "old.bin".into(),

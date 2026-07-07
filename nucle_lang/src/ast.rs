@@ -160,6 +160,12 @@ pub struct PoolDecl {
     pub profile: Profile,
     #[serde(default)]
     pub span: Span,
+    /// The `///` doc comment immediately preceding this declaration, if
+    /// any -- consumed by `docgen` (`nucle doc`), never by type-checking.
+    /// Consecutive `///` lines are joined with `\n` into one string; see
+    /// `lexer::TokenKind::DocComment`.
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -168,6 +174,9 @@ pub struct StrandDecl {
     pub sequence: String,
     #[serde(default)]
     pub span: Span,
+    /// See `PoolDecl::doc`.
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -176,6 +185,9 @@ pub struct SequenceDecl {
     pub sequence: String,
     #[serde(default)]
     pub span: Span,
+    /// See `PoolDecl::doc`.
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -195,6 +207,9 @@ pub struct FunctionDecl {
     pub body: Vec<Declaration>,
     #[serde(default)]
     pub span: Span,
+    /// See `PoolDecl::doc`.
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -404,6 +419,9 @@ pub struct PipelineDecl {
     pub steps: Vec<PipelineStep>,
     #[serde(default)]
     pub span: Span,
+    /// See `PoolDecl::doc`.
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

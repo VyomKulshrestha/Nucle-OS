@@ -179,6 +179,7 @@ mod tests {
                     redundancy: 3,
                     profile: Profile::Illumina,
                     span: Span::default(),
+                    doc: None,
                 }),
                 Declaration::Let(LetDecl {
                     name: "noisy".into(),

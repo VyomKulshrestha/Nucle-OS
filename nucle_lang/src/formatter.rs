@@ -140,6 +140,20 @@ fn extract_comments(source: &str) -> Vec<CommentTrivia> {
             i += 1;
             continue;
         }
+        // `///` is a *doc* comment -- it's already a real `TokenKind::
+        // DocComment` in the lexer's token stream (see `lexer.rs`), which
+        // `build_entries` places into `code_lines`. If this scanner also
+        // recorded it as a standalone `CommentTrivia`, the same line
+        // would get two competing entries (one `Code`, one `Comment`),
+        // breaking `build_entries`'s "one entry per line" invariant. Skip
+        // the line's text without recording anything, but still advance
+        // `i`/`line` past it exactly like a plain comment would.
+        if c == '/' && chars.get(i + 1) == Some(&'/') && chars.get(i + 2) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        }
         if c == '/' && chars.get(i + 1) == Some(&'/') {
             let own_line = !line_has_content;
             let start = i;
@@ -299,17 +313,34 @@ fn declaration_unit_start_lines(entries: &[LineEntry<'_>], program: &Program) ->
         let mut unit_line = decl_line;
         let mut walk = entry_index;
         while walk > 0 {
-            let candidate = &entries[walk - 1];
-            let LineEntry::Comment { line, .. } = candidate else { break };
-            if *line + 1 != unit_line {
+            let Some(line) = leading_trivia_line(&entries[walk - 1]) else { break };
+            if line + 1 != unit_line {
                 break;
             }
-            unit_line = *line;
+            unit_line = line;
             walk -= 1;
         }
         unit_starts.insert(unit_line);
     }
     unit_starts
+}
+
+/// The line number of `entry` if it's a piece of leading-documentation
+/// trivia -- a standalone `//` comment, or a `///` doc comment (which,
+/// unlike a plain comment, is a real token and so shows up as a one-token
+/// `Code` entry, not a `Comment` one; see `TokenKind::DocComment`). Used
+/// by `declaration_unit_start_lines` to glue either form to the
+/// declaration it documents, so the forced blank line between top-level
+/// declarations lands *before* the documentation, not between it and the
+/// thing it documents.
+fn leading_trivia_line(entry: &LineEntry<'_>) -> Option<usize> {
+    match entry {
+        LineEntry::Comment { line, .. } => Some(*line),
+        LineEntry::Code { line, tokens, .. } if matches!(tokens.as_slice(), [t] if matches!(t.kind, TokenKind::DocComment(_))) => {
+            Some(*line)
+        }
+        _ => None,
+    }
 }
 
 /// Renders one source line's worth of tokens with canonical inter-token
@@ -426,6 +457,13 @@ fn token_text(token: &Token) -> String {
         TokenKind::AndAnd => "&&".to_string(),
         TokenKind::OrOr => "||".to_string(),
         TokenKind::Bang => "!".to_string(),
+        // A `///` doc comment always occupies its own line (it consumes
+        // the rest of the line it starts on, same as a plain `//`
+        // comment), so it's always the sole token on whatever "code" line
+        // `build_entries` groups it into -- rendering it back out
+        // verbatim here is enough, no special line-placement logic needed.
+        TokenKind::DocComment(text) if text.is_empty() => "///".to_string(),
+        TokenKind::DocComment(text) => format!("/// {}", text),
         TokenKind::Eof => String::new(),
     }
 }
@@ -533,5 +571,28 @@ mod tests {
         assert_eq!(formatted, twice, "formatting should be idempotent");
         assert!(formatted.contains("test \"name\" {"));
         assert!(formatted.contains("assert 1.0 < 2.0, \"msg\""));
+    }
+
+    #[test]
+    fn keeps_a_doc_comment_glued_to_its_declaration_not_split_by_the_blank_line_rule() {
+        let src = "pool a: DnaPool { codec: Ternary, redundancy: 1x, profile: Illumina }\n/// Documents b.\npool b: DnaPool { codec: Ternary, redundancy: 1x, profile: Illumina }";
+        let formatted = format_source(src).unwrap();
+        assert!(formatted.contains("}\n\n/// Documents b.\npool b"), "got: {formatted}");
+    }
+
+    #[test]
+    fn preserves_multi_line_doc_comments_and_is_idempotent() {
+        let src = "/// Line one.\n/// Line two.\nfn helper(x: Void) returns Void {\n}";
+        let once = format_source(src).unwrap();
+        let twice = format_source(&once).unwrap();
+        assert_eq!(once, twice);
+        assert!(once.contains("/// Line one.\n/// Line two.\nfn helper"), "got: {once}");
+    }
+
+    #[test]
+    fn a_plain_comment_is_still_distinct_from_a_doc_comment() {
+        let src = "// plain comment, not a doc comment\npool a: DnaPool { codec: Ternary, redundancy: 1x, profile: Illumina }";
+        let formatted = format_source(src).unwrap();
+        assert!(formatted.starts_with("// plain comment, not a doc comment\npool a"));
     }
 }

@@ -42,6 +42,7 @@ fn consensus_vote_wrong_arity_reports_the_same_code_a_user_function_would() {
                 return_type: TypeExpr::Void,
                 body: Vec::new(),
                 span: Span::default(),
+                doc: None,
             }),
             call("two_args", vec![Expr::Number(1.0), Expr::Number(2.0), Expr::Number(3.0)]),
         ],

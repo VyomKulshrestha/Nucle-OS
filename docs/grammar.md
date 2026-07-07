@@ -233,9 +233,36 @@ shared `E-CONDITION-*` codes.
 
 ---
 
+## Documentation (`///`)
+
+```nsl
+/// Archives a file with the given recovery guarantee.
+fn archive(data: File, target: Pool<Illumina>, guarantee: Recovery) returns DnaFile {
+    let plan: DnaFile = protect data for guarantee
+    store plan into target
+}
+```
+
+A `///` line immediately preceding a `pool`/`strand`/`seq`/`fn`/`pipeline`
+declaration attaches as that declaration's documentation (consecutive
+`///` lines join into one `\n`-separated string); `nucle doc` renders
+every declaration of those five kinds to Markdown, with or without a
+`///` comment -- undocumented ones just get a signature and effect, no
+description paragraph. A `///` comment immediately before anything else
+(a `let`, an operation, an `if`/`for`/`test`) is a parse error naming the
+offending keyword, not a silent no-op -- there's no field on those
+declarations to attach it to, so writing one there is always a mistake
+worth surfacing rather than documentation that quietly went nowhere. See
+[docs/architecture.md](architecture.md) for how `nucle doc` is
+implemented (`docgen.rs`).
+
+---
+
 ## Formatting Conventions
 
-1. **Comments**: Start with `//` and extend to the end of the line.
+1. **Comments**: Start with `//` and extend to the end of the line. A
+   `///` comment (see "Documentation" above) is a distinct doc comment,
+   not a regular comment with an extra slash.
 2. **Trailing Commas**: Allowed and encouraged in parameter lists, import lists, option sets, and query lists.
 3. **Identifiers**: Case-sensitive for symbols, but keywords and codec/profile options are parsed case-insensitively.
 4. **Multiplier/Percent Suffixes**: Suffixes `x`/`X` and `%` must immediately follow the numeric value without whitespace (e.g. `3x`, `0.35%`).

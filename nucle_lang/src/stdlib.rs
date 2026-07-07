@@ -67,6 +67,11 @@ fn consensus_vote_decl() -> FunctionDecl {
         return_type: TypeExpr::Recovery,
         body: Vec::new(),
         span: Span::default(),
+        doc: Some(
+            "Majority-vote across `coverage` independently-noisy copies of the same strand, \
+             correcting substitution/indel errors that Reed-Solomon parity alone can't. See docs/stdlib.md."
+                .to_string(),
+        ),
     }
 }
 
@@ -80,6 +85,7 @@ fn protect_decl() -> FunctionDecl {
         return_type: TypeExpr::Void,
         body: Vec::new(),
         span: Span::default(),
+        doc: Some("Marks `data` as protected under the named recovery `guarantee`. See docs/stdlib.md.".to_string()),
     }
 }
 

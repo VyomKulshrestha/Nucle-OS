@@ -6,6 +6,7 @@
 
 pub mod ast;
 pub mod codegen;
+pub mod docgen;
 pub mod effects;
 pub mod hardware;
 pub mod lexer;
@@ -27,6 +28,7 @@ use std::path::Path;
 
 pub use ast::*;
 pub use codegen::{execute_program, CompiledPlan, ExecutionReport, VfsCall};
+pub use docgen::generate_docs;
 pub use formatter::{format_source, is_formatted, FormatError};
 pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;

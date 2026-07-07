@@ -40,6 +40,14 @@ pub enum TokenKind {
     OrOr,
     /// `!`
     Bang,
+    /// `/// text` -- a doc comment, distinct from a plain `//` comment
+    /// (which is discarded during tokenizing and never becomes a token at
+    /// all). The `String` is the line's text with the leading `///` and
+    /// exactly one following space (if present) stripped. See
+    /// `parser::Parser::parse_declaration`'s doc-comment accumulation for
+    /// how consecutive `DocComment` tokens become one declaration's
+    /// `doc: Option<String>`.
+    DocComment(String),
     Eof,
 }
 
@@ -98,6 +106,9 @@ impl<'a> Lexer<'a> {
                     TokenKind::Arrow
                 }
                 '"' => TokenKind::String(self.lex_string(line, column)?),
+                '/' if self.peek_next() == Some('/') && self.peek_at(2) == Some('/') => {
+                    TokenKind::DocComment(self.lex_doc_comment())
+                }
                 c if c.is_ascii_digit() => TokenKind::Number(self.lex_number_like()),
                 c if is_ident_start(c) => TokenKind::Ident(self.lex_ident()),
                 other => {
@@ -119,7 +130,11 @@ impl<'a> Lexer<'a> {
                 self.bump();
             }
 
-            if self.peek() == Some('/') && self.peek_next() == Some('/') {
+            // A plain `//` comment (exactly two slashes, not `///`) is
+            // discarded here and never becomes a token -- `///` is left
+            // alone so `tokenize()`'s main dispatch can turn it into a
+            // real `DocComment` token instead.
+            if self.peek() == Some('/') && self.peek_next() == Some('/') && self.peek_at(2) != Some('/') {
                 while let Some(c) = self.peek() {
                     self.bump();
                     if c == '\n' {
@@ -130,6 +145,28 @@ impl<'a> Lexer<'a> {
             }
             break;
         }
+    }
+
+    /// Consumes a `///` doc comment line, returning its text with the
+    /// `///` prefix and at most one following space stripped (so `///
+    /// Foo` becomes `"Foo"`, matching how Rustdoc's `///` conventionally
+    /// reads).
+    fn lex_doc_comment(&mut self) -> String {
+        self.bump();
+        self.bump();
+        self.bump();
+        if self.peek() == Some(' ') {
+            self.bump();
+        }
+        let mut text = String::new();
+        while let Some(c) = self.peek() {
+            if c == '\n' {
+                break;
+            }
+            text.push(c);
+            self.bump();
+        }
+        text
     }
 
     fn lex_string(&mut self, line: usize, column: usize) -> Result<String, LexError> {
@@ -201,6 +238,10 @@ impl<'a> Lexer<'a> {
         self.chars.get(self.index + 1).copied()
     }
 
+    fn peek_at(&self, offset: usize) -> Option<char> {
+        self.chars.get(self.index + offset).copied()
+    }
+
     fn bump(&mut self) -> Option<char> {
         let ch = self.peek()?;
         self.index += 1;
@@ -246,5 +287,21 @@ mod tests {
         let tokens = Lexer::new("redundancy: 3x, expect recovery > 99.5%").tokenize().unwrap();
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Number("3x".into())));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Number("99.5%".into())));
+    }
+
+    #[test]
+    fn doc_comments_become_real_tokens_distinct_from_plain_comments() {
+        let tokens = Lexer::new("/// a doc comment\n// a plain comment\npool").tokenize().unwrap();
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::DocComment("a doc comment".into())));
+        // The plain `//` comment is discarded entirely -- only `pool`
+        // (and the trailing Eof) should remain besides the doc comment.
+        assert_eq!(tokens.len(), 3);
+        assert_eq!(tokens[1].kind, TokenKind::Ident("pool".into()));
+    }
+
+    #[test]
+    fn doc_comment_with_no_leading_space_is_captured_verbatim() {
+        let tokens = Lexer::new("///no leading space").tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::DocComment("no leading space".into()));
     }
 }

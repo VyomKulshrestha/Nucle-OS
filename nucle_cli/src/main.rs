@@ -202,6 +202,21 @@ enum Commands {
         source: String,
     },
 
+    /// Generate Markdown documentation from a NucleScript source file's `///` doc comments
+    Doc {
+        /// NucleScript source file to document
+        source: String,
+        /// Write the generated Markdown to this file instead of stdout
+        #[arg(long)]
+        output: Option<String>,
+    },
+
+    /// Scaffold a new NucleScript project directory
+    New {
+        /// Directory to create (must not already exist)
+        name: String,
+    },
+
     /// Compile a NucleScript source file into a no-hardware simulation plan
     Plan {
         /// NucleScript source file to compile
@@ -304,6 +319,8 @@ fn main() {
         Commands::Fmt { source, check, write } => cmd_fmt(&source, check, write),
         Commands::Test { source, json } => cmd_test(&source, cli.json || json),
         Commands::Run { source } => cmd_run(&source),
+        Commands::Doc { source, output } => cmd_doc(&source, output.as_deref()),
+        Commands::New { name } => cmd_new(&name),
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
         Commands::Package { action } => cmd_package(action, cli.json),
@@ -1124,6 +1141,110 @@ fn cmd_run(source: &str) {
             std::process::exit(1);
         }
     }
+}
+
+fn cmd_doc(source: &str, output: Option<&str>) {
+    let source_content = match fs::read_to_string(source) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error reading file '{}': {}", source, e);
+            std::process::exit(1);
+        }
+    };
+    let tokens = match nucle_lang::Lexer::new(&source_content).tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Lex error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let program = match nucle_lang::Parser::new(tokens).parse_program() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Parse error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let docs = nucle_lang::generate_docs(&program);
+    match output {
+        Some(path) => {
+            if let Err(e) = fs::write(path, &docs) {
+                eprintln!("Error writing '{}': {}", path, e);
+                std::process::exit(1);
+            }
+            println!("Wrote documentation to {}", path);
+        }
+        None => print!("{}", docs),
+    }
+}
+
+/// Scaffolds a minimal, immediately-runnable NucleScript project --
+/// `main.nsl` deliberately needs no external sample file (no `store` of a
+/// real path), so `nucle check`/`nucle run` succeed against it completely
+/// unmodified, matching `cargo new`/`npm init`'s "it just works" bar.
+fn cmd_new(name: &str) {
+    let dir = std::path::Path::new(name);
+    if dir.exists() {
+        eprintln!("Error: '{}' already exists", name);
+        std::process::exit(1);
+    }
+    if let Err(e) = fs::create_dir_all(dir) {
+        eprintln!("Error creating directory '{}': {}", name, e);
+        std::process::exit(1);
+    }
+
+    let project_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or(name);
+
+    let main_nsl = r#"/// Entry point for this NucleScript project.
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+"#;
+
+    let readme = format!(
+        r#"# {project_name}
+
+A NucleScript project, scaffolded by `nucle new`.
+
+## Getting started
+
+```bash
+nucle check main.nsl          # compile-only validation, no hardware/execution
+nucle run main.nsl            # compile and execute
+nucle test main.nsl           # run any `test {{ ... }}` blocks
+nucle fmt main.nsl --write    # format in place
+nucle doc main.nsl            # generate Markdown docs from `///` comments
+```
+
+`nucle.lock` records checksums for any packages you install with `nucle
+package install <name>` -- see the main NucleOS repository's
+`docs/packages.md` for the bundled `@nuclescript/*` presets.
+"#
+    );
+
+    let lock = nucle_lang::lockfile::LockFile::default().to_json().unwrap_or_else(|_| "{}".to_string());
+
+    for (path, content) in [
+        (dir.join("main.nsl"), main_nsl.to_string()),
+        (dir.join("README.md"), readme),
+        (dir.join(nucle_lang::lockfile::LOCK_FILE_NAME), lock),
+    ] {
+        if let Err(e) = fs::write(&path, &content) {
+            eprintln!("Error writing '{}': {}", path.display(), e);
+            std::process::exit(1);
+        }
+    }
+
+    println!("Created NucleScript project '{}' in ./{}", project_name, dir.display());
+    println!("\nNext steps:");
+    println!("  cd {}", dir.display());
+    println!("  nucle run main.nsl");
 }
 
 fn cmd_plan(source: &str) {

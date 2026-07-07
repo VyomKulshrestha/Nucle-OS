@@ -112,6 +112,7 @@ mod tests {
                     redundancy: 3,
                     profile: Profile::Twist,
                     span: Span::default(),
+                    doc: None,
                 }),
                 Declaration::Let(LetDecl {
                     name: "strands".into(),

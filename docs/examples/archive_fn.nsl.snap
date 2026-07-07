@@ -1,5 +1,9 @@
->// Reusable function that encapsulates a store-with-recovery workflow.
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// Reusable function that encapsulates a store-with-recovery workflow:
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// protects `data` under the given recovery `guarantee`, then stores the
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// result into `target`. See `nucle doc docs/examples/archive_fn.nsl`.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >fn archive(data: File, target: Pool<Illumina>, guarantee: Recovery) returns DnaFile {
 #^^ source.nuclescript keyword.control.nuclescript
 #  ^ source.nuclescript
@@ -53,6 +57,8 @@
 >}
 #^^ source.nuclescript
 >
+>/// The archive pool this file's function and test exercise.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >pool vault: DnaPool {
 #^^^^ source.nuclescript keyword.control.nuclescript
 #    ^ source.nuclescript
