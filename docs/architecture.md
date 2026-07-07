@@ -209,6 +209,43 @@ Code extension's `Format Document`/format-on-save provider
 implementation rather than a second one duplicated in TypeScript or the
 language server.
 
+### Test runner (`nucle test`)
+
+`test "description" { ... }` (`ast::TestDecl`) is a named block of
+declarations; `assert <condition>` (`ast::AssertOp`, valid anywhere a
+declaration is, not just inside a test) is evaluated by the *exact same*
+`typeck::TypeChecker::eval_condition` an `if` condition uses — there's no
+separate assertion DSL, per the plan's explicit call to reuse Step 4's
+comparison operators. That's also why an assertion is checked at
+type-check time rather than deferred to some later "runtime" phase:
+NucleScript's probabilistic properties (a pool binding's inferred error
+rate) are deterministic formulas computed at compile time already, not
+something measured empirically, so there's nothing for an assertion to
+wait for. A false assertion is reported as an ordinary `E-ASSERTION-FAILED`
+diagnostic at its own span — `nucle check` surfaces one anywhere in a
+program as a real bug on its own, with no dependency on `test_runner.rs`
+at all.
+
+`nucle_lang::test_runner::run_tests` is what turns that into pass/fail per
+test: it runs `typeck::check_and_desugar` once over the whole program (a
+*real* compile error anywhere — anything other than a failed assertion —
+aborts the entire run before any test executes, the same way a type error
+in a Rust test file stops `cargo test` from running anything), then for
+each `TestDecl` in the desugared output, groups every `E-ASSERTION-FAILED`
+diagnostic whose span falls within that test's line range into its
+result. Independently, it builds a small "virtual program" per test (the
+file's own non-test top-level declarations — pools, lets, functions — plus
+that one test's body) and runs it through the exact same
+`codegen::compile_program`/`execute_program` path `nucle run` uses,
+against a fresh `NucleOS` instance per test for isolation — so a test can
+also catch a genuine VFS failure (a `retrieve`/`delete` erroring out), not
+just a failed assertion. `nucle_cli`'s `Test` command reports `cargo
+test`-style pass/fail output (or `--json`).
+
+Not implemented: wiring `nucle test --json` into VS Code's native Test
+Explorer API, an optional stretch goal the plan itself flagged as likely
+to slip — the CLI command was the stated acceptance bar.
+
 ## NucleScript Playground
 
 The interactive playground has three tabs, each backed by the real engine rather than reimplemented or mocked logic, and ships two ways from the same source:

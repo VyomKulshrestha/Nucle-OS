@@ -3,3 +3,15 @@ fn archive(data: File, target: Pool<Illumina>, guarantee: Recovery) returns DnaF
     let plan: DnaFile = protect data for guarantee
     store plan into target
 }
+
+pool vault: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+test "consensus voting reduces the inferred error rate" {
+    let noisy: Pool<Illumina, 0.35%> = simulate vault under Illumina
+    let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+    assert recovered < noisy, "consensus_vote should reduce the error budget, not just relabel it"
+}

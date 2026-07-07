@@ -24,6 +24,7 @@ nucle run docs/examples/store.nsl
 | `preset_imports.nsl` | Built-in preset imports for package registry readiness |
 | `yinyang_schema.nsl` | Future codec schema parsing with current-backend compatibility warning |
 | `control_flow.nsl` | Compile-time `if`/`for`: a boolean-combined error-rate condition picking a recovery branch, and a `for` loop unrolled into a `store` |
+| `archive_fn.nsl` | A reusable `fn` wrapping `protect ... for ...`, plus a `test { ... }`/`assert` block verifying `consensus_vote` actually reduces the inferred error rate — run with `nucle test archive_fn.nsl` |
 
 `sample_a.txt` and `sample_b.txt` are small payloads used by the examples.
 

@@ -390,11 +390,11 @@ fn needs_space(prev: &Token, cur: &Token, generic_depth: i32) -> bool {
     }
     // Function-call / builtin-call style: `name(` with no space, unless
     // `name` is a control keyword that takes a parenthesized/grouped
-    // expression afterward (only `if` in this grammar; `for`'s `(` never
-    // directly follows the keyword itself).
+    // expression afterward (`if`/`assert`; `for`'s `(` never directly
+    // follows the keyword itself).
     if matches!(cur.kind, TokenKind::LParen) {
         if let TokenKind::Ident(name) = &prev.kind {
-            if name != "if" {
+            if !matches!(name.as_str(), "if" | "assert") {
                 return false;
             }
         }
@@ -516,5 +516,22 @@ mod tests {
         let src = "if noisy>0.1&&!(noisy<5.0){\npool a: DnaPool { codec: Ternary, redundancy: 1x, profile: Illumina }\n}";
         let formatted = format_source(src).unwrap();
         assert!(formatted.contains("noisy > 0.1 && !(noisy < 5.0)"));
+    }
+
+    #[test]
+    fn spaces_assert_before_a_parenthesized_condition_like_if() {
+        let src = "pool a: DnaPool { codec: Ternary, redundancy: 1x, profile: Illumina }\n\ntest \"x\" {\n    assert(1.0<2.0)\n}";
+        let formatted = format_source(src).unwrap();
+        assert!(formatted.contains("assert (1.0 < 2.0)"), "got: {formatted}");
+    }
+
+    #[test]
+    fn formats_test_and_assert_declarations() {
+        let src = "pool a:DnaPool{codec:Ternary,redundancy:1x,profile:Illumina}\ntest \"name\"{assert 1.0<2.0,\"msg\"}";
+        let formatted = format_source(src).unwrap();
+        let twice = format_source(&formatted).unwrap();
+        assert_eq!(formatted, twice, "formatting should be idempotent");
+        assert!(formatted.contains("test \"name\" {"));
+        assert!(formatted.contains("assert 1.0 < 2.0, \"msg\""));
     }
 }

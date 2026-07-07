@@ -115,6 +115,10 @@ pub fn lower_program(program: &Program) -> MirProgram {
                     effect: operation_effect(&Operation::Delete(delete.clone())),
                 });
             }
+            // `assert` is evaluated during type-checking (see
+            // `typeck::TypeChecker::check_assert`), not lowered to a VFS
+            // call -- it has no runtime effect for `nucle run` to execute.
+            Declaration::Operation(Operation::Assert(_)) => {}
             Declaration::Pipeline(pipeline) => {
                 if let Some(op) = lower_pipeline(pipeline, &pools) {
                     ops.push(op);
@@ -124,12 +128,20 @@ pub fn lower_program(program: &Program) -> MirProgram {
             // pipeline -- `typeck::check_and_desugar` resolves them into their taken
             // branch/unrolled body first. This arm only matters for callers (tests,
             // `nucle-cli explain`) that lower a raw, pre-desugared `Program` directly.
+            //
+            // `Declaration::Test` is deliberately a no-op here too, the
+            // same way `Declaration::Function`'s body isn't lowered at
+            // top level either -- a test's body only runs when `nucle
+            // test` specifically executes it (`test_runner::run_tests`
+            // builds and lowers a dedicated virtual program per test), not
+            // as a side effect of lowering the whole file for `nucle run`.
             Declaration::Import(_)
             | Declaration::Strand(_)
             | Declaration::Sequence(_)
             | Declaration::Function(_)
             | Declaration::If(_)
-            | Declaration::For(_) => {}
+            | Declaration::For(_)
+            | Declaration::Test(_) => {}
         }
     }
 

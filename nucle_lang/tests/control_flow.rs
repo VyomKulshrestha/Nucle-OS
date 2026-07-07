@@ -137,7 +137,7 @@ fn condition_referencing_undeclared_binding_is_rejected() {
     "#;
     let report = check_source(src);
     assert!(!report.ok, "expected undeclared condition binding to fail");
-    assert!(report.diagnostics.iter().any(|d| d.code == "E-IF-CONDITION-UNDECLARED"));
+    assert!(report.diagnostics.iter().any(|d| d.code == "E-CONDITION-UNDECLARED"));
 }
 
 #[test]
@@ -151,5 +151,5 @@ fn non_boolean_condition_is_rejected() {
     "#;
     let report = check_source(src);
     assert!(!report.ok, "expected a bare (non-comparison) condition to fail");
-    assert!(report.diagnostics.iter().any(|d| d.code == "E-IF-CONDITION-NOT-BOOLEAN"));
+    assert!(report.diagnostics.iter().any(|d| d.code == "E-CONDITION-NOT-BOOLEAN"));
 }

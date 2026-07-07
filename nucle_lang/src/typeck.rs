@@ -194,6 +194,10 @@ impl TypeChecker {
                 self.check_delete(delete);
                 vec![declaration.clone()]
             }
+            Declaration::Operation(Operation::Assert(assert)) => {
+                self.check_assert(assert);
+                vec![declaration.clone()]
+            }
             Declaration::Pipeline(pipeline) => {
                 self.check_pipeline(pipeline);
                 vec![declaration.clone()]
@@ -201,7 +205,48 @@ impl TypeChecker {
             Declaration::Function(func) => vec![Declaration::Function(self.check_function(func))],
             Declaration::If(if_decl) => self.check_if(if_decl),
             Declaration::For(for_decl) => self.check_for(for_decl),
+            Declaration::Test(test) => vec![Declaration::Test(self.check_test(test))],
         }
+    }
+
+    /// `assert <condition>` -- evaluated with the exact same
+    /// `eval_condition` machinery an `if` condition uses (see
+    /// `TestDecl`'s doc comment in `ast.rs` for why this is the right
+    /// place, not a deferred runtime check). A false condition reports
+    /// `E-ASSERTION-FAILED` with the custom message if one was given,
+    /// else the condition can't speak for itself the way a hand-written
+    /// message can -- there's no expression-to-source-text printer in
+    /// this compiler, so an unmessaged failing assertion just says which
+    /// one, by span, not what it compared.
+    fn check_assert(&mut self, assert: &AssertOp) {
+        match self.eval_condition(&assert.condition, assert.span, "assert") {
+            Some(true) | None => {}
+            Some(false) => {
+                let message = assert.message.clone().unwrap_or_else(|| "assertion failed".to_string());
+                self.report.error(assert.span, "E-ASSERTION-FAILED", message);
+            }
+        }
+    }
+
+    /// Type-checks a test body in a scope that inherits the enclosing
+    /// program's pools/functions (so a test can exercise real pool
+    /// schemas and helper functions) but starts with fresh bindings (so
+    /// tests don't share simulated state with each other) -- the same
+    /// isolation `check_function` gives a function body, for the same
+    /// reason: independent tests shouldn't be able to see each other's
+    /// local `let`s.
+    fn check_test(&mut self, test: &TestDecl) -> TestDecl {
+        let mut body_checker = TypeChecker::default();
+        body_checker.pools = self.pools.clone();
+        body_checker.functions = self.functions.clone();
+
+        let mut desugared_body = Vec::new();
+        for decl in &test.body {
+            desugared_body.extend(body_checker.check_declaration_single(decl));
+        }
+        self.report.diagnostics.extend(body_checker.report.diagnostics);
+
+        TestDecl { name: test.name.clone(), body: desugared_body, span: test.span }
     }
 
     /// Evaluates `condition` at compile time and type-checks only the
@@ -211,7 +256,7 @@ impl TypeChecker {
     /// `Vec` if `condition` couldn't be evaluated (the error is already
     /// recorded by `eval_condition`).
     fn check_if(&mut self, if_decl: &IfDecl) -> Vec<Declaration> {
-        let Some(taken) = self.eval_condition(&if_decl.condition, if_decl.span) else {
+        let Some(taken) = self.eval_condition(&if_decl.condition, if_decl.span, "if") else {
             return Vec::new();
         };
         let branch: &[Declaration] = if taken {
@@ -240,12 +285,16 @@ impl TypeChecker {
         out
     }
 
-    /// Resolves a numeric operand in an `if` condition: either a literal
-    /// number, or (the deliberate coercion this design relies on so
-    /// conditions can inspect "the pool's observed error rate" without
-    /// inventing general field-access syntax) a probabilistic pool
-    /// binding's name, which resolves to its inferred `error_rate_percent`.
-    fn eval_numeric(&mut self, expr: &Expr, span: Span) -> Option<f64> {
+    /// Resolves a numeric operand in an `if`/`assert` condition: either a
+    /// literal number, or (the deliberate coercion this design relies on
+    /// so a condition can inspect "the pool's observed error rate"
+    /// without inventing general field-access syntax) a probabilistic
+    /// pool binding's name, which resolves to its inferred
+    /// `error_rate_percent`. `context` (`"if"`/`"assert"`) only affects
+    /// error message wording -- both call sites share this one
+    /// evaluator, per Step 7's reuse of Step 4's comparison operators
+    /// rather than a separate assertion DSL.
+    fn eval_numeric(&mut self, expr: &Expr, span: Span, context: &str) -> Option<f64> {
         match expr {
             Expr::Number(value) => Some(*value),
             Expr::Variable(name) => {
@@ -253,39 +302,42 @@ impl TypeChecker {
                     Some(pool.error_rate_percent)
                 } else {
                     let suggestion = self.suggest_pool_name(name);
-                    self.report.error(span, "E-IF-CONDITION-UNDECLARED", format!(
-                        "condition references undeclared probabilistic pool binding '{}'{}",
-                        name, did_you_mean(suggestion)
+                    self.report.error(span, "E-CONDITION-UNDECLARED", format!(
+                        "{} condition references undeclared probabilistic pool binding '{}'{}",
+                        context, name, did_you_mean(suggestion)
                     ));
                     None
                 }
             }
             _ => {
-                self.report.error(span, "E-IF-CONDITION-NOT-NUMERIC", "expected a number or a probabilistic pool binding's error rate");
+                self.report.error(span, "E-CONDITION-NOT-NUMERIC", format!("expected a number or a probabilistic pool binding's error rate in this {} condition", context));
                 None
             }
         }
     }
 
-    /// Evaluates an `if`/loop-free boolean expression to a concrete
-    /// `bool` at type-check time -- `condition` must reduce entirely to
-    /// comparisons/`&&`/`||`/`!` over numbers and pool bindings, since
-    /// there is no runtime to defer evaluation to.
-    fn eval_condition(&mut self, expr: &Expr, span: Span) -> Option<bool> {
+    /// Evaluates a loop-free boolean expression to a concrete `bool` at
+    /// type-check time -- shared by `if`'s condition and `assert`'s
+    /// condition (see `AssertOp`'s doc comment for why an assertion is
+    /// evaluated here rather than deferred to a later "runtime" phase).
+    /// `condition` must reduce entirely to comparisons/`&&`/`||`/`!` over
+    /// numbers and pool bindings, since there is no runtime to defer
+    /// evaluation to.
+    fn eval_condition(&mut self, expr: &Expr, span: Span, context: &str) -> Option<bool> {
         match expr {
             Expr::BinaryOp { op: BinOp::And, left, right } => {
-                let left = self.eval_condition(left, span);
-                let right = self.eval_condition(right, span);
+                let left = self.eval_condition(left, span, context);
+                let right = self.eval_condition(right, span, context);
                 Some(left? && right?)
             }
             Expr::BinaryOp { op: BinOp::Or, left, right } => {
-                let left = self.eval_condition(left, span);
-                let right = self.eval_condition(right, span);
+                let left = self.eval_condition(left, span, context);
+                let right = self.eval_condition(right, span, context);
                 Some(left? || right?)
             }
             Expr::BinaryOp { op, left, right } => {
-                let left = self.eval_numeric(left, span);
-                let right = self.eval_numeric(right, span);
+                let left = self.eval_numeric(left, span, context);
+                let right = self.eval_numeric(right, span, context);
                 let (left, right) = (left?, right?);
                 Some(match op {
                     BinOp::Eq => (left - right).abs() < f64::EPSILON,
@@ -297,9 +349,9 @@ impl TypeChecker {
                     BinOp::And | BinOp::Or => unreachable!("handled above"),
                 })
             }
-            Expr::Not(inner) => self.eval_condition(inner, span).map(|value| !value),
+            Expr::Not(inner) => self.eval_condition(inner, span, context).map(|value| !value),
             _ => {
-                self.report.error(span, "E-IF-CONDITION-NOT-BOOLEAN", "if condition must be a comparison, or a boolean combination of comparisons using && / || / !");
+                self.report.error(span, "E-CONDITION-NOT-BOOLEAN", format!("{} condition must be a comparison, or a boolean combination of comparisons using && / || / !", context));
                 None
             }
         }
@@ -918,6 +970,11 @@ fn substitute_declaration(decl: &Declaration, binding: &str, value: &str) -> Dec
             confirmed: op.confirmed,
             span: op.span,
         })),
+        Declaration::Operation(Operation::Assert(op)) => Declaration::Operation(Operation::Assert(AssertOp {
+            condition: substitute_expr(&op.condition, binding, value),
+            message: op.message.clone(),
+            span: op.span,
+        })),
         Declaration::If(d) => Declaration::If(IfDecl {
             condition: substitute_expr(&d.condition, binding, value),
             then_branch: d.then_branch.iter().map(|inner| substitute_declaration(inner, binding, value)).collect(),
@@ -938,6 +995,14 @@ fn substitute_declaration(decl: &Declaration, binding: &str, value: &str) -> Dec
             } else {
                 d.body.iter().map(|inner| substitute_declaration(inner, binding, value)).collect()
             },
+            span: d.span,
+        }),
+        // `test`'s `name` is just a description string, not a binding
+        // that could shadow the loop variable (unlike `ForDecl.binding`
+        // above) -- always substitute through its body.
+        Declaration::Test(d) => Declaration::Test(TestDecl {
+            name: d.name.clone(),
+            body: d.body.iter().map(|inner| substitute_declaration(inner, binding, value)).collect(),
             span: d.span,
         }),
         Declaration::Import(_)

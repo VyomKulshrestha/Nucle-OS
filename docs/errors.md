@@ -128,15 +128,23 @@ Codes are grouped by which declaration/operation they check, matching
 
 **Fix:** declare the target pool, or filter on an indexed field.
 
-## Control flow (`if` / `for`)
+## Control flow (`if` / `for`) and `assert`
+
+`if`'s condition and `assert`'s condition are evaluated by the exact same
+compile-time machinery (`typeck::TypeChecker::eval_condition`), so both
+share this one set of diagnostic codes — the codes were renamed from an
+earlier `E-IF-CONDITION-*` scheme (Step 4) to the current `E-CONDITION-*`
+form specifically so a message about `assert`'s condition doesn't
+misleadingly say "if condition" (Step 7).
 
 | Code | Level | Meaning |
 |------|-------|---------|
-| `E-IF-CONDITION-NOT-BOOLEAN` | error | An `if` condition isn't a comparison or a `&&`/`\|\|`/`!` combination of comparisons — e.g. a bare pool binding with no comparison operator. `if`/`for` are resolved entirely at compile time (see [`grammar.md`](grammar.md#control-flow-if--for)), so the condition must reduce to a concrete `bool` during type checking. |
-| `E-IF-CONDITION-NOT-NUMERIC` | error | One side of a comparison inside an `if` condition isn't a number literal or a probabilistic pool binding's name. |
-| `E-IF-CONDITION-UNDECLARED` | error | A comparison inside an `if` condition references a pool binding name that isn't declared. Includes a "did you mean X?" suggestion. |
+| `E-CONDITION-NOT-BOOLEAN` | error | An `if`/`assert` condition isn't a comparison or a `&&`/`\|\|`/`!` combination of comparisons — e.g. a bare pool binding with no comparison operator. Both are resolved entirely at compile time (see [`grammar.md`](grammar.md#control-flow-if--for)), so the condition must reduce to a concrete `bool` during type checking. |
+| `E-CONDITION-NOT-NUMERIC` | error | One side of a comparison inside an `if`/`assert` condition isn't a number literal or a probabilistic pool binding's name. |
+| `E-CONDITION-UNDECLARED` | error | A comparison inside an `if`/`assert` condition references a pool binding name that isn't declared. Includes a "did you mean X?" suggestion. |
+| `E-ASSERTION-FAILED` | error | An `assert`'s condition evaluated to `false`. The message is the custom one from `assert condition, "message"` if given, else the generic `"assertion failed"`. Valid anywhere a declaration is, not just inside `test { ... }` — `nucle check` reports an always-false assertion anywhere in a program as a real bug; `nucle test` additionally groups every one that falls within a given `test` block's span into that test's pass/fail result (see [`docs/grammar.md`](grammar.md#testing-test--assert)). |
 
-**Fix:** rewrite the condition as a comparison (`binding > 0.5`) or boolean combination of comparisons, ensure both sides of every comparison are a number literal or a declared probabilistic pool binding, and fix any typo'd binding name.
+**Fix:** rewrite the condition as a comparison (`binding > 0.5`) or boolean combination of comparisons, ensure both sides of every comparison are a number literal or a declared probabilistic pool binding, fix any typo'd binding name, or fix whatever the assertion actually found wrong.
 
 ## Pipelines
 

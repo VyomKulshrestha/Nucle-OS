@@ -49,6 +49,7 @@ pub fn operation_effect(operation: &Operation) -> Effect {
         Operation::Store(_) => Effect::Synthesis,
         Operation::Retrieve(_) => Effect::Pure,
         Operation::Delete(_) => Effect::Destructive,
+        Operation::Assert(_) => Effect::Pure,
     }
 }
 
@@ -185,6 +186,13 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, resolving: &m
                 confirmed: delete.confirmed,
             }
         }
+        Declaration::Operation(Operation::Assert(assert)) => DeclEffect {
+            name: assert.message.clone().unwrap_or_else(|| "assert".into()),
+            kind: "assert".into(),
+            effect: Effect::Pure,
+            confirmation_required: false,
+            confirmed: true,
+        },
         Declaration::Pipeline(pipeline) => DeclEffect {
             name: pipeline.name.clone(),
             kind: "pipeline".into(),
@@ -268,6 +276,27 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, resolving: &m
                 }
             }
             DeclEffect { name: for_decl.binding.clone(), kind: "for".into(), effect: joint_effect, confirmation_required: req, confirmed: conf }
+        }
+        // A test's own effect is the worst case over its body, same
+        // reasoning as `if`/`for` above -- a test that stores/deletes
+        // something for real should still surface as non-`Pure` in an
+        // effect summary, not be hidden just because it's wrapped in
+        // `test { ... }`.
+        Declaration::Test(test) => {
+            let mut joint_effect = Effect::Pure;
+            let mut req = false;
+            let mut conf = true;
+            for inner in &test.body {
+                let info = decl_effect_info(inner, funcs, resolving);
+                joint_effect = join_effects(joint_effect, info.effect);
+                if info.confirmation_required {
+                    req = true;
+                    if !info.confirmed {
+                        conf = false;
+                    }
+                }
+            }
+            DeclEffect { name: test.name.clone(), kind: "test".into(), effect: joint_effect, confirmation_required: req, confirmed: conf }
         }
     }
 }

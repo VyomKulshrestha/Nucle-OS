@@ -82,7 +82,7 @@
       "patterns": [
         {
           "name": "keyword.control.nuclescript",
-          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in)\\b"
+          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test)\\b"
         }
       ]
     },

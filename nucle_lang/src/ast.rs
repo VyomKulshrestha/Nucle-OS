@@ -45,6 +45,7 @@ pub enum Declaration {
     Function(FunctionDecl),
     If(IfDecl),
     For(ForDecl),
+    Test(TestDecl),
 }
 
 impl Declaration {
@@ -63,8 +64,30 @@ impl Declaration {
             Declaration::Function(d) => d.span,
             Declaration::If(d) => d.span,
             Declaration::For(d) => d.span,
+            Declaration::Test(d) => d.span,
         }
     }
+}
+
+/// `test "description" { ... }` -- a named block of declarations run by
+/// `nucle test` against a fresh, isolated `NucleOS` instance per test
+/// (see `test_runner.rs`). Unlike `if`/`for`, a test's body is NOT
+/// resolved away during type-checking: `typeck::check_and_desugar` still
+/// desugars any `if`/`for` *inside* it, but the `TestDecl` itself survives
+/// into the output program so the test runner has something to find and
+/// execute. `assert` statements inside the body (see `AssertOp`) are
+/// evaluated during type-checking, the same way an `if` condition is --
+/// NucleScript's probabilistic properties are deterministic formulas
+/// computed at compile time, not measured empirically, so there's nothing
+/// to defer an assertion to a later "runtime" phase for. Real `store`/
+/// `retrieve`/`delete` operations in the body still execute for real
+/// against the VFS, so a test can also catch genuine execution failures
+/// (a `retrieve`/`delete` erroring out), not just failed assertions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TestDecl {
+    pub name: String,
+    pub body: Vec<Declaration>,
+    pub span: Span,
 }
 
 /// `if condition { ... } else { ... }` -- resolved at compile time, not a
@@ -285,6 +308,7 @@ pub enum Operation {
     Store(StoreOp),
     Retrieve(RetrieveOp),
     Delete(DeleteOp),
+    Assert(AssertOp),
 }
 
 impl Operation {
@@ -293,8 +317,26 @@ impl Operation {
             Operation::Store(op) => op.span,
             Operation::Retrieve(op) => op.span,
             Operation::Delete(op) => op.span,
+            Operation::Assert(op) => op.span,
         }
     }
+}
+
+/// `assert <condition>` or `assert <condition>, "message"` -- evaluated
+/// during type-checking via the same `eval_condition` machinery an `if`
+/// condition uses (see `TestDecl`'s doc comment for why that's the right
+/// place, not a deferred "runtime" check). A false condition is reported
+/// as an `E-ASSERTION-FAILED` diagnostic at this statement's span,
+/// regardless of whether it's lexically inside a `test { ... }` block --
+/// `nucle check` surfaces an always-false assertion anywhere in a program
+/// as a real bug, and `nucle test` additionally groups the ones that fall
+/// within each test's span into that test's pass/fail result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssertOp {
+    pub condition: Expr,
+    pub message: Option<String>,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -17,6 +17,7 @@ pub mod playground;
 pub mod probabilistic;
 pub mod sim_backend;
 pub mod stdlib;
+pub mod test_runner;
 pub mod typeck;
 pub mod diagnostics;
 pub mod formatter;
@@ -31,6 +32,7 @@ pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
 pub use playground::{analyze_source, PlaygroundDiagnostic, PlaygroundReport};
 pub use sim_backend::{compile_simulation, SimulationPlan, SimulationStep};
+pub use test_runner::{run_tests, TestFailure, TestResult, TestRunReport};
 pub use typeck::{Diagnostic, DiagnosticLevel, SymbolTable, TypeReport};
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]

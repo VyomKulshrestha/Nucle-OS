@@ -103,12 +103,19 @@ fn zero_span(decl: &mut nucle_lang::Declaration) {
                 zero_span(inner);
             }
         }
+        Test(d) => {
+            d.span = zero;
+            for inner in &mut d.body {
+                zero_span(inner);
+            }
+        }
         Operation(op) => {
             use nucle_lang::Operation::*;
             match op {
                 Store(o) => o.span = zero,
                 Retrieve(o) => o.span = zero,
                 Delete(o) => o.span = zero,
+                Assert(o) => o.span = zero,
             }
         }
     }

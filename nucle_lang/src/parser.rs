@@ -44,15 +44,39 @@ impl Parser {
             self.parse_retrieve().map(|op| Declaration::Operation(Operation::Retrieve(op)))
         } else if self.check_ident("delete") {
             self.parse_delete().map(|op| Declaration::Operation(Operation::Delete(op)))
+        } else if self.check_ident("assert") {
+            self.parse_assert().map(|op| Declaration::Operation(Operation::Assert(op)))
         } else if self.check_ident("pipeline") {
             self.parse_pipeline().map(Declaration::Pipeline)
         } else if self.check_ident("if") {
             self.parse_if().map(Declaration::If)
         } else if self.check_ident("for") {
             self.parse_for().map(Declaration::For)
+        } else if self.check_ident("test") {
+            self.parse_test().map(Declaration::Test)
         } else {
-            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, store, retrieve, delete, simulate, pipeline, if, or for"))
+            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, store, retrieve, delete, assert, simulate, pipeline, if, for, or test"))
         }
+    }
+
+    /// `assert` Expr (`,` StringLiteral)?
+    fn parse_assert(&mut self) -> Result<AssertOp, ParseError> {
+        let start = self.start_span();
+        self.expect_ident_text("assert")?;
+        let condition = self.parse_expr()?;
+        let message = if self.consume_comma() { Some(self.expect_string("assertion message")?) } else { None };
+        Ok(AssertOp { condition, message, span: self.span_since(start) })
+    }
+
+    /// `test` StringLiteral `{` <declaration>* `}`
+    fn parse_test(&mut self) -> Result<TestDecl, ParseError> {
+        let start = self.start_span();
+        self.expect_ident_text("test")?;
+        let name = self.expect_string("test description")?;
+        self.expect(TokenKind::LBrace, "'{' to start test body")?;
+        let body = self.parse_declaration_block()?;
+        self.expect(TokenKind::RBrace, "'}' to end test body")?;
+        Ok(TestDecl { name, body, span: self.span_since(start) })
     }
 
     /// `if` <expr> `{` <declaration>* `}` (`else` `{` <declaration>* `}`)?

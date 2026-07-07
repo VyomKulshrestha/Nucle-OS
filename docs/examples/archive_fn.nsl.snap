@@ -53,3 +53,96 @@
 >}
 #^^ source.nuclescript
 >
+>pool vault: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^ source.nuclescript variable.other.nuclescript
+#          ^^ source.nuclescript
+#            ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                   ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>test "consensus voting reduces the inferred error rate" {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^ source.nuclescript string.quoted.double.nuclescript
+#      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                      ^ source.nuclescript string.quoted.double.nuclescript
+#                                                       ^^^ source.nuclescript
+>    let noisy: Pool<Illumina, 0.35%> = simulate vault under Illumina
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                            ^^ source.nuclescript
+#                              ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                      ^ source.nuclescript
+#                                       ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                     ^ source.nuclescript
+#                                                      ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                           ^ source.nuclescript
+#                                                            ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>    let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                        ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                   ^ source.nuclescript
+#                                                    ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                         ^^ source.nuclescript
+#                                                           ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                   ^^ source.nuclescript
+#                                                                     ^^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                                        ^^ source.nuclescript
+>    assert recovered < noisy, "consensus_vote should reduce the error budget, not just relabel it"
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                    ^ source.nuclescript
+#                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                      ^ source.nuclescript
+#                       ^^^^^ source.nuclescript variable.other.nuclescript
+#                            ^^ source.nuclescript
+#                              ^ source.nuclescript string.quoted.double.nuclescript
+#                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                                 ^ source.nuclescript string.quoted.double.nuclescript
+>}
+#^^ source.nuclescript
+>

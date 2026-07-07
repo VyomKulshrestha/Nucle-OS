@@ -187,6 +187,15 @@ enum Commands {
         write: bool,
     },
 
+    /// Run `test "..." { ... }` blocks in a NucleScript source file
+    Test {
+        /// NucleScript source file whose test blocks to run
+        source: String,
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Run a NucleScript source file (.nsl)
     Run {
         /// NucleScript source file to compile and execute
@@ -293,6 +302,7 @@ fn main() {
         Commands::Check { source, json } => cmd_check(&source, cli.json || json),
         Commands::Explain { source } => cmd_explain(&source),
         Commands::Fmt { source, check, write } => cmd_fmt(&source, check, write),
+        Commands::Test { source, json } => cmd_test(&source, cli.json || json),
         Commands::Run { source } => cmd_run(&source),
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
@@ -1012,6 +1022,97 @@ fn cmd_fmt(source: &str, check: bool, write: bool) {
     }
 
     print!("{}", formatted);
+}
+
+fn cmd_test(source: &str, json: bool) {
+    let source_content = match std::fs::read_to_string(source) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Error reading file '{}': {}", source, e);
+            std::process::exit(1);
+        }
+    };
+
+    let tokens = match nucle_lang::Lexer::new(&source_content).tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Lex error: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let program = match nucle_lang::Parser::new(tokens).parse_program() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Parse error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let base_dir = std::path::Path::new(source).parent().unwrap_or_else(|| std::path::Path::new("."));
+    let report = nucle_lang::run_tests(&program, base_dir);
+
+    if json {
+        let json_report = serde_json::json!({
+            "ok": report.all_passed(),
+            "compile_errors": report.compile_errors,
+            "results": report.results.iter().map(|r| serde_json::json!({
+                "name": r.name,
+                "passed": r.passed,
+                "failures": r.failures.iter().map(|f| serde_json::json!({
+                    "message": f.message,
+                    "line": f.span.line,
+                    "column": f.span.column,
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&json_report).unwrap());
+        if !report.all_passed() {
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if !report.compile_errors.is_empty() {
+        for diagnostic in &report.compile_errors {
+            println!("{}", nucle_lang::diagnostics::render_snippet(source, &source_content, diagnostic));
+        }
+        std::process::exit(1);
+    }
+
+    if report.results.is_empty() {
+        println!("no test blocks found in {}", source);
+        return;
+    }
+
+    for result in &report.results {
+        if result.passed {
+            println!("test {} ... ok", result.name);
+        } else {
+            println!("test {} ... FAILED", result.name);
+        }
+    }
+
+    let failed: Vec<_> = report.results.iter().filter(|r| !r.passed).collect();
+    if !failed.is_empty() {
+        println!("\nfailures:");
+        for result in &failed {
+            println!("\n---- {} ----", result.name);
+            for failure in &result.failures {
+                println!("{}:{}: {}", source, failure.span.line, failure.message);
+            }
+        }
+    }
+
+    println!(
+        "\ntest result: {}. {} passed; {} failed",
+        if failed.is_empty() { "ok" } else { "FAILED" },
+        report.results.len() - failed.len(),
+        failed.len()
+    );
+
+    if !failed.is_empty() {
+        std::process::exit(1);
+    }
 }
 
 fn cmd_run(source: &str) {

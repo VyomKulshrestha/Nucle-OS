@@ -19,6 +19,7 @@ Declaration         ::= ImportDecl
                       | PipelineDecl
                       | IfDecl
                       | ForDecl
+                      | TestDecl
 
 ImportDecl          ::= 'import' '{' ImportItemList '}' 'from' StringLiteral
 ImportItemList      ::= ImportItem ( ',' ImportItem )* ','?
@@ -105,6 +106,7 @@ ExprList            ::= Expr ( ',' Expr )* ','?
 Operation           ::= StoreOp
                       | RetrieveOp
                       | DeleteOp
+                      | AssertOp
 
 StoreOp             ::= 'store' ( StringLiteral | Identifier ) 'into' Identifier StoreOptions?
                       | 'simulate' 'store' ( StringLiteral | Identifier ) 'into' Identifier StoreOptions?
@@ -131,6 +133,20 @@ QueryValue          ::= StringLiteral
                       | NumberLiteral
 
 DeleteOp            ::= 'delete' ( StringLiteral | Identifier ) 'from' Identifier ( 'confirm' 'physical_key' )?
+
+// Evaluated at compile time with the same `Condition` grammar an `if`
+// uses (see the "Control Flow" section below) -- there is no runtime to
+// defer an assertion to. Valid anywhere a declaration is (not just inside
+// `test { ... }`), but `nucle test` only groups the ones lexically inside
+// a `TestDecl` into that test's pass/fail result; `nucle check` surfaces
+// an always-false assertion anywhere as a real diagnostic regardless.
+AssertOp            ::= 'assert' Condition ( ',' StringLiteral )?
+
+// A named block run by `nucle test` against a fresh, isolated VFS
+// instance per test -- see docs/stdlib.md's sibling doc, docs/errors.md's
+// `E-ASSERTION-FAILED`, and the "Control Flow" section below for why
+// `assert`'s condition is a compile-time evaluation, not a runtime one.
+TestDecl            ::= 'test' StringLiteral '{' Declaration* '}'
 
 PipelineDecl        ::= 'pipeline' Identifier '{' PipelineStepList '}'
 PipelineStepList    ::= PipelineStep ( ',' PipelineStep )* ','?
@@ -186,6 +202,34 @@ for target in [archive] {
   type-checked independently.
 - Both are fully resolved away during type checking; `codegen`/the
   simulation backend only ever see a plain, control-flow-free program.
+
+---
+
+## Testing (`test` / `assert`)
+
+```nsl
+pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+
+test "consensus voting reduces the inferred error rate" {
+    let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+    let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+    assert recovered < noisy, "consensus_vote should reduce the error budget"
+}
+```
+
+`nucle test` runs every `test { ... }` block against a fresh, isolated VFS
+instance per test (real `store`/`retrieve`/`delete` operations inside a
+test body execute for real). `assert`'s condition uses the exact same
+`Condition` grammar an `if` does, evaluated the same way -- at compile
+time, not deferred to a "runtime" phase, since NucleScript's probabilistic
+properties are deterministic formulas computed at compile time already,
+not something measured empirically. A test fails if any assertion inside
+it evaluates false, or if a real VFS operation inside it errors at
+execution time; a test whose body has a genuine compile error (anything
+other than a failed assertion) aborts the whole run and is reported the
+same way `nucle check` would report it, not folded into that one test's
+result. See [docs/errors.md](errors.md) for `E-ASSERTION-FAILED` and the
+shared `E-CONDITION-*` codes.
 
 ---
 
