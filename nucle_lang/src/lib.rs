@@ -28,9 +28,9 @@ pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
 pub use playground::{analyze_source, PlaygroundDiagnostic, PlaygroundReport};
 pub use sim_backend::{compile_simulation, SimulationPlan, SimulationStep};
-pub use typeck::{Diagnostic, DiagnosticLevel, TypeReport};
+pub use typeck::{Diagnostic, DiagnosticLevel, SymbolTable, TypeReport};
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CheckReport {
     pub ok: bool,
     pub diagnostics: Vec<Diagnostic>,
@@ -72,6 +72,64 @@ pub fn check_source(source: &str) -> CheckReport {
     CheckReport {
         ok: !report.has_errors(),
         diagnostics: report.diagnostics,
+    }
+}
+
+/// Result of a full analysis pass: diagnostics plus the symbol table --
+/// everything a language server needs from a single lex/parse/typeck pass
+/// over one document, without re-deriving scope information a second time.
+#[derive(Debug, Clone, Default)]
+pub struct Analysis {
+    pub report: CheckReport,
+    pub symbols: SymbolTable,
+}
+
+/// Like `check_source`, but also returns the program's symbol table (see
+/// `typeck::check_program_with_symbols`) -- the one entry point
+/// `nucle_lsp` calls on every document open/change, since it needs both
+/// diagnostics (to publish) and symbols (for hover/definition/outline)
+/// from the same parse, not two independent ones that could disagree.
+pub fn analyze(source: &str) -> Analysis {
+    let tokens = match Lexer::new(source).tokenize() {
+        Ok(tokens) => tokens,
+        Err(err) => {
+            return Analysis {
+                report: CheckReport {
+                    ok: false,
+                    diagnostics: vec![Diagnostic {
+                        level: DiagnosticLevel::Error,
+                        code: "E-LEX-ERROR".to_string(),
+                        message: format!("lex error: {}", err),
+                        span: Span::point(err.line, err.column),
+                    }],
+                },
+                symbols: SymbolTable::default(),
+            };
+        }
+    };
+
+    let program = match Parser::new(tokens).parse_program() {
+        Ok(program) => program,
+        Err(err) => {
+            return Analysis {
+                report: CheckReport {
+                    ok: false,
+                    diagnostics: vec![Diagnostic {
+                        level: DiagnosticLevel::Error,
+                        code: "E-PARSE-ERROR".to_string(),
+                        message: format!("parse error: {}", err),
+                        span: Span::point(err.line, err.column),
+                    }],
+                },
+                symbols: SymbolTable::default(),
+            };
+        }
+    };
+
+    let (report, symbols) = typeck::check_program_with_symbols(&program);
+    Analysis {
+        report: CheckReport { ok: !report.has_errors(), diagnostics: report.diagnostics },
+        symbols,
     }
 }
 
@@ -221,5 +279,36 @@ mod tests {
         let plan = compile_for_simulation(src).unwrap();
         assert_eq!(plan.steps.len(), 2);
         assert_eq!(plan.optimiser_notes.len(), 1);
+    }
+
+    #[test]
+    fn analyze_returns_symbol_table_alongside_diagnostics() {
+        let src = r#"
+            pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+            seq primer: Sequence = "ATCGATCGGCTAGCTA"
+            fn archive_it(source: Pool<Illumina>) -> Pool<Recovered> {
+                let result: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+            }
+            let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+            let recovered: Pool<Recovered> = archive_it(noisy)
+        "#;
+        let analysis = analyze(src);
+        assert!(analysis.report.ok, "expected valid program, got: {:?}", analysis.report.diagnostics);
+        assert!(analysis.symbols.pools.contains_key("archive"));
+        assert!(analysis.symbols.sequences.contains_key("primer"));
+        assert!(analysis.symbols.functions.contains_key("archive_it"));
+        assert!(analysis.symbols.bindings.contains_key("noisy"));
+        assert!(analysis.symbols.bindings.contains_key("recovered"));
+
+        let pool_span = analysis.symbols.pools["archive"].span;
+        assert_ne!(pool_span.line, 0, "pool symbol should carry a real span");
+    }
+
+    #[test]
+    fn analyze_returns_lex_error_with_empty_symbols() {
+        let src = r#"store "unterminated into archive"#;
+        let analysis = analyze(src);
+        assert!(!analysis.report.ok);
+        assert!(analysis.symbols.pools.is_empty());
     }
 }

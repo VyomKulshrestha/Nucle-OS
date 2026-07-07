@@ -1,13 +1,15 @@
 {
   "name": "nuclescript",
   "displayName": "NucleScript",
-  "description": "Syntax highlighting for NucleScript (.nsl), the declarative DNA-storage operations language for NucleOS.",
+  "description": "Syntax highlighting and language server support for NucleScript (.nsl), the declarative DNA-storage operations language for NucleOS.",
   "version": "0.1.0",
   "publisher": "nuclescript",
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:nuclescript"],
+  "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
@@ -23,12 +25,29 @@
         "scopeName": "source.nuclescript",
         "path": "./syntaxes/nuclescript.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "NucleScript",
+      "properties": {
+        "nuclescript.serverPath": {
+          "type": "string",
+          "default": "nucle-lsp",
+          "description": "Path to the nucle-lsp binary. Defaults to looking it up on PATH; set an absolute path if it isn't installed there (e.g. a workspace-local debug build)."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.4.0",
     "vscode-tmgrammar-test": "^0.1.3"
   },
   "scripts": {
+    "compile": "tsc -p ./",
     "test": "vscode-tmgrammar-snap -s source.nuclescript -g syntaxes/nuclescript.tmLanguage.json ../../../docs/examples/*.nsl"
   }
 }

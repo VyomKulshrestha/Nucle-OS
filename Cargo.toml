@@ -13,6 +13,7 @@ members = [
     "nucle_playground",
     "nucle_demo_core",
     "nucle_wasm",
+    "nucle_lsp",
 ]
 
 [workspace.package]

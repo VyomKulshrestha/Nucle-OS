@@ -1,8 +1,9 @@
 # NucleScript for VS Code
 
-Syntax highlighting for `.nsl` files — NucleScript, the declarative
-DNA-storage operations language for NucleOS. This is a local/dev
-extension for now; it isn't published to the Marketplace or Open VSX.
+Syntax highlighting **and live language server support** for `.nsl`
+files — NucleScript, the declarative DNA-storage operations language for
+NucleOS. This is a local/dev extension for now; it isn't published to the
+Marketplace or Open VSX.
 
 ## What's included
 
@@ -12,16 +13,47 @@ extension for now; it isn't published to the Marketplace or Open VSX.
   `parser.rs`) actually accepts today.
 - `language-configuration.json` — comment syntax, bracket matching, and
   auto-closing pairs for `{}`/`[]`/`()`/`"..."`.
+- A minimal client (`src/extension.ts`) that spawns `nucle_lsp` (the
+  `nucle-lsp` binary, built from `../../../nucle_lsp`) over stdio and
+  connects it via `vscode-languageclient`. This gets you, live as you
+  type:
+  - **Diagnostics** — the exact same errors/warnings `nucle check` reports,
+    with the same error codes and spans.
+  - **Hover** — pool/function/strand/sequence/binding signatures.
+  - **Go to definition** — jump from a use site to its declaration.
+  - **Document outline** — every top-level symbol, for the editor's
+    breadcrumb/outline view.
 
-Not included yet: live diagnostics, hover, go-to-definition, or
-autocomplete — those need a language server (tracked as a later step; see
-the repo root for the current implementation plan).
+Not included yet: autocomplete, rename/refactoring, or semantic-token
+highlighting (the TextMate grammar already covers highlighting) — see the
+repo root for the current implementation plan.
+
+## Building and running the language server
+
+The extension expects a `nucle-lsp` binary. Build it from the repo root:
+
+```bash
+cargo build -p nucle_lsp --release
+```
+
+By default the extension looks for `nucle-lsp` on `PATH`. For local
+development, either put `target/release/` (or `target/debug/`) on `PATH`,
+or set the `nuclescript.serverPath` setting to the built binary's absolute
+path (VS Code Settings → search "nuclescript").
 
 ## Installing locally
 
-**Option A — symlink for active development** (changes to the grammar
-take effect after a "Developer: Reload Window" in VS Code, no repackaging
-needed):
+Either way, first install dependencies and compile the client:
+
+```bash
+cd editors/vscode/nuclescript
+npm install
+npm run compile
+```
+
+**Option A — symlink for active development** (grammar changes take
+effect after a "Developer: Reload Window" in VS Code with no rebuild;
+client (`.ts`) changes need `npm run compile` first, then reload):
 
 ```bash
 # macOS/Linux
@@ -32,7 +64,7 @@ New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.vscode\extensions\nucle
 ```
 
 **Option B — package and install a VSIX** (closer to how a real install
-would behave, but requires repackaging after every grammar change):
+would behave, but requires repackaging after every change):
 
 ```bash
 cd editors/vscode/nuclescript

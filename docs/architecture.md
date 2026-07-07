@@ -90,9 +90,44 @@ A TextMate grammar for `.nsl` files lives at
 from `docs/grammar.md`/the actual keyword sets in `lexer.rs`/`parser.rs`
 (not invented independently), and is snapshot-tested against every file in
 `docs/examples/` (`vscode-tmgrammar-snap`) so grammar/compiler drift shows
-up as a diff. This is purely presentational — no diagnostics, hover, or
-navigation — that needs a language server built on top of the same
-`check_source`/`Diagnostic` shape described above.
+up as a diff. This is purely presentational; live diagnostics, hover, and
+navigation come from the language server below.
+
+### Language Server (`nucle_lsp`)
+
+`nucle_lsp` is a thin LSP protocol adapter, not a second compiler: every
+answer it gives comes from `nucle_lang::analyze` (`typeck::
+check_program_with_symbols` under the hood), the exact same pass `nucle
+check` and the playground already run. `typeck::TypeChecker`'s own
+scope-tracking (`pools`, `functions`, `strands`, `sequences`, `bindings`)
+is exposed as a `SymbolTable` — top-level declaration name/span pairs —
+specifically so the language server doesn't re-derive a second, possibly
+divergent notion of "what's declared where." `nucle_lsp/src/backend.rs`
+implements:
+
+- `textDocument/didOpen`/`didChange` → `publishDiagnostics`, using the
+  same `Span`/error `code` every CLI diagnostic already carries.
+- `textDocument/hover` — finds the identifier at the cursor by slicing the
+  open document's text (not a second AST — the server keeps document text
+  in memory and re-parses on every request, since NucleScript programs are
+  small and re-parsing is cheap), then looks it up in the `SymbolTable`.
+- `textDocument/definition` — same lookup, returning the declaration's
+  span as the jump target.
+- `textDocument/documentSymbol` — the whole `SymbolTable` as an outline.
+
+Deliberately out of scope for this first pass: completion, rename, and
+semantic tokens (already covered by the TextMate grammar). Verified with
+an in-memory duplex-pipe integration test
+(`nucle_lsp/tests/diagnostics.rs`) that speaks the real Content-Length-
+framed JSON-RPC protocol — not just unit tests of the internal Rust
+functions — and cross-checks the published diagnostics against
+`nucle_lang::check_source`'s own output for the identical source, so the
+server can't silently drift from what the CLI reports.
+
+The VS Code extension (`editors/vscode/nuclescript/src/extension.ts`)
+spawns the `nucle-lsp` binary over stdio via `vscode-languageclient` — the
+one place in this stack that's TypeScript rather than Rust, kept to
+"spawn and connect" with no logic of its own.
 
 ## NucleScript Playground
 

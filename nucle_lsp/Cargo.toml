@@ -1,0 +1,22 @@
+[package]
+name = "nucle_lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nucle-lsp"
+path = "src/main.rs"
+
+[dependencies]
+nucle_lang = { path = "../nucle_lang" }
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+# Pinned: idna_adapter >=1.2 requires Cargo's edition2024 feature, which
+# isn't stabilized in this toolchain's Cargo (1.83.0) -- the last version
+# before that MSRV bump.
+idna_adapter = "=1.1.0"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+serde_json = { workspace = true }

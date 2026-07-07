@@ -594,8 +594,19 @@ published to the Marketplace) — see the extension's own README for install
 instructions. A snapshot test (`npm test` inside that directory) tokenizes
 every file in `docs/examples/` and diffs against committed snapshots, so a
 compiler keyword change that isn't mirrored in the grammar shows up as a
-CI-visible diff instead of silently going stale. Live diagnostics,
-hover, and go-to-definition need a language server, which isn't built yet.
+CI-visible diff instead of silently going stale.
+
+The extension also spawns a real language server —
+[`nucle_lsp`](nucle_lsp/) — over stdio, so `.nsl` files get live
+diagnostics (the same errors/warnings and error codes `nucle check`
+reports, as you type), hover (pool/function/strand/sequence/binding
+signatures), go-to-definition, and a document outline. `nucle_lsp` is a
+thin protocol adapter over `nucle_lang::analyze` — it never duplicates
+compiler logic, verified by an integration test that speaks the real
+Content-Length-framed JSON-RPC protocol over an in-memory pipe and
+cross-checks published diagnostics against `nucle check`'s own output for
+the same source. Build it with `cargo build -p nucle_lsp --release`.
+Autocomplete, rename, and semantic tokens aren't built yet.
 
 ### Playground
 
@@ -731,9 +742,10 @@ nucle agent "pool status"
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 69 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, `nucle check`/`nucle explain` integration tests |
+| `nucle_lang` | 71 | Lexer, parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
-| **Total** | **329 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
+| **Total** | **342 (+3 doctests)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
@@ -748,10 +760,12 @@ nucle_vfs/       — Virtual file system (syscall-style API, storage/recovery ma
 nucle_agent/     — Agent interface (ReAct planner)
 nucle_lang/      — NucleScript compiler, MIR optimizer, package registry, lock files, ecosystem APIs, simulation backend, and VFS backend
 nucle_hardware/  — Hardware provider adapters (Provider trait, MockProvider, FileExportProvider)
+nucle_lsp/       — NucleScript language server (tower-lsp adapter over nucle_lang::analyze: diagnostics, hover, go-to-definition, document outline)
 nucle_cli/       — Command-line interface
 nucle_playground/ — Interactive web playground (tiny_http server + static frontend), also published at github.com/Nuclescript/playground
 nucle_demo_core/ — Shared, I/O-free benchmark/pipeline-visualizer logic used by both nucle_playground and nucle_wasm
 nucle_wasm/      — Same playground compiled to WebAssembly; live at nuclescript.github.io/playground
+editors/vscode/nuclescript/ — VS Code extension: TextMate grammar + language server client
 docs/            — Architecture notes, paper references, and runnable examples/fixtures
 packages/        — NucleScript package registry (packages/registry.json) and package releases (presets, profiles, benchmarks, recovery)
 ```

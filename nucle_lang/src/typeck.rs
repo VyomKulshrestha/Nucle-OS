@@ -82,17 +82,49 @@ impl fmt::Display for DiagnosticLevel {
 }
 
 pub fn check_program(program: &Program) -> TypeReport {
+    check_program_with_symbols(program).0
+}
+
+/// Same check as `check_program`, but also returns every top-level
+/// declaration's name/span, keyed by kind -- for tooling (the language
+/// server's hover/go-to-definition/document-symbol) that needs "where is
+/// X defined" without re-deriving the same scope-tracking `TypeChecker`
+/// already does during the single real check pass. Function-body-local
+/// bindings/parameters aren't included -- only top-level symbols, which
+/// covers the common "jump to this pool/function/strand/sequence" case
+/// without a second, per-scope symbol table design.
+pub fn check_program_with_symbols(program: &Program) -> (TypeReport, SymbolTable) {
     let mut checker = TypeChecker::default();
     checker.check(program);
-    checker.report
+    let symbols = SymbolTable {
+        pools: checker.pools,
+        functions: checker.functions,
+        strands: checker.strands,
+        sequences: checker.sequences,
+        bindings: checker.bindings,
+    };
+    (checker.report, symbols)
+}
+
+/// Every top-level symbol a program declares, with enough of each
+/// declaration to answer "what is this" (hover) and "where is it defined"
+/// (go-to-definition/document outline) -- see `check_program_with_symbols`.
+#[derive(Debug, Clone, Default)]
+pub struct SymbolTable {
+    pub pools: HashMap<String, PoolDecl>,
+    pub functions: HashMap<String, FunctionDecl>,
+    pub strands: HashMap<String, Span>,
+    pub sequences: HashMap<String, Span>,
+    pub bindings: HashMap<String, LetDecl>,
 }
 
 #[derive(Default)]
 struct TypeChecker {
     pools: HashMap<String, PoolDecl>,
     pool_bindings: HashMap<String, ProbPoolType>,
-    strands: HashSet<String>,
-    sequences: HashSet<String>,
+    bindings: HashMap<String, LetDecl>,
+    strands: HashMap<String, Span>,
+    sequences: HashMap<String, Span>,
     functions: HashMap<String, FunctionDecl>,
     report: TypeReport,
 }
@@ -204,6 +236,7 @@ impl TypeChecker {
         }
 
         self.pool_bindings.insert(binding.name.clone(), inferred);
+        self.bindings.insert(binding.name.clone(), binding.clone());
     }
 
     /// `span` is the enclosing declaration's span (a `let` binding, or a
@@ -305,7 +338,7 @@ impl TypeChecker {
             Expr::Variable(name) => {
                 if let Some(pool) = self.pool_bindings.get(name).cloned() {
                     Some(pool)
-                } else if self.strands.contains(name) || self.sequences.contains(name) || self.pools.contains_key(name) {
+                } else if self.strands.contains_key(name) || self.sequences.contains_key(name) || self.pools.contains_key(name) {
                     None
                 } else {
                     let suggestion = self.suggest_pool_name(name);
@@ -324,8 +357,8 @@ impl TypeChecker {
     fn suggest_pool_name(&self, target: &str) -> Option<String> {
         let candidates: Vec<String> = self.pools.keys()
             .chain(self.pool_bindings.keys())
-            .chain(self.strands.iter())
-            .chain(self.sequences.iter())
+            .chain(self.strands.keys())
+            .chain(self.sequences.keys())
             .cloned()
             .collect();
         suggest_name(target, &candidates)
@@ -360,10 +393,13 @@ impl TypeChecker {
                     );
                 }
                 TypeExpr::Sequence => {
-                    body_checker.sequences.insert(param.name.clone());
+                    // A parameter has no declaration span of its own (`FnParam`
+                    // doesn't carry one) -- point at the enclosing function's
+                    // span as the closest available "where is this defined".
+                    body_checker.sequences.insert(param.name.clone(), func.span);
                 }
                 TypeExpr::Strand => {
-                    body_checker.strands.insert(param.name.clone());
+                    body_checker.strands.insert(param.name.clone(), func.span);
                 }
                 _ => {}
             }
@@ -415,7 +451,7 @@ impl TypeChecker {
     }
 
     fn check_strand(&mut self, strand: &StrandDecl) {
-        if !self.strands.insert(strand.name.clone()) {
+        if self.strands.insert(strand.name.clone(), strand.span).is_some() {
             self.report.error(strand.span, "E-STRAND-DUPLICATE", format!("strand '{}' is declared more than once", strand.name));
         }
         let parsed = match DnaStrand::from_str(&strand.sequence) {
@@ -436,7 +472,7 @@ impl TypeChecker {
     }
 
     fn check_sequence(&mut self, sequence: &SequenceDecl) {
-        if !self.sequences.insert(sequence.name.clone()) {
+        if self.sequences.insert(sequence.name.clone(), sequence.span).is_some() {
             self.report.error(sequence.span, "E-SEQUENCE-DUPLICATE", format!("sequence '{}' is declared more than once", sequence.name));
         }
         let normalized = match normalize_sequence_literal(&sequence.sequence) {
