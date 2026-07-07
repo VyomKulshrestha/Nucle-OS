@@ -4,6 +4,18 @@
   "description": "Syntax highlighting and language server support for NucleScript (.nsl), the declarative DNA-storage operations language for NucleOS.",
   "version": "0.1.0",
   "publisher": "nuclescript",
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VyomKulshrestha/Nucle-OS.git",
+    "directory": "editors/vscode/nuclescript"
+  },
+  "bugs": {
+    "url": "https://github.com/VyomKulshrestha/Nucle-OS/issues"
+  },
+  "homepage": "https://github.com/VyomKulshrestha/Nucle-OS/tree/main/editors/vscode/nuclescript",
+  "keywords": ["nuclescript", "dna", "dna-storage", "language-server", "nucleos"],
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -32,7 +44,7 @@
         "nuclescript.serverPath": {
           "type": "string",
           "default": "nucle-lsp",
-          "description": "Path to the nucle-lsp binary. Defaults to looking it up on PATH; set an absolute path if it isn't installed there (e.g. a workspace-local debug build)."
+          "description": "Path to the nucle-lsp binary. Defaults to looking it up on PATH first (e.g. a local `cargo build` for development); if not found there, a prebuilt binary for your platform is downloaded once from GitHub Releases and cached. Set an absolute path to override both."
         }
       }
     }

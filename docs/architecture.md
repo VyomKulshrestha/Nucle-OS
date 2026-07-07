@@ -127,7 +127,15 @@ server can't silently drift from what the CLI reports.
 The VS Code extension (`editors/vscode/nuclescript/src/extension.ts`)
 spawns the `nucle-lsp` binary over stdio via `vscode-languageclient` — the
 one place in this stack that's TypeScript rather than Rust, kept to
-"spawn and connect" with no logic of its own.
+"spawn and connect" with no logic of its own. `src/serverDownload.ts`
+resolves which binary to spawn: an explicit `nuclescript.serverPath`
+setting, then `nucle-lsp` on `PATH` (local development), then a prebuilt
+binary for the current OS/architecture downloaded once from
+`.github/workflows/release-vscode-extension.yml`'s GitHub Release output
+and cached in the extension's global storage — the path a marketplace
+install (no local Rust toolchain) needs. Publishing the extension itself
+remains a deliberate manual step (registering a Marketplace publisher,
+adding a `VSCE_PAT` repository secret) — see the extension's own README.
 
 ## NucleScript Playground
 

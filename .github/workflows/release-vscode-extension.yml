@@ -1,0 +1,97 @@
+name: Release NucleScript VS Code Extension
+
+# Builds nucle-lsp for every supported platform, publishes them as assets
+# on a GitHub Release, then packages the VS Code extension (and publishes
+# it to the Marketplace if VSCE_PAT is configured -- see
+# editors/vscode/nuclescript/README.md for the one-time manual setup that
+# secret requires; this workflow deliberately doesn't fail if it's
+# missing, so the release/build steps stay usable before that's set up).
+#
+# The release tag MUST be `nucle-lsp-v<version>` where <version> matches
+# editors/vscode/nuclescript/package.json's "version" field --
+# src/serverDownload.ts constructs the download URL from that exact
+# pattern to fetch the right binary for a marketplace install.
+
+on:
+  push:
+    tags:
+      - "nucle-lsp-v*"
+
+jobs:
+  build-lsp:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset_name: nucle-lsp-windows-x64.exe
+            binary_name: nucle-lsp.exe
+          - os: ubuntu-latest
+            asset_name: nucle-lsp-linux-x64
+            binary_name: nucle-lsp
+          # macos-13 is still an Intel (x64) runner; macos-14/macos-latest
+          # moved to Apple Silicon (arm64) -- both are built explicitly so
+          # neither label silently produces the wrong architecture's binary.
+          - os: macos-13
+            asset_name: nucle-lsp-macos-x64
+            binary_name: nucle-lsp
+          - os: macos-14
+            asset_name: nucle-lsp-macos-arm64
+            binary_name: nucle-lsp
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p nucle_lsp --release
+      - name: Rename binary to its release asset name
+        shell: bash
+        run: cp "target/release/${{ matrix.binary_name }}" "${{ matrix.asset_name }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    needs: build-lsp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Flatten artifacts into one directory
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -exec cp {} release-assets/ \;
+          ls -l release-assets
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+
+  package-extension:
+    needs: release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editors/vscode/nuclescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run compile
+      - run: npx @vscode/vsce package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuclescript-vsix
+          path: editors/vscode/nuclescript/*.vsix
+      - name: Publish to the VS Code Marketplace
+        # No-op until a publisher is registered and VSCE_PAT is added as a
+        # repository secret -- see editors/vscode/nuclescript/README.md.
+        # (Secrets are permitted directly in `if:` conditions specifically
+        # for this "only run when configured" pattern.)
+        if: ${{ secrets.VSCE_PAT != '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx @vscode/vsce publish -p "$VSCE_PAT"

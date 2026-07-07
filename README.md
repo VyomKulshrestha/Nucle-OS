@@ -608,6 +608,16 @@ cross-checks published diagnostics against `nucle check`'s own output for
 the same source. Build it with `cargo build -p nucle_lsp --release`.
 Autocomplete, rename, and semantic tokens aren't built yet.
 
+The extension is Marketplace-ready but not yet published — icon,
+changelog, license, a `.github/workflows/release-vscode-extension.yml`
+that builds `nucle-lsp` for Windows/Linux/macOS (x64 + arm64) and attaches
+them to a GitHub Release, and an in-extension downloader
+(`src/serverDownload.ts`) so a marketplace install works without a local
+Rust toolchain. Publishing itself (registering a publisher, adding a
+`VSCE_PAT` secret) is a deliberate manual step — see the extension's own
+[README](editors/vscode/nuclescript/README.md#publishing-to-the-marketplace)
+for exactly what's left.
+
 ### Playground
 
 **🧪 [Try it live in your browser](https://nuclescript.github.io/playground/)**

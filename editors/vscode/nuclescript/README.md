@@ -2,8 +2,12 @@
 
 Syntax highlighting **and live language server support** for `.nsl`
 files — NucleScript, the declarative DNA-storage operations language for
-NucleOS. This is a local/dev extension for now; it isn't published to the
-Marketplace or Open VSX.
+NucleOS. Packaging is marketplace-ready (icon, changelog, license, a
+release workflow that builds `nucle-lsp` for every platform, and an
+in-extension downloader so an install doesn't need a local Rust
+toolchain) — but it **isn't published yet**. That's a deliberate, manual
+step; see [Publishing to the Marketplace](#publishing-to-the-marketplace)
+below for exactly what's left and why it isn't automated.
 
 ## What's included
 
@@ -30,16 +34,24 @@ repo root for the current implementation plan.
 
 ## Building and running the language server
 
-The extension expects a `nucle-lsp` binary. Build it from the repo root:
+The extension needs a `nucle-lsp` binary, resolved in this order (see
+`src/serverDownload.ts`):
 
-```bash
-cargo build -p nucle_lsp --release
-```
-
-By default the extension looks for `nucle-lsp` on `PATH`. For local
-development, either put `target/release/` (or `target/debug/`) on `PATH`,
-or set the `nuclescript.serverPath` setting to the built binary's absolute
-path (VS Code Settings → search "nuclescript").
+1. An explicit `nuclescript.serverPath` setting (VS Code Settings → search
+   "nuclescript") — always wins if set to anything other than the default.
+2. `nucle-lsp` on `PATH` — the normal case for local development. Build it
+   from the repo root with:
+   ```bash
+   cargo build -p nucle_lsp --release
+   ```
+   then put `target/release/` (or `target/debug/`) on `PATH`.
+3. Otherwise, a prebuilt binary for your OS/architecture is downloaded
+   once from this repo's GitHub Releases (tag `nucle-lsp-v<version>`,
+   matching this extension's own `package.json` version) and cached in
+   the extension's global storage — this is what makes a marketplace
+   install work without a local Rust toolchain. If no prebuilt binary
+   exists for your platform, the extension shows an error telling you to
+   build one and point `nuclescript.serverPath` at it.
 
 ## Installing locally
 
@@ -93,3 +105,33 @@ npm install
 npm test              # compare against committed snapshots
 npx vscode-tmgrammar-snap -s source.nuclescript -g syntaxes/nuclescript.tmLanguage.json -u ../../../docs/examples/*.nsl   # regenerate snapshots after an intentional grammar change
 ```
+
+## Publishing to the Marketplace
+
+Everything code-side is in place; what's left is deliberately manual,
+since it requires credentials/decisions only the repo owner can make:
+
+1. **Register a publisher.** Create one at the
+   [Visual Studio Marketplace publisher management page](https://marketplace.visualstudio.com/manage)
+   (needs a Microsoft/Azure DevOps account). The `publisher` field in
+   `package.json` is currently `"nuclescript"` — either register that
+   exact ID, or update `package.json` to match whatever ID you register.
+2. **Create a Personal Access Token** in Azure DevOps scoped to
+   `Marketplace (Manage)`, then add it as a repository secret named
+   `VSCE_PAT` (GitHub repo → Settings → Secrets and variables → Actions).
+3. **Push a release tag** matching `nucle-lsp-v<version>` (the exact
+   version in `package.json`, e.g. `nucle-lsp-v0.1.0`). This triggers
+   [`.github/workflows/release-vscode-extension.yml`](../../../.github/workflows/release-vscode-extension.yml),
+   which:
+   - Builds `nucle-lsp` for Windows/Linux/macOS (x64 and arm64) and
+     attaches them to a GitHub Release under that tag — this is what
+     `src/serverDownload.ts` downloads from for end users.
+   - Packages the extension into a `.vsix` (always, as a build artifact,
+     so you can sanity-check it even before publishing).
+   - Publishes to the Marketplace **only if `VSCE_PAT` is set** — the
+     step is a no-op otherwise, so the rest of the workflow (binary
+     releases, VSIX packaging) works fine before you've done steps 1-2.
+
+Until step 3 happens for a given version bump, `nuclescript.serverPath`'s
+download fallback has nothing to fetch — local development (`nucle-lsp`
+on `PATH`, per the section above) is unaffected either way.
