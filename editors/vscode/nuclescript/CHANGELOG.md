@@ -10,6 +10,15 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 ## [0.1.1]
 
+- **Rewrote the README for the audience that actually reads it.** The
+  0.1.0 README was written for repo contributors (local dev symlink
+  setup, grammar-snapshot testing, publishing steps) with no link back
+  to the source repository at all — exactly backwards for a page whose
+  primary readers are end users deciding whether to install, not people
+  building the extension. Split it: README.md is now a short, install-
+  focused page (features, requirements, settings, troubleshooting, a
+  prominent repo link), and the contributor-facing content moved to a
+  new `CONTRIBUTING.md` that isn't bundled into the `.vsix`.
 - Corrected the README to reflect that the extension is actually
   published (it previously said "isn't published yet" even after the
   first upload) and documented the real update process — a manual

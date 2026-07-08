@@ -1,165 +1,71 @@
 # NucleScript for VS Code
 
-Syntax highlighting **and live language server support** for `.nsl`
-files — NucleScript, the declarative DNA-storage operations language for
-NucleOS.
+Syntax highlighting and a live language server for `.nsl` files —
+NucleScript, the declarative DNA-storage operations language for
+[NucleOS](https://github.com/VyomKulshrestha/Nucle-OS).
 
-[**Get it on the Visual Studio Marketplace**](https://marketplace.visualstudio.com/items?itemName=nuclescript.nuclescript).
+**Repository & issues:** [github.com/VyomKulshrestha/Nucle-OS](https://github.com/VyomKulshrestha/Nucle-OS)
 
-## What's included
+## Features
 
-- TextMate grammar (`syntaxes/nuclescript.tmLanguage.json`) covering every
-  keyword, type, constant, string, number literal form (`3x`, `99.5%`,
-  `10MB`, dates), and `//` comment the compiler (`nucle_lang/src/lexer.rs`,
-  `parser.rs`) actually accepts today.
-- `language-configuration.json` — comment syntax, bracket matching, and
-  auto-closing pairs for `{}`/`[]`/`()`/`"..."`.
-- A minimal client (`src/extension.ts`) that spawns `nucle_lsp` (the
-  `nucle-lsp` binary, built from `../../../nucle_lsp`) over stdio and
-  connects it via `vscode-languageclient`. This gets you, live as you
-  type:
-  - **Diagnostics** — the exact same errors/warnings `nucle check` reports,
-    with the same error codes and spans.
-  - **Hover** — pool/function/strand/sequence/binding signatures.
-  - **Go to definition** — jump from a use site to its declaration.
-  - **Document outline** — every top-level symbol, for the editor's
-    breadcrumb/outline view.
-- **`Format Document` / format-on-save** (`src/formatProvider.ts`) —
-  NucleScript's one canonical, zero-configuration style (`gofmt`-style),
-  applied by shelling out to `nucle-cli fmt -` (the buffer's current
-  content, piped over stdin, so it formats unsaved edits too — not
-  reimplemented in TypeScript). Enable it the normal VS Code way, e.g. a
-  workspace setting:
+- **Syntax highlighting** for every NucleScript keyword, type, and
+  literal form (`3x`, `99.5%`, `10MB`, dates), kept in sync with the real
+  compiler grammar.
+- **Live diagnostics** as you type — the same errors/warnings, error
+  codes, and source spans the `nucle check` CLI command reports.
+- **Hover** for pool/function/strand/sequence/binding signatures.
+- **Go to Definition** — jump from a use site to its declaration.
+- **Document outline** — every top-level symbol, for the breadcrumb and
+  outline views.
+- **Format Document / format on save** — NucleScript's one canonical,
+  zero-configuration style. Enable format-on-save the normal VS Code way:
   ```json
   { "[nuclescript]": { "editor.formatOnSave": true } }
   ```
 
-Not included yet: autocomplete, rename/refactoring, or semantic-token
-highlighting (the TextMate grammar already covers highlighting) — see the
-repo root for the current implementation plan.
+Not yet included: autocomplete, rename/refactoring, and semantic-token
+highlighting (syntax highlighting already covers most of that).
 
-## Building and running the language server
+## Requirements
 
-The extension needs a `nucle-lsp` binary, resolved in this order (see
-`src/serverDownload.ts`):
+This extension is a client for two command-line tools from the NucleOS
+project — it doesn't bundle a compiler itself:
 
-1. An explicit `nuclescript.serverPath` setting (VS Code Settings → search
-   "nuclescript") — always wins if set to anything other than the default.
-2. `nucle-lsp` on `PATH` — the normal case for local development. Build it
-   from the repo root with:
-   ```bash
-   cargo build -p nucle_lsp --release
-   ```
-   then put `target/release/` (or `target/debug/`) on `PATH`.
-3. Otherwise, a prebuilt binary for your OS/architecture is downloaded
-   once from this repo's GitHub Releases (tag `nucle-lsp-v<version>`,
-   matching this extension's own `package.json` version) and cached in
-   the extension's global storage — this is what makes a marketplace
-   install work without a local Rust toolchain. If no prebuilt binary
-   exists for your platform, the extension shows an error telling you to
-   build one and point `nuclescript.serverPath` at it.
+| Tool | Needed for | If it's not found |
+|---|---|---|
+| `nucle-lsp` | diagnostics, hover, go to definition, outline | Downloaded automatically for your OS/architecture on first use — nothing to install manually in most cases. |
+| `nucle-cli` | `Format Document` / format on save | Must be on your `PATH`, or pointed at via the `nuclescript.cliPath` setting (see below). No auto-download yet. |
 
-Formatting needs a separate `nucle-cli` binary (the language server and
-CLI are different executables), resolved via the `nuclescript.cliPath`
-setting (default `nucle-cli`, looked up on `PATH`). Build it with:
-```bash
-cargo build -p nucle_cli --release
-```
-Unlike `nucle-lsp`, there's currently no download fallback for
-`nucle-cli` — if it isn't on `PATH`, `Format Document` shows an error
-naming the setting to point at it instead.
+If you already have a Rust toolchain and want to build these yourself
+instead of using the downloaded/`PATH` copy, see
+[building from source](https://github.com/VyomKulshrestha/Nucle-OS#building).
 
-## Installing locally
+## Settings
 
-Either way, first install dependencies and compile the client:
+| Setting | Default | Description |
+|---|---|---|
+| `nuclescript.serverPath` | `nucle-lsp` | Path to the `nucle-lsp` binary. Set an absolute path to override the automatic lookup/download. |
+| `nuclescript.cliPath` | `nucle-cli` | Path to the `nucle-cli` binary, used for formatting. Set an absolute path if it isn't on `PATH`. |
 
-```bash
-cd editors/vscode/nuclescript
-npm install
-npm run compile
-```
+## Troubleshooting
 
-**Option A — symlink for active development** (grammar changes take
-effect after a "Developer: Reload Window" in VS Code with no rebuild;
-client (`.ts`) changes need `npm run compile` first, then reload):
+- **No diagnostics/hover, or an error naming `nuclescript.serverPath`:**
+  the extension couldn't find or download a `nucle-lsp` binary for your
+  platform. Build one (`cargo build -p nucle_lsp --release` from a
+  [NucleOS](https://github.com/VyomKulshrestha/Nucle-OS) checkout) and
+  point `nuclescript.serverPath` at it.
+- **`Format Document` shows an error naming `nuclescript.cliPath`:**
+  `nucle-cli` isn't on `PATH`. Build it
+  (`cargo build -p nucle_cli --release`) and either add it to `PATH` or
+  set `nuclescript.cliPath` to the built binary's location.
 
-```bash
-# macOS/Linux
-ln -s "$(pwd)/editors/vscode/nuclescript" ~/.vscode/extensions/nuclescript-dev
+## Contributing
 
-# Windows (PowerShell, run as your normal user)
-New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.vscode\extensions\nuclescript-dev" -Target "$(Get-Location)\editors\vscode\nuclescript"
-```
+Local development setup, grammar testing, and the release process live
+in [CONTRIBUTING.md](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/editors/vscode/nuclescript/CONTRIBUTING.md)
+in the repository — not duplicated here since this page is what installs
+show, not what contributors need.
 
-**Option B — package and install a VSIX** (closer to how a real install
-would behave, but requires repackaging after every change):
+## License
 
-```bash
-cd editors/vscode/nuclescript
-npm install -g @vscode/vsce
-vsce package
-code --install-extension nuclescript-0.1.0.vsix
-```
-
-Either way, restart VS Code (or run "Developer: Reload Window" from the
-command palette) and open any `.nsl` file — e.g. anything under
-[`docs/examples/`](../../../docs/examples/) — to see it highlighted.
-
-## Testing the grammar
-
-`npm test` runs [`vscode-tmgrammar-snap`](https://github.com/PanAeon/vscode-tmgrammar-test)
-against every file in `docs/examples/`, snapshotting the token scope for
-each line. Snapshots live alongside the tested files
-(`docs/examples/*.nsl.snap`) and are checked into the repo — a change to
-the grammar (or to the compiler's keyword set, if the grammar isn't
-updated to match) that alters tokenization shows up as a diff, not a
-silent regression.
-
-```bash
-cd editors/vscode/nuclescript
-npm install
-npm test              # compare against committed snapshots
-npx vscode-tmgrammar-snap -s source.nuclescript -g syntaxes/nuclescript.tmLanguage.json -u ../../../docs/examples/*.nsl   # regenerate snapshots after an intentional grammar change
-```
-
-## Publishing an update to the Marketplace
-
-The publisher (`nuclescript`) is registered and the extension is live.
-There are two ways to ship a new version, and either works:
-
-**Manual (what was used for the first release)** — no PAT, no Azure
-DevOps, nothing beyond the Marketplace UI:
-
-```bash
-cd editors/vscode/nuclescript
-npm install
-npx @vscode/vsce package
-```
-
-Bump `"version"` in `package.json` first (the Marketplace won't accept
-re-uploading an already-published version number). Then, on the
-[publisher management page](https://marketplace.visualstudio.com/manage/publishers/nuclescript),
-open the NucleScript extension → **Update** → drag in the new `.vsix`.
-
-**Automated, via CI** — for a version bump that also needs new
-`nucle-lsp` binaries (any change to `nucle_lsp` itself):
-
-1. **Create a Personal Access Token** in Azure DevOps scoped to
-   `Marketplace (Manage)`, then add it as a repository secret named
-   `VSCE_PAT` (GitHub repo → Settings → Secrets and variables → Actions)
-   — one-time setup, skip if already done.
-2. **Push a release tag** matching `nucle-lsp-v<version>` (the exact
-   version in `package.json`, e.g. `nucle-lsp-v0.1.1`). This triggers
-   [`.github/workflows/release-vscode-extension.yml`](../../../.github/workflows/release-vscode-extension.yml)
-   (also runnable manually via `workflow_dispatch` for an existing tag),
-   which builds `nucle-lsp` for Windows/Linux/macOS (x64 and arm64) and
-   attaches them to a GitHub Release under that tag — what
-   `src/serverDownload.ts` downloads from for end users — packages the
-   extension into a `.vsix`, and publishes to the Marketplace if
-   `VSCE_PAT` is set (a no-op otherwise, so the binary release and VSIX
-   packaging still work without it).
-
-Either way, a `nucle-lsp-v<version>` tag needs to exist with binaries
-attached for `nuclescript.serverPath`'s download fallback to have
-anything to fetch for that version — local development (`nucle-lsp` on
-`PATH`, per the section above) is unaffected either way.
+MIT — see [LICENSE](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/editors/vscode/nuclescript/LICENSE).
