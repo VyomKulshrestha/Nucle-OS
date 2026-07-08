@@ -102,9 +102,16 @@ jobs:
       - name: Publish to the VS Code Marketplace
         # No-op until a publisher is registered and VSCE_PAT is added as a
         # repository secret -- see editors/vscode/nuclescript/README.md.
-        # (Secrets are permitted directly in `if:` conditions specifically
-        # for this "only run when configured" pattern.)
-        if: ${{ secrets.VSCE_PAT != '' }}
+        # `secrets` isn't a recognized named-value in a step's `if:`
+        # condition (confirmed directly: referencing it there made the
+        # whole workflow fail to parse, silently, for every push -- not
+        # just this step), so the "only run when configured" check has to
+        # happen inside the shell script instead.
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx @vscode/vsce publish -p "$VSCE_PAT"
+        run: |
+          if [ -n "$VSCE_PAT" ]; then
+            npx @vscode/vsce publish -p "$VSCE_PAT"
+          else
+            echo "VSCE_PAT is not set -- skipping Marketplace publish (binaries and the .vsix are still built and released above)."
+          fi
