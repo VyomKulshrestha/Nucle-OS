@@ -172,9 +172,10 @@ setting, then `nucle-lsp` on `PATH` (local development), then a prebuilt
 binary for the current OS/architecture downloaded once from
 `.github/workflows/release-vscode-extension.yml`'s GitHub Release output
 and cached in the extension's global storage — the path a marketplace
-install (no local Rust toolchain) needs. Publishing the extension itself
-remains a deliberate manual step (registering a Marketplace publisher,
-adding a `VSCE_PAT` repository secret) — see the extension's own README.
+install (no local Rust toolchain) needs. The extension is published on
+the Marketplace under the `nuclescript` publisher; see the extension's
+own README for how to ship an update (a manual `.vsix` upload, or the CI
+workflow if `VSCE_PAT` is configured as a repository secret).
 
 ### Formatter (`nucle fmt`)
 

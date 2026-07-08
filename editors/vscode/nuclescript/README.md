@@ -2,12 +2,9 @@
 
 Syntax highlighting **and live language server support** for `.nsl`
 files — NucleScript, the declarative DNA-storage operations language for
-NucleOS. Packaging is marketplace-ready (icon, changelog, license, a
-release workflow that builds `nucle-lsp` for every platform, and an
-in-extension downloader so an install doesn't need a local Rust
-toolchain) — but it **isn't published yet**. That's a deliberate, manual
-step; see [Publishing to the Marketplace](#publishing-to-the-marketplace)
-below for exactly what's left and why it isn't automated.
+NucleOS.
+
+[**Get it on the Visual Studio Marketplace**](https://marketplace.visualstudio.com/items?itemName=nuclescript.nuclescript).
 
 ## What's included
 
@@ -125,32 +122,44 @@ npm test              # compare against committed snapshots
 npx vscode-tmgrammar-snap -s source.nuclescript -g syntaxes/nuclescript.tmLanguage.json -u ../../../docs/examples/*.nsl   # regenerate snapshots after an intentional grammar change
 ```
 
-## Publishing to the Marketplace
+## Publishing an update to the Marketplace
 
-Everything code-side is in place; what's left is deliberately manual,
-since it requires credentials/decisions only the repo owner can make:
+The publisher (`nuclescript`) is registered and the extension is live.
+There are two ways to ship a new version, and either works:
 
-1. **Register a publisher.** Create one at the
-   [Visual Studio Marketplace publisher management page](https://marketplace.visualstudio.com/manage)
-   (needs a Microsoft/Azure DevOps account). The `publisher` field in
-   `package.json` is currently `"nuclescript"` — either register that
-   exact ID, or update `package.json` to match whatever ID you register.
-2. **Create a Personal Access Token** in Azure DevOps scoped to
+**Manual (what was used for the first release)** — no PAT, no Azure
+DevOps, nothing beyond the Marketplace UI:
+
+```bash
+cd editors/vscode/nuclescript
+npm install
+npx @vscode/vsce package
+```
+
+Bump `"version"` in `package.json` first (the Marketplace won't accept
+re-uploading an already-published version number). Then, on the
+[publisher management page](https://marketplace.visualstudio.com/manage/publishers/nuclescript),
+open the NucleScript extension → **Update** → drag in the new `.vsix`.
+
+**Automated, via CI** — for a version bump that also needs new
+`nucle-lsp` binaries (any change to `nucle_lsp` itself):
+
+1. **Create a Personal Access Token** in Azure DevOps scoped to
    `Marketplace (Manage)`, then add it as a repository secret named
-   `VSCE_PAT` (GitHub repo → Settings → Secrets and variables → Actions).
-3. **Push a release tag** matching `nucle-lsp-v<version>` (the exact
-   version in `package.json`, e.g. `nucle-lsp-v0.1.0`). This triggers
-   [`.github/workflows/release-vscode-extension.yml`](../../../.github/workflows/release-vscode-extension.yml),
-   which:
-   - Builds `nucle-lsp` for Windows/Linux/macOS (x64 and arm64) and
-     attaches them to a GitHub Release under that tag — this is what
-     `src/serverDownload.ts` downloads from for end users.
-   - Packages the extension into a `.vsix` (always, as a build artifact,
-     so you can sanity-check it even before publishing).
-   - Publishes to the Marketplace **only if `VSCE_PAT` is set** — the
-     step is a no-op otherwise, so the rest of the workflow (binary
-     releases, VSIX packaging) works fine before you've done steps 1-2.
+   `VSCE_PAT` (GitHub repo → Settings → Secrets and variables → Actions)
+   — one-time setup, skip if already done.
+2. **Push a release tag** matching `nucle-lsp-v<version>` (the exact
+   version in `package.json`, e.g. `nucle-lsp-v0.1.1`). This triggers
+   [`.github/workflows/release-vscode-extension.yml`](../../../.github/workflows/release-vscode-extension.yml)
+   (also runnable manually via `workflow_dispatch` for an existing tag),
+   which builds `nucle-lsp` for Windows/Linux/macOS (x64 and arm64) and
+   attaches them to a GitHub Release under that tag — what
+   `src/serverDownload.ts` downloads from for end users — packages the
+   extension into a `.vsix`, and publishes to the Marketplace if
+   `VSCE_PAT` is set (a no-op otherwise, so the binary release and VSIX
+   packaging still work without it).
 
-Until step 3 happens for a given version bump, `nuclescript.serverPath`'s
-download fallback has nothing to fetch — local development (`nucle-lsp`
-on `PATH`, per the section above) is unaffected either way.
+Either way, a `nucle-lsp-v<version>` tag needs to exist with binaries
+attached for `nuclescript.serverPath`'s download fallback to have
+anything to fetch for that version — local development (`nucle-lsp` on
+`PATH`, per the section above) is unaffected either way.
