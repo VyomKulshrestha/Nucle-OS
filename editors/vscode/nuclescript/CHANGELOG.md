@@ -8,6 +8,17 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.3]
+
+- Fixed the README's "Getting started" example: it told you to create
+  `hello.nsl` with a `store "sample_a.txt" into archive` line, but never
+  said to actually create `sample_a.txt` — `nucle-cli run` resolves
+  `store`/`retrieve` paths relative to the `.nsl` file's own folder (not
+  the CLI's working directory), so a fresh copy-paste failed with
+  `failed to read '...\sample_a.txt': The system cannot find the file
+  specified.`. The steps now say to create that file first, and the
+  "you'll see real output" line explains what that specific error means.
+
 ## [0.1.2]
 
 - **Added `NucleScript: Run File`** (▷ button in the editor title bar,

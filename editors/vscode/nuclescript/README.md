@@ -33,7 +33,11 @@ highlighting (syntax highlighting already covers most of that).
 
 ## Getting started
 
-1. Create a file named `hello.nsl`:
+1. In an empty folder, create a file named `sample_a.txt` with any text
+   in it — `store` below archives a real file, so it needs to exist.
+   `.nsl` files resolve `store`/`retrieve` paths relative to their own
+   folder, so put it next to `hello.nsl` in the next step.
+2. Create `hello.nsl` in the same folder:
 
    ```nsl
    pool archive: DnaPool {
@@ -47,14 +51,16 @@ highlighting (syntax highlighting already covers most of that).
    retrieve from archive
    ```
 
-2. Click the ▷ **Run File** button in the top-right of the editor (or
+3. Click the ▷ **Run File** button in the top-right of the editor (or
    press `Ctrl+F5` / `Cmd+F5`). Nothing else to install: both `nucle-lsp`
    (highlighting/diagnostics/hover) and `nucle-cli` (formatting and
    running) download themselves the first time they're needed, cached
    after that.
 
 You'll see real output in the terminal — the encode/store/retrieve
-result, strand counts, redundancy — not just a syntax check.
+result, strand counts, redundancy — not just a syntax check. (A "failed
+to read... sample_a.txt" error means step 1 was skipped, or the file
+ended up in a different folder than `hello.nsl`.)
 
 More complete examples (per-store options, a full simulate → consensus
 vote → encode/protect/store/verify pipeline) live in
