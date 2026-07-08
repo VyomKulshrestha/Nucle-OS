@@ -26,6 +26,49 @@ NucleScript, the declarative DNA-storage operations language for
 Not yet included: autocomplete, rename/refactoring, and semantic-token
 highlighting (syntax highlighting already covers most of that).
 
+## Getting started
+
+This extension is editor tooling — highlighting, checking, hovers,
+navigation, formatting — not a compiler in itself. Here's the shortest
+path to seeing it work, and to actually running a program.
+
+1. Create a file named `hello.nsl`:
+
+   ```nsl
+   pool archive: DnaPool {
+       codec: Ternary,
+       redundancy: 2x,
+       profile: Illumina
+   }
+
+   store "sample_a.txt" into archive
+
+   retrieve from archive
+   ```
+
+   Highlighting, live diagnostics, and hover work immediately — `nucle-lsp`
+   downloads itself the first time you open a `.nsl` file, nothing to
+   install.
+2. To *run* it — actually encode/store/retrieve, not just check it — you
+   need the `nucle-cli` binary. It isn't auto-downloaded yet; see
+   Requirements below for where to get one, then run
+   `nucle-cli run hello.nsl`.
+
+More complete examples (per-store options, a full simulate → consensus
+vote → encode/protect/store/verify pipeline) live in
+[`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
+in the main repo — start with `store.nsl`, then `hero.nsl`.
+
+**Using the official packages:** imports like `from "nuclescript/presets"`
+(`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,
+`@nuclescript/recovery` — see the
+[package registry](https://github.com/orgs/Nuclescript/packages))
+get full hover and diagnostics with no install step: those four packages
+are compiled directly into both `nucle-lsp` and `nucle-cli`, not fetched
+over the network. `nucle-cli package install/lock/verify` is only for
+generating a `nucle.lock` for reproducible builds — the editor doesn't
+need it.
+
 ## Requirements
 
 This extension is a client for two command-line tools from the NucleOS
@@ -34,7 +77,7 @@ project — it doesn't bundle a compiler itself:
 | Tool | Needed for | If it's not found |
 |---|---|---|
 | `nucle-lsp` | diagnostics, hover, go to definition, outline | Downloaded automatically for your OS/architecture on first use — nothing to install manually in most cases. |
-| `nucle-cli` | `Format Document` / format on save | Must be on your `PATH`, or pointed at via the `nuclescript.cliPath` setting (see below). No auto-download yet. |
+| `nucle-cli` | `Format Document` / format on save, and actually running NucleScript programs (`nucle-cli run`, `store`, `retrieve`, `simulate`, ...) | Not auto-downloaded yet. Grab a prebuilt binary for Windows/Linux/macOS from the [NucleOS release](https://github.com/VyomKulshrestha/Nucle-OS/releases/tag/v0.1.0), put it on your `PATH`, or point `nuclescript.cliPath` at it. |
 
 If you already have a Rust toolchain and want to build these yourself
 instead of using the downloaded/`PATH` copy, see
