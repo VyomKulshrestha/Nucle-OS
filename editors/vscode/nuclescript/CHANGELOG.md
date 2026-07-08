@@ -32,6 +32,13 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
   Moved the "publish only if configured" check into the shell script
   itself, and added a `workflow_dispatch` trigger for re-running an
   existing tag manually.
+- Dropped the Intel Mac (`macos-13`) build from the release workflow —
+  GitHub's shared runner pool for it became effectively unavailable
+  (observed directly: two separate runs stuck queued on that exact job
+  for 30+ minutes, while every other platform in the same run finished
+  in under 2.5 minutes). `src/serverDownload.ts` now correctly falls back
+  to "build it yourself" for Intel Mac instead of a raw download 404;
+  Apple Silicon Macs are unaffected.
 
 ## [0.1.0]
 

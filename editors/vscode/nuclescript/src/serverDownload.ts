@@ -36,12 +36,14 @@ function isOnPath(command: string): boolean {
 
 /** The release asset name published for this platform/architecture, or
  * `undefined` if no prebuilt binary exists for it (arm64 Linux/Windows,
- * for instance) -- caller falls back to asking the user to build it. */
+ * or Intel Mac -- GitHub's shared runner pool for `macos-13` became
+ * effectively unavailable, so that build was dropped from the release
+ * workflow) -- caller falls back to asking the user to build it, rather
+ * than this returning a name that would just 404. */
 function platformAssetName(): string | undefined {
   const { platform, arch } = process;
   if (platform === "win32" && arch === "x64") return "nucle-lsp-windows-x64.exe";
   if (platform === "linux" && arch === "x64") return "nucle-lsp-linux-x64";
-  if (platform === "darwin" && arch === "x64") return "nucle-lsp-macos-x64";
   if (platform === "darwin" && arch === "arm64") return "nucle-lsp-macos-arm64";
   return undefined;
 }
