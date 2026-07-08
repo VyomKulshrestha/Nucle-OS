@@ -25,15 +25,20 @@ The extension needs a `nucle-lsp` binary, resolved in this order (see
    exists for your platform, the extension shows an error telling you to
    build one and point `nuclescript.serverPath` at it.
 
-Formatting needs a separate `nucle-cli` binary (the language server and
-CLI are different executables), resolved via the `nuclescript.cliPath`
-setting (default `nucle-cli`, looked up on `PATH`). Build it with:
+Formatting and **Run File** need a separate `nucle-cli` binary (the
+language server and CLI are different executables), resolved via the
+`nuclescript.cliPath` setting (default `nucle-cli`) the same three-tier
+way as `nucle-lsp` (`src/cliDownload.ts`): the setting if it's not the
+default, then `PATH`, then a prebuilt binary downloaded once from
+[NucleOS's own releases](https://github.com/VyomKulshrestha/Nucle-OS/releases)
+(pinned to a specific tag in `cliDownload.ts` — bump `CLI_RELEASE_TAG`
+there when a newer release ships) and cached. For local development,
+build your own with:
 ```bash
 cargo build -p nucle_cli --release
 ```
-Unlike `nucle-lsp`, there's currently no download fallback for
-`nucle-cli` — if it isn't on `PATH`, `Format Document` shows an error
-naming the setting to point at it instead.
+and put it on `PATH` (or point `nuclescript.cliPath` at it) to use that
+instead of the downloaded copy.
 
 ## Installing your local build
 

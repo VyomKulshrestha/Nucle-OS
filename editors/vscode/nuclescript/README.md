@@ -22,15 +22,16 @@ NucleScript, the declarative DNA-storage operations language for
   ```json
   { "[nuclescript]": { "editor.formatOnSave": true } }
   ```
+- **Run File** — a ▷ button in the editor title bar (also `Ctrl+F5` /
+  `Cmd+F5`, the command palette, and the Explorer right-click menu) that
+  actually executes the program: encode, store, retrieve, simulate,
+  whatever the file does, with output in an integrated terminal — the
+  same as pressing Run in any other language extension.
 
 Not yet included: autocomplete, rename/refactoring, and semantic-token
 highlighting (syntax highlighting already covers most of that).
 
 ## Getting started
-
-This extension is editor tooling — highlighting, checking, hovers,
-navigation, formatting — not a compiler in itself. Here's the shortest
-path to seeing it work, and to actually running a program.
 
 1. Create a file named `hello.nsl`:
 
@@ -46,13 +47,14 @@ path to seeing it work, and to actually running a program.
    retrieve from archive
    ```
 
-   Highlighting, live diagnostics, and hover work immediately — `nucle-lsp`
-   downloads itself the first time you open a `.nsl` file, nothing to
-   install.
-2. To *run* it — actually encode/store/retrieve, not just check it — you
-   need the `nucle-cli` binary. It isn't auto-downloaded yet; see
-   Requirements below for where to get one, then run
-   `nucle-cli run hello.nsl`.
+2. Click the ▷ **Run File** button in the top-right of the editor (or
+   press `Ctrl+F5` / `Cmd+F5`). Nothing else to install: both `nucle-lsp`
+   (highlighting/diagnostics/hover) and `nucle-cli` (formatting and
+   running) download themselves the first time they're needed, cached
+   after that.
+
+You'll see real output in the terminal — the encode/store/retrieve
+result, strand counts, redundancy — not just a syntax check.
 
 More complete examples (per-store options, a full simulate → consensus
 vote → encode/protect/store/verify pipeline) live in
@@ -71,16 +73,17 @@ need it.
 
 ## Requirements
 
-This extension is a client for two command-line tools from the NucleOS
-project — it doesn't bundle a compiler itself:
+Nothing — the extension is a client for two command-line tools from the
+NucleOS project, but both are fetched for you automatically the first
+time they're needed:
 
-| Tool | Needed for | If it's not found |
+| Tool | Needed for | If no prebuilt binary exists for your platform |
 |---|---|---|
-| `nucle-lsp` | diagnostics, hover, go to definition, outline | Downloaded automatically for your OS/architecture on first use — nothing to install manually in most cases. |
-| `nucle-cli` | `Format Document` / format on save, and actually running NucleScript programs (`nucle-cli run`, `store`, `retrieve`, `simulate`, ...) | Not auto-downloaded yet. Grab a prebuilt binary for Windows/Linux/macOS from the [NucleOS release](https://github.com/VyomKulshrestha/Nucle-OS/releases/tag/v0.1.0), put it on your `PATH`, or point `nuclescript.cliPath` at it. |
+| `nucle-lsp` | diagnostics, hover, go to definition, outline | Windows/Linux x64 and Apple Silicon Mac are covered. Otherwise, build it (`cargo build -p nucle_lsp --release` from a [NucleOS](https://github.com/VyomKulshrestha/Nucle-OS) checkout) and point `nuclescript.serverPath` at it. |
+| `nucle-cli` | Format Document / format on save, and **Run File** | Windows/Linux x64 and Mac (Intel or Apple Silicon, via Rosetta) are covered. Otherwise, build it (`cargo build -p nucle_cli --release`) and point `nuclescript.cliPath` at it. |
 
-If you already have a Rust toolchain and want to build these yourself
-instead of using the downloaded/`PATH` copy, see
+Already have `nucle-lsp`/`nucle-cli` on `PATH` (e.g. a local Rust build)?
+That's used automatically instead of downloading anything — see
 [building from source](https://github.com/VyomKulshrestha/Nucle-OS#building).
 
 ## Settings
@@ -88,19 +91,22 @@ instead of using the downloaded/`PATH` copy, see
 | Setting | Default | Description |
 |---|---|---|
 | `nuclescript.serverPath` | `nucle-lsp` | Path to the `nucle-lsp` binary. Set an absolute path to override the automatic lookup/download. |
-| `nuclescript.cliPath` | `nucle-cli` | Path to the `nucle-cli` binary, used for formatting. Set an absolute path if it isn't on `PATH`. |
+| `nuclescript.cliPath` | `nucle-cli` | Path to the `nucle-cli` binary, used for formatting and **Run File**. Set an absolute path to override the automatic lookup/download. |
 
 ## Troubleshooting
 
 - **No diagnostics/hover, or an error naming `nuclescript.serverPath`:**
   the extension couldn't find or download a `nucle-lsp` binary for your
-  platform. Build one (`cargo build -p nucle_lsp --release` from a
-  [NucleOS](https://github.com/VyomKulshrestha/Nucle-OS) checkout) and
-  point `nuclescript.serverPath` at it.
-- **`Format Document` shows an error naming `nuclescript.cliPath`:**
-  `nucle-cli` isn't on `PATH`. Build it
-  (`cargo build -p nucle_cli --release`) and either add it to `PATH` or
-  set `nuclescript.cliPath` to the built binary's location.
+  platform/architecture. Build one (`cargo build -p nucle_lsp --release`
+  from a [NucleOS](https://github.com/VyomKulshrestha/Nucle-OS) checkout)
+  and point `nuclescript.serverPath` at it.
+- **`Format Document` or `Run File` shows an error naming
+  `nuclescript.cliPath`:** same thing for `nucle-cli` — build it
+  (`cargo build -p nucle_cli --release`) and point `nuclescript.cliPath`
+  at the built binary.
+- **`Run File` does nothing:** it only runs `.nsl` files — make sure the
+  active editor tab is a NucleScript file, and check the "NucleScript"
+  terminal panel for the actual error output.
 
 ## Contributing
 

@@ -617,12 +617,11 @@ A VS Code extension lives at
 highlighting for `.nsl` files (keywords, types, profile/codec constants,
 strings, and the `3x`/`99.5%`/date/size-in-bytes number forms `lexer.rs`
 actually recognizes), derived directly from the real grammar so it can't
-highlight a token the compiler would reject. It's local-only for now (not
-published to the Marketplace) — see the extension's own README for install
-instructions. A snapshot test (`npm test` inside that directory) tokenizes
-every file in `docs/examples/` and diffs against committed snapshots, so a
-compiler keyword change that isn't mirrored in the grammar shows up as a
-CI-visible diff instead of silently going stale.
+highlight a token the compiler would reject. A snapshot test (`npm test`
+inside that directory) tokenizes every file in `docs/examples/` and diffs
+against committed snapshots, so a compiler keyword change that isn't
+mirrored in the grammar shows up as a CI-visible diff instead of silently
+going stale.
 
 The extension also spawns a real language server —
 [`nucle_lsp`](nucle_lsp/) — over stdio, so `.nsl` files get live
@@ -636,15 +635,24 @@ cross-checks published diagnostics against `nucle check`'s own output for
 the same source. Build it with `cargo build -p nucle_lsp --release`.
 Autocomplete, rename, and semantic tokens aren't built yet.
 
+Beyond editing, the extension can format (`Format Document`/format on
+save, via `nucle-cli fmt`) and actually run a program (`NucleScript: Run
+File` — a ▷ button, `Ctrl+F5`/`Cmd+F5`, or the Explorer context menu —
+via `nucle-cli run`, with output in an integrated terminal). Neither
+needs a local Rust toolchain: `nucle-lsp` and `nucle-cli` are each
+resolved on `PATH` first, then downloaded once from GitHub Releases and
+cached (`src/serverDownload.ts`, `src/cliDownload.ts`) if not found —
+installing the extension is enough to write, check, format, and run a
+`.nsl` file.
+
 The extension is [**published on the VS Code
 Marketplace**](https://marketplace.visualstudio.com/items?itemName=nuclescript.nuclescript)
 — icon, changelog, license, a
 `.github/workflows/release-vscode-extension.yml` that builds `nucle-lsp`
 for Windows/Linux/macOS (x64 + arm64) and attaches them to a GitHub
-Release, and an in-extension downloader (`src/serverDownload.ts`) so a
-marketplace install works without a local Rust toolchain. See the
-extension's own
-[README](editors/vscode/nuclescript/README.md#publishing-an-update-to-the-marketplace)
+Release, and an in-extension downloader so a marketplace install works
+without a local Rust toolchain. See the extension's own
+[CONTRIBUTING.md](editors/vscode/nuclescript/CONTRIBUTING.md#publishing-an-update-to-the-marketplace)
 for how to ship an update.
 
 ### Playground

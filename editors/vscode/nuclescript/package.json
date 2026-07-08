@@ -20,7 +20,7 @@
     "vscode": "^1.75.0"
   },
   "categories": ["Programming Languages"],
-  "activationEvents": ["onLanguage:nuclescript"],
+  "activationEvents": ["onLanguage:nuclescript", "onCommand:nuclescript.runFile"],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
@@ -38,6 +38,43 @@
         "path": "./syntaxes/nuclescript.tmLanguage.json"
       }
     ],
+    "commands": [
+      {
+        "command": "nuclescript.runFile",
+        "title": "NucleScript: Run File",
+        "icon": "$(play)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "nuclescript.runFile",
+          "when": "resourceLangId == nuclescript",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "nuclescript.runFile",
+          "when": "resourceLangId == nuclescript",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "nuclescript.runFile",
+          "when": "resourceLangId == nuclescript"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "nuclescript.runFile",
+        "key": "ctrl+f5",
+        "mac": "cmd+f5",
+        "when": "resourceLangId == nuclescript"
+      }
+    ],
     "configuration": {
       "title": "NucleScript",
       "properties": {
@@ -49,7 +86,7 @@
         "nuclescript.cliPath": {
           "type": "string",
           "default": "nucle-cli",
-          "description": "Path to the nucle-cli binary, used for `Format Document`/format-on-save (`nucle fmt`). Defaults to looking it up on PATH (e.g. a local `cargo build -p nucle_cli`). Set an absolute path if it isn't on PATH."
+          "description": "Path to the nucle-cli binary, used for `Format Document`/format-on-save and for `NucleScript: Run File`. Defaults to looking it up on PATH first (e.g. a local `cargo build -p nucle_cli`); if not found there, a prebuilt binary for your platform is downloaded once from GitHub Releases and cached. Set an absolute path to override both."
         }
       }
     }

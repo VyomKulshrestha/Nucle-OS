@@ -172,10 +172,28 @@ setting, then `nucle-lsp` on `PATH` (local development), then a prebuilt
 binary for the current OS/architecture downloaded once from
 `.github/workflows/release-vscode-extension.yml`'s GitHub Release output
 and cached in the extension's global storage — the path a marketplace
-install (no local Rust toolchain) needs. The extension is published on
-the Marketplace under the `nuclescript` publisher; see the extension's
-own README for how to ship an update (a manual `.vsix` upload, or the CI
-workflow if `VSCE_PAT` is configured as a repository secret).
+install (no local Rust toolchain) needs.
+
+`src/formatProvider.ts` (Format Document) and `src/runProvider.ts`
+(`NucleScript: Run File`) both shell out to a separate `nucle-cli`
+binary rather than `nucle-lsp` — different executable, same three-tier
+resolution, via `src/cliDownload.ts`. It shares the actual HTTPS
+fetch-and-cache logic with `serverDownload.ts` (factored into
+`src/download.ts`) but downloads from the main NucleOS repo's own `v*`
+release tags instead of `nucle-lsp-v*`, since `nucle-cli` ships as part
+of NucleOS itself and is versioned independently of the extension —
+`cliDownload.ts` pins a specific tag (`CLI_RELEASE_TAG`) rather than
+deriving one from the extension's version. `runProvider.ts` runs
+`nucle-cli run <file>` as a VS Code `Task` (`ShellExecution`) rather than
+a raw child process, so its output shows up in an integrated terminal
+the way a real "Run" command would, and argument quoting is handled by
+the Tasks API instead of by hand.
+
+The extension is published on the Marketplace under the `nuclescript`
+publisher; see the extension's own
+[CONTRIBUTING.md](../editors/vscode/nuclescript/CONTRIBUTING.md) for how
+to ship an update (a manual `.vsix` upload, or the CI workflow if
+`VSCE_PAT` is configured as a repository secret).
 
 ### Formatter (`nucle fmt`)
 

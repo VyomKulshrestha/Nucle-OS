@@ -11,13 +11,14 @@
 
 import { spawn } from "child_process";
 import * as vscode from "vscode";
+import { resolveCliPath } from "./cliDownload";
 
 export function registerFormattingProvider(context: vscode.ExtensionContext): void {
   const provider: vscode.DocumentFormattingEditProvider = {
     async provideDocumentFormattingEdits(document, _options, token) {
-      const cliPath = vscode.workspace.getConfiguration("nuclescript").get<string>("cliPath", "nucle-cli");
       const source = document.getText();
       try {
+        const cliPath = await resolveCliPath(context);
         const formatted = await runFmt(cliPath, source, token);
         if (formatted === source) {
           return [];
