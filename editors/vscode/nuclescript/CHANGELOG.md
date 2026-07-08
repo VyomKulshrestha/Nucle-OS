@@ -8,6 +8,27 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.2]
+
+- **Added `NucleScript: Run File`** (▷ button in the editor title bar,
+  `Ctrl+F5`/`Cmd+F5`, command palette, Explorer context menu) — runs
+  `nucle-cli run <file>` in an integrated terminal, so a program can
+  actually be executed (encode/store/retrieve/simulate) from the editor,
+  not just checked or formatted.
+- **`nucle-cli` is now auto-downloaded**, the same way `nucle-lsp` already
+  was: on first use (formatting or Run File) it's looked up on `PATH`,
+  and if not found there, a prebuilt binary is fetched once from the
+  NucleOS project's GitHub Releases and cached (`src/cliDownload.ts`,
+  sharing the fetch/cache logic in the new `src/download.ts` with
+  `serverDownload.ts`). Previously `nucle-cli` had no download path at
+  all — the README said to build it from source or find it on `PATH`,
+  which was the actual gap behind "I installed the extension, now what,
+  there's no compiler."
+- Added a "Getting started" section to the README with a runnable example
+  and documented that the four official `@nuclescript/*` packages resolve
+  for hover/diagnostics with no install step, since they're compiled
+  directly into `nucle-lsp` and `nucle-cli`.
+
 ## [0.1.1]
 
 - **Rewrote the README for the audience that actually reads it.** The
@@ -39,24 +60,6 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
   in under 2.5 minutes). `src/serverDownload.ts` now correctly falls back
   to "build it yourself" for Intel Mac instead of a raw download 404;
   Apple Silicon Macs are unaffected.
-- **Added `NucleScript: Run File`** (▷ button in the editor title bar,
-  `Ctrl+F5`/`Cmd+F5`, command palette, Explorer context menu) — runs
-  `nucle-cli run <file>` in an integrated terminal, so a program can
-  actually be executed (encode/store/retrieve/simulate) from the editor,
-  not just checked or formatted.
-- **`nucle-cli` is now auto-downloaded**, the same way `nucle-lsp` already
-  was: on first use (formatting or Run File) it's looked up on `PATH`,
-  and if not found there, a prebuilt binary is fetched once from the
-  NucleOS project's GitHub Releases and cached (`src/cliDownload.ts`,
-  sharing the fetch/cache logic in the new `src/download.ts` with
-  `serverDownload.ts`). Previously `nucle-cli` had no download path at
-  all — the README said to build it from source or find it on `PATH`,
-  which was the actual gap behind "I installed the extension, now what,
-  there's no compiler."
-- Added a "Getting started" section to the README with a runnable example
-  and documented that the four official `@nuclescript/*` packages resolve
-  for hover/diagnostics with no install step, since they're compiled
-  directly into `nucle-lsp` and `nucle-cli`.
 
 ## [0.1.0]
 
