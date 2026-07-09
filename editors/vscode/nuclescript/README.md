@@ -27,6 +27,10 @@ NucleScript, the declarative DNA-storage operations language for
   actually executes the program: encode, store, retrieve, simulate,
   whatever the file does, with output in an integrated terminal — the
   same as pressing Run in any other language extension.
+- **`Result<T, E>` / `?`** — highlighting, diagnostics, hover, and Run
+  File all understand NucleScript's error propagation: `store`/`delete`
+  can produce a catchable `Result<T, Str>` instead of aborting the whole
+  program on failure, unwrapped or propagated with `?`.
 
 Not yet included: autocomplete, rename/refactoring, and semantic-token
 highlighting (syntax highlighting already covers most of that).
@@ -63,9 +67,11 @@ to read... sample_a.txt" error means step 1 was skipped, or the file
 ended up in a different folder than `hello.nsl`.)
 
 More complete examples (per-store options, a full simulate → consensus
-vote → encode/protect/store/verify pipeline) live in
+vote → encode/protect/store/verify pipeline, catching a real store
+failure with `Result<T, E>`/`?` instead of aborting the run) live in
 [`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
-in the main repo — start with `store.nsl`, then `hero.nsl`.
+in the main repo — start with `store.nsl`, then `hero.nsl`, then
+`result_fallback_store.nsl`.
 
 **Using the official packages:** imports like `from "nuclescript/presets"`
 (`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,

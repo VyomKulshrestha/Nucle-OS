@@ -8,6 +8,21 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.4]
+
+- **NucleScript now supports `Result<T, E>` and `?` for real error
+  handling.** `store`/`delete` can appear in expression position,
+  producing a catchable `Result<T, Str>` instead of aborting the whole
+  program on a VFS failure; `?` unwraps or propagates it. Highlighting,
+  live diagnostics, hover, formatting, and Run File all understand the
+  new syntax — see the updated README and
+  [`docs/examples/result_fallback_store.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/result_fallback_store.nsl)
+  in the main repo.
+- Bumped the downloaded `nucle-lsp`/`nucle-cli` binaries to the release
+  that actually understands the new syntax — a fresh install of this
+  version downloads binaries that can parse `Result<T, Str>`/`?`; a
+  fresh install of 0.1.3 or earlier would not.
+
 ## [0.1.3]
 
 - Fixed the README's "Getting started" example: it told you to create
