@@ -633,6 +633,14 @@ impl TypeChecker {
                     ));
                     return None;
                 }
+                // Generics: a `Pool<T>`-typed parameter's `PoolState::Var`
+                // is unified against each argument's real concrete state
+                // here, building `substitution` -- the *only* place a
+                // type parameter is ever resolved (there's no explicit
+                // `foo::<Illumina>()` syntax to fall back on). The
+                // pre-existing concrete-vs-concrete branch (now the `_`
+                // arm below) is completely untouched.
+                let mut substitution: HashMap<String, PoolState> = HashMap::new();
                 for (param, arg) in func.params.iter().zip(args.iter()) {
                     if let TypeExpr::Pool(expected_pool) = &param.ty {
                         let Some(inferred_arg) = self.infer_expr(arg, span) else {
@@ -642,11 +650,27 @@ impl TypeChecker {
                             ));
                             continue;
                         };
-                        if expected_pool.state != inferred_arg.state {
-                            self.report.error(span, "E-ARG-TYPE-MISMATCH", format!(
-                                "argument for parameter '{}' expects Pool<{}>, but got Pool<{}>",
-                                param.name, expected_pool.state, inferred_arg.state
-                            ));
+                        match &expected_pool.state {
+                            PoolState::Var(t) => match substitution.get(t) {
+                                Some(bound) if *bound != inferred_arg.state => {
+                                    self.report.error(span, "E-TYPE-PARAM-CONFLICT", format!(
+                                        "type parameter '{}' was already resolved to Pool<{}> by an earlier argument, but argument for parameter '{}' implies Pool<{}>",
+                                        t, bound, param.name, inferred_arg.state
+                                    ));
+                                }
+                                Some(_) => {}
+                                None => {
+                                    substitution.insert(t.clone(), inferred_arg.state.clone());
+                                }
+                            },
+                            _ => {
+                                if expected_pool.state != inferred_arg.state {
+                                    self.report.error(span, "E-ARG-TYPE-MISMATCH", format!(
+                                        "argument for parameter '{}' expects Pool<{}>, but got Pool<{}>",
+                                        param.name, expected_pool.state, inferred_arg.state
+                                    ));
+                                }
+                            }
                         }
                     }
                 }
@@ -667,7 +691,22 @@ impl TypeChecker {
                     return self.infer_consensus_vote(args, span);
                 }
 
-                match &func.return_type {
+                // A type parameter that no argument ever bound can't
+                // produce a concrete return type -- there's no explicit
+                // type-argument syntax to fall back on, so this is a
+                // real error, not a case to silently leave unresolved.
+                for t in &func.type_params {
+                    if !substitution.contains_key(t) {
+                        self.report.error(span, "E-TYPE-PARAM-UNRESOLVED", format!(
+                            "type parameter '{}' of function '{}' could not be resolved from any argument",
+                            t, name
+                        ));
+                        return None;
+                    }
+                }
+
+                let return_type = substitute_pool_state(&func.return_type, &substitution);
+                match &return_type {
                     TypeExpr::Pool(pool_type) => Some(ProbPoolType {
                         state: pool_type.state.clone(),
                         error_rate_percent: pool_type.error_rate_percent.unwrap_or(0.0),
@@ -912,6 +951,7 @@ impl TypeChecker {
 
         FunctionDecl {
             name: func.name.clone(),
+            type_params: func.type_params.clone(),
             params: func.params.clone(),
             return_type: func.return_type.clone(),
             body: desugared_body,
@@ -1259,6 +1299,29 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
             confirmed: op.confirmed,
             span: op.span,
         }),
+    }
+}
+
+/// Resolves a generic function's return type for one specific call, by
+/// replacing any `PoolState::Var` it contains with the concrete state
+/// `substitution` unified for that variable at this call site (see
+/// `infer_expr`'s `FunctionCall` arm). A no-op for a non-generic
+/// function's return type (nothing to substitute), and for a `Var` that
+/// -- despite `E-TYPE-PARAM-UNRESOLVED` guarding against this at the one
+/// call site above -- somehow isn't in `substitution`, in which case the
+/// type is returned unchanged rather than panicking. Only `TypeExpr::Pool`
+/// can ever contain a `PoolState`, so this is the only case that does
+/// anything.
+fn substitute_pool_state(ty: &TypeExpr, substitution: &HashMap<String, PoolState>) -> TypeExpr {
+    match ty {
+        TypeExpr::Pool(pool_type) => match &pool_type.state {
+            PoolState::Var(t) => match substitution.get(t) {
+                Some(resolved) => TypeExpr::Pool(PoolType { state: resolved.clone(), error_rate_percent: pool_type.error_rate_percent }),
+                None => ty.clone(),
+            },
+            _ => ty.clone(),
+        },
+        _ => ty.clone(),
     }
 }
 

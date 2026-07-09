@@ -7,11 +7,19 @@ use std::fmt;
 pub struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    /// The enclosing function's type parameter names, active only while
+    /// parsing that one function's params/return type/body (set in
+    /// `parse_function_decl` right after `<...>`, cleared when it
+    /// returns). Consulted by `parse_type_expr`'s `Pool<...>` branch to
+    /// tell a type parameter (`Pool<T>`) apart from a concrete profile
+    /// name (`Pool<Illumina>`). Functions can't nest in this grammar, so
+    /// a single field is enough -- no save/restore stack needed.
+    type_params_in_scope: Vec<String>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, index: 0 }
+        Self { tokens, index: 0, type_params_in_scope: Vec::new() }
     }
 
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
@@ -210,6 +218,41 @@ impl Parser {
         let start = self.start_span();
         self.expect_ident_text("fn")?;
         let name = self.expect_ident_any("function name")?;
+
+        // `fn name<T, U>(...)` -- optional type-parameter list, usable
+        // only as `Pool<T>`'s state slot (see `PoolState::Var`). Scoped
+        // for the rest of this function's params/return type/body;
+        // cleared unconditionally before returning below, including on
+        // every early-return error path, since a stale scope would leak
+        // into whatever's parsed next.
+        let type_params = if self.check(TokenKind::Lt) {
+            self.advance();
+            let mut names = Vec::new();
+            while !self.check(TokenKind::Gt) {
+                names.push(self.expect_ident_any("type parameter name")?);
+                if !self.consume_comma() && !self.check(TokenKind::Gt) {
+                    return Err(self.error_here("expected ',' or '>' in type parameter list"));
+                }
+            }
+            self.expect(TokenKind::Gt, "'>' after type parameter list")?;
+            names
+        } else {
+            Vec::new()
+        };
+        self.type_params_in_scope = type_params.clone();
+
+        let result = self.parse_function_decl_rest(start, name, type_params, doc);
+        self.type_params_in_scope.clear();
+        result
+    }
+
+    fn parse_function_decl_rest(
+        &mut self,
+        start: (usize, usize),
+        name: String,
+        type_params: Vec<String>,
+        doc: Option<String>,
+    ) -> Result<FunctionDecl, ParseError> {
         self.expect(TokenKind::LParen, "'(' after function name")?;
         let mut params = Vec::new();
         while !self.check(TokenKind::RParen) {
@@ -252,6 +295,7 @@ impl Parser {
 
         Ok(FunctionDecl {
             name,
+            type_params,
             params,
             return_type,
             body,
@@ -379,8 +423,18 @@ impl Parser {
             self.advance();
             self.expect(TokenKind::Lt, "'<' after Pool")?;
             let state_name = self.expect_ident_any("pool profile or state")?;
-            let state = PoolState::parse(&state_name)
-                .ok_or_else(|| self.error_previous(format!("unknown pool profile or state '{}'", state_name)))?;
+            // A name matching the enclosing function's own `<T, U>` list
+            // is a type parameter, not a concrete profile -- checked
+            // before `PoolState::parse` so `Pool<T>` doesn't fall
+            // through to "unknown pool profile or state 'T'". A typo'd
+            // name that's neither a declared type parameter nor a real
+            // profile still hits that exact existing error unchanged.
+            let state = if self.type_params_in_scope.contains(&state_name) {
+                PoolState::Var(state_name)
+            } else {
+                PoolState::parse(&state_name)
+                    .ok_or_else(|| self.error_previous(format!("unknown pool profile or state '{}'", state_name)))?
+            };
             let error_rate_percent = if self.consume_comma() {
                 Some(self.expect_percent("pool error rate")?)
             } else {

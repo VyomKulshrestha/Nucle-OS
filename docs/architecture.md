@@ -173,6 +173,35 @@ from `docs/grammar.md`/the actual keyword sets in `lexer.rs`/`parser.rs`
 up as a diff. This is purely presentational; live diagnostics, hover, and
 navigation come from the language server below.
 
+### Generics (`fn name<T>(...)`)
+
+Resolves entirely at type-check time, with no runtime representation and
+no per-instantiation re-checking of a function's body — neither classic
+monomorphization (generating a fresh copy of code per concrete type) nor
+dynamic dispatch, because this codebase's actual constraints make both
+unnecessary: `Profile` (`Illumina`/`Nanopore`/`Twist`) is a closed, flat
+enum with no subtyping anywhere in the language, so variance never comes
+up, and effect classification (`effects.rs`) never inspects a pool's
+profile at all — every operation already behaves identically across all
+three. Concretely: `PoolState` (the state slot inside `Pool<...>`) gains
+a fourth variant, `Var(String)`, an unbound type parameter that a
+generic function's body is type-checked against exactly once, opaquely —
+the *existing* fallback typeck already uses when it needs a concrete
+`Profile` but only has a non-`Profile` state (`Amplified`/`Recovered`)
+absorbs `Var` for free, with zero new code, since it was already a
+wildcard. At each call site, `infer_expr`'s `FunctionCall` arm unifies
+every `Pool<T>`-typed argument against the parameter's `Var`, building a
+substitution used only to (a) catch the same type parameter being bound
+to two different profiles in one call (`E-TYPE-PARAM-CONFLICT`) and (b)
+resolve a return type that mentions the type parameter to the concrete
+type for that specific call. `codegen.rs`'s interpreter (the one added
+for `Result<T,E>`/`?` above) needs zero changes — it resolves a function
+call purely by name and executes whatever concrete `Value`s were passed,
+with no notion of "generic" at any point. See the "Generics" section of
+[docs/grammar.md](grammar.md) for the full semantics, including the one
+honest limitation (a handful of profile-specific typeck warnings can't
+fire while checking a generic body against an abstract type parameter).
+
 ### Language Server (`nucle_lsp`)
 
 `nucle_lsp` is a thin LSP protocol adapter, not a second compiler: every

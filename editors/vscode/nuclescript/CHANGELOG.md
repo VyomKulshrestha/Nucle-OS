@@ -8,6 +8,20 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.5]
+
+- **NucleScript now supports generics over `Pool<T>`'s profile.** `fn
+  name<T>(...)` lets one function work with a `Pool<Illumina>`,
+  `Pool<Nanopore>`, or `Pool<Twist>` argument instead of needing a
+  hardcoded copy per profile. Highlighting, live diagnostics, hover,
+  formatting, and `nucle doc` all understand the new `<T>` syntax — see
+  the updated README and
+  [`docs/examples/generic_pool_recovery.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/generic_pool_recovery.nsl)
+  in the main repo.
+- Bumped the downloaded `nucle-lsp`/`nucle-cli` binaries to the release
+  that actually understands the new syntax, same reason as 0.1.4's
+  `Result<T,E>`/`?` bump.
+
 ## [0.1.4]
 
 - **NucleScript now supports `Result<T, E>` and `?` for real error

@@ -54,8 +54,9 @@ pub fn generate_docs(program: &Program) -> String {
             name: &d.name,
             doc: d.doc.as_deref(),
             signature: format!(
-                "fn {}({}) -> {}",
+                "fn {}{}({}) -> {}",
                 d.name,
+                render_type_params(&d.type_params),
                 d.params.iter().map(|p| format!("{}: {}", p.name, render_type(&p.ty))).collect::<Vec<_>>().join(", "),
                 render_type(&d.return_type)
             ),
@@ -134,6 +135,18 @@ pub(crate) fn render_type(ty: &TypeExpr) -> String {
     }
 }
 
+/// Renders a function's `<T, U>` type-parameter list for its signature,
+/// or an empty string for a non-generic function (the overwhelming
+/// majority) -- also reused by `nucle_lsp/src/backend.rs`'s hover text,
+/// same reuse pattern as `render_type`.
+pub(crate) fn render_type_params(type_params: &[String]) -> String {
+    if type_params.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", type_params.join(", "))
+    }
+}
+
 fn render_pipeline_steps(steps: &[PipelineStep]) -> String {
     steps
         .iter()
@@ -157,6 +170,7 @@ mod tests {
         let program = Program {
             declarations: vec![Declaration::Function(FunctionDecl {
                 name: "archive_it".into(),
+                type_params: vec![],
                 params: vec![FnParam { name: "data".into(), ty: TypeExpr::File }],
                 return_type: TypeExpr::DnaFile,
                 body: Vec::new(),
@@ -206,6 +220,7 @@ mod tests {
         let program = Program {
             declarations: vec![Declaration::Function(FunctionDecl {
                 name: "wipe".into(),
+                type_params: vec![],
                 params: vec![],
                 return_type: TypeExpr::Void,
                 body: vec![Declaration::Operation(Operation::Delete(DeleteOp {

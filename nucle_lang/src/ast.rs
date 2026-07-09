@@ -202,6 +202,12 @@ pub struct LetDecl {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FunctionDecl {
     pub name: String,
+    /// `fn name<T, U>(...)` -- type parameter names, usable only as the
+    /// `PoolState` slot inside a `Pool<T>` parameter/return type (see
+    /// `PoolState::Var`). Empty for every non-generic function, which is
+    /// every function that existed before this field was added.
+    #[serde(default)]
+    pub type_params: Vec<String>,
     pub params: Vec<FnParam>,
     pub return_type: TypeExpr,
     pub body: Vec<Declaration>,
@@ -253,6 +259,17 @@ pub enum PoolState {
     Profile(Profile),
     Amplified,
     Recovered,
+    /// An unbound generic type parameter (e.g. the `T` in `fn foo<T>(x:
+    /// Pool<T>)`) -- never constructed by `PoolState::parse` (which only
+    /// ever produces a concrete state from a string), only by the parser
+    /// recognizing a name already declared in the enclosing function's
+    /// `FunctionDecl::type_params`. Resolved to a concrete `PoolState` at
+    /// each call site via unification against the argument's real
+    /// inferred state (see `typeck::TypeChecker::infer_expr`'s
+    /// `FunctionCall` arm) -- never exists past type-checking, so nothing
+    /// downstream of typeck (effects, codegen, the interpreter) ever
+    /// needs to handle it.
+    Var(String),
 }
 
 impl PoolState {
@@ -274,6 +291,7 @@ impl std::fmt::Display for PoolState {
             Self::Profile(profile) => write!(f, "{}", profile),
             Self::Amplified => write!(f, "Amplified"),
             Self::Recovered => write!(f, "Recovered"),
+            Self::Var(name) => write!(f, "{}", name),
         }
     }
 }

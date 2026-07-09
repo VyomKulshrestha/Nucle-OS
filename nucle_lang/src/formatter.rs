@@ -351,10 +351,16 @@ fn leading_trivia_line(entry: &LineEntry<'_>) -> Option<usize> {
 fn render_tokens(tokens: &[&Token], depth: &mut i32, generic_depth: &mut i32) -> String {
     let mut out = String::new();
     let mut prev: Option<&Token> = None;
+    let mut prev_prev: Option<&Token> = None;
 
     for token in tokens {
+        // Computed once per token, from the same two-token lookback, and
+        // reused for both the spacing decision below and the
+        // `generic_depth` increment -- one shared answer, not two
+        // separately-computed ones that could drift.
+        let opens_generic = matches!(token.kind, TokenKind::Lt) && is_generic_open(prev, prev_prev);
         if let Some(prev_token) = prev {
-            if needs_space(prev_token, token, *generic_depth) {
+            if needs_space(prev_token, token, *generic_depth, opens_generic) {
                 out.push(' ');
             }
         }
@@ -364,30 +370,55 @@ fn render_tokens(tokens: &[&Token], depth: &mut i32, generic_depth: &mut i32) ->
             TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => *depth += 1,
             TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => *depth -= 1,
             TokenKind::Lt => {
-                if is_generic_open(prev) {
+                if opens_generic {
                     *generic_depth += 1;
                 }
             }
             TokenKind::Gt if *generic_depth > 0 => *generic_depth -= 1,
             _ => {}
         }
+        prev_prev = prev;
         prev = Some(token);
     }
     out
 }
 
-fn is_generic_open(prev: Option<&Token>) -> bool {
-    matches!(prev.map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "Pool" || name == "Result")
+/// Whether the `<` about to be emitted opens a generic angle-bracket
+/// list (never spaced, tracked via `generic_depth`) rather than being a
+/// comparison operator (always spaced). True in exactly two shapes:
+/// `Pool<...>`/`Result<...>` (a built-in generic type, matched by name --
+/// unchanged from before generics existed), or `fn <name><...>` (a
+/// user-defined function's own type-parameter list, matched by
+/// *position*, not name, since a function can be called anything).
+///
+/// The position-based check matters: `prev` being *any* identifier
+/// immediately followed by `<` is NOT enough on its own -- `noisy < 0.1`
+/// also matches that shape, and is a real comparison that must keep its
+/// spaces. `prev_prev` being the keyword `fn` is what tells a function's
+/// own declaration site apart from an ordinary comparison; nothing else
+/// in this grammar puts an identifier directly after `fn`.
+fn is_generic_open(prev: Option<&Token>, prev_prev: Option<&Token>) -> bool {
+    let prev_is_builtin_generic = matches!(prev.map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "Pool" || name == "Result");
+    if prev_is_builtin_generic {
+        return true;
+    }
+    let prev_is_ident = matches!(prev.map(|t| &t.kind), Some(TokenKind::Ident(_)));
+    let prev_prev_is_fn = matches!(prev_prev.map(|t| &t.kind), Some(TokenKind::Ident(kw)) if kw.eq_ignore_ascii_case("fn"));
+    prev_is_ident && prev_prev_is_fn
 }
 
 /// Whether a space belongs between two adjacent tokens on the same
 /// output line. Default is "yes" -- every exception below is a
-/// deliberate, narrow override, not the common case.
-fn needs_space(prev: &Token, cur: &Token, generic_depth: i32) -> bool {
-    // `Pool<Illumina, 0.35%>` -- type-parameter angle brackets, not a
-    // comparison, are never spaced (commas inside them still are, via
+/// deliberate, narrow override, not the common case. `opens_generic` is
+/// precomputed once per token by `render_tokens` (from `is_generic_open`,
+/// which needs two tokens of lookback `needs_space` doesn't otherwise
+/// have) rather than recomputed here, so the spacing decision and the
+/// `generic_depth` bookkeeping never disagree about the same `<`.
+fn needs_space(prev: &Token, cur: &Token, generic_depth: i32, opens_generic: bool) -> bool {
+    // `Pool<Illumina, 0.35%>`/`fn foo<T>` -- generic angle brackets, not
+    // a comparison, are never spaced (commas inside them still are, via
     // the default rule below).
-    if matches!(cur.kind, TokenKind::Lt) && is_generic_open(Some(prev)) {
+    if matches!(cur.kind, TokenKind::Lt) && opens_generic {
         return false;
     }
     if matches!(prev.kind, TokenKind::Lt) && generic_depth > 0 {
@@ -418,6 +449,17 @@ fn needs_space(prev: &Token, cur: &Token, generic_depth: i32) -> bool {
     // on one line or as a lone closing line (where there's no preceding
     // token on that line to space against anyway).
     if matches!(cur.kind, TokenKind::RParen | TokenKind::RBracket | TokenKind::Comma | TokenKind::Colon | TokenKind::Question) {
+        return false;
+    }
+    // `fn foo<T>(...)` -- no space between a just-closed generic list's
+    // `>` and the parameter list's `(` either. Safe as a blanket rule
+    // (not gated on `opens_generic`/`generic_depth`, since `>` isn't
+    // reachable here otherwise): this grammar's comparison operator
+    // never has `(` on its right-hand side (`Comparison`'s RHS is only
+    // a number literal or identifier, never a parenthesized expression),
+    // so a `>` immediately followed by `(` only ever happens closing a
+    // generic type-parameter list.
+    if matches!(prev.kind, TokenKind::Gt) && matches!(cur.kind, TokenKind::LParen) {
         return false;
     }
     // Function-call / builtin-call style: `name(` with no space, unless

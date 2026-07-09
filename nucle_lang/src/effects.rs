@@ -350,6 +350,7 @@ mod tests {
     fn destructive_delete_fn(name: &str, confirmed: bool) -> FunctionDecl {
         FunctionDecl {
             name: name.to_string(),
+            type_params: vec![],
             params: vec![],
             return_type: TypeExpr::Void,
             body: vec![Declaration::Operation(Operation::Delete(DeleteOp {
@@ -392,7 +393,7 @@ mod tests {
         let mut funcs = FunctionTable::new();
         funcs.insert(
             "noop".into(),
-            FunctionDecl { name: "noop".into(), params: vec![], return_type: TypeExpr::Void, body: vec![], span: Span::default(), doc: None },
+            FunctionDecl { name: "noop".into(), type_params: vec![], params: vec![], return_type: TypeExpr::Void, body: vec![], span: Span::default(), doc: None },
         );
         let call = Expr::FunctionCall { name: "noop".into(), args: vec![] };
         assert_eq!(expr_effect(&call, &funcs, &mut ResolvingSet::new()), Effect::Pure);
@@ -414,6 +415,7 @@ mod tests {
             "loop_fn".into(),
             FunctionDecl {
                 name: "loop_fn".into(),
+                type_params: vec![],
                 params: vec![],
                 return_type: TypeExpr::Void,
                 body: vec![Declaration::Let(LetDecl {

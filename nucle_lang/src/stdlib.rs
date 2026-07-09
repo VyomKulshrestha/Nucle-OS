@@ -54,6 +54,7 @@ pub fn builtin_functions() -> FunctionTable {
 fn consensus_vote_decl() -> FunctionDecl {
     FunctionDecl {
         name: "consensus_vote".to_string(),
+        type_params: Vec::new(),
         params: vec![
             FnParam { name: "source".to_string(), ty: TypeExpr::Void },
             FnParam { name: "coverage".to_string(), ty: TypeExpr::Void },
@@ -78,6 +79,7 @@ fn consensus_vote_decl() -> FunctionDecl {
 fn protect_decl() -> FunctionDecl {
     FunctionDecl {
         name: "protect".to_string(),
+        type_params: Vec::new(),
         params: vec![
             FnParam { name: "data".to_string(), ty: TypeExpr::Void },
             FnParam { name: "guarantee".to_string(), ty: TypeExpr::Void },

@@ -31,6 +31,10 @@ NucleScript, the declarative DNA-storage operations language for
   File all understand NucleScript's error propagation: `store`/`delete`
   can produce a catchable `Result<T, Str>` instead of aborting the whole
   program on failure, unwrapped or propagated with `?`.
+- **Generics** — `fn name<T>(...)` over `Pool<T>`'s profile, so the same
+  function works for `Illumina`/`Nanopore`/`Twist` instead of needing one
+  copy per profile. Highlighting, diagnostics, hover, formatting, and
+  `nucle doc` all render and check the type-parameter list correctly.
 
 Not yet included: autocomplete, rename/refactoring, and semantic-token
 highlighting (syntax highlighting already covers most of that).
@@ -68,10 +72,11 @@ ended up in a different folder than `hello.nsl`.)
 
 More complete examples (per-store options, a full simulate → consensus
 vote → encode/protect/store/verify pipeline, catching a real store
-failure with `Result<T, E>`/`?` instead of aborting the run) live in
+failure with `Result<T, E>`/`?` instead of aborting the run, one function
+generic over three different pool profiles) live in
 [`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
 in the main repo — start with `store.nsl`, then `hero.nsl`, then
-`result_fallback_store.nsl`.
+`result_fallback_store.nsl`, then `generic_pool_recovery.nsl`.
 
 **Using the official packages:** imports like `from "nuclescript/presets"`
 (`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,

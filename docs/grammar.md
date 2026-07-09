@@ -41,11 +41,15 @@ LetDecl             ::= 'let' Identifier ( ':' TypeExpr )? '=' Expr
                       | 'let' Identifier ':' 'Sequence' '=' 'seq' StringLiteral
                       | 'let' Identifier '=' 'seq' StringLiteral
 
-FunctionDecl        ::= 'fn' Identifier '(' FnParamList? ')' ( '->' | 'returns' ) TypeExpr '{' Declaration* '}'
+FunctionDecl        ::= 'fn' Identifier TypeParamList? '(' FnParamList? ')' ( '->' | 'returns' ) TypeExpr '{' Declaration* '}'
                       // the return type is mandatory — a function with no
                       // meaningful return value still writes `returns Void`
                       // rather than omitting it; the parser rejects a
                       // missing '->'/'returns' clause instead of defaulting
+TypeParamList       ::= '<' Identifier ( ',' Identifier )* '>'
+                      // usable only as PoolState's 'Var' case below, in
+                      // this function's own params/return type/body --
+                      // see "Generics" below.
 FnParamList         ::= FnParam ( ',' FnParam )* ','?
 FnParam             ::= Identifier ':' TypeExpr
 
@@ -53,15 +57,22 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       | 'Strand' | 'Sequence' | 'File' | 'DnaFile' | 'Recovery' | 'Void'
                       | 'Result' '<' TypeExpr ',' TypeExpr '>'
                       | 'Str'
-                      // 'Result<T, E>' is the one generic type NucleScript
-                      // has -- no general 'Type<...>' mechanism exists;
-                      // 'Pool<Illumina>' above is its own hardcoded parse
-                      // path, unrelated to this. 'Str' is meaningful only
+                      // 'Result<T, E>' and generic 'Pool<T>' (via PoolState's
+                      // 'Var' case below) are the only two generic
+                      // mechanisms NucleScript has -- no general
+                      // 'Type<...>' system exists; each is its own
+                      // hardcoded parse path. 'Str' is meaningful only
                       // as 'Result<_, Str>''s error slot: every VFS
                       // failure is a plain message string, and there is no
                       // string arithmetic or any other place 'Str' is
-                      // expected. See "Result / Error Propagation" below.
-PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'Amplified' | 'Recovered'
+                      // expected. See "Result / Error Propagation" and
+                      // "Generics" below.
+PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'Amplified' | 'Recovered' | Identifier
+                      // the bare Identifier case is only ever a name
+                      // already declared in the enclosing FunctionDecl's
+                      // TypeParamList -- any other identifier here is a
+                      // parse error ("unknown pool profile or state"),
+                      // unchanged from before generics existed.
 
 // `if`/`for` are resolved at COMPILE TIME, not runtime: NucleScript's
 // execution model is "compile a static plan, then run it," so there is no
@@ -299,6 +310,69 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
 See [docs/errors.md](errors.md) for the six new `E-TRY-*`/`E-BINDING-
 RESULT-*`/`E-RETURN-TYPE-*` codes, and
 [`docs/examples/result_fallback_store.nsl`](examples/result_fallback_store.nsl)
+for a complete, runnable example.
+
+---
+
+## Generics (`fn name<T>(...)`)
+
+A function generic over `Pool<T>`'s profile — the actual motivating pain
+point: without this, the same logic needs one hardcoded copy per profile
+(`Illumina`/`Nanopore`/`Twist`), since `Pool<Illumina>` and
+`Pool<Nanopore>` are different concrete types with no shared supertype.
+
+```nsl
+pool illumina_archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+pool nanopore_archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Nanopore }
+
+fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+let recovered_a: Pool<Recovered> = recover_from(noisy_illumina)
+
+let noisy_nanopore: Pool<Nanopore, 5%> = simulate nanopore_archive under Nanopore
+let recovered_b: Pool<Recovered> = recover_from(noisy_nanopore)
+```
+
+`recover_from` is declared and type-checked **once**, treating `P` as an
+opaque, unresolved placeholder (`PoolState::Var("P")`) — not once per
+concrete profile, and not through any runtime mechanism (`P` never
+exists once type-checking finishes; the interpreter that runs
+`Result<T,E>`/`?`'s function calls has no notion of "generic" at all).
+At each call site, `P` is **unified** against that call's real argument:
+the first `Pool<T>`-typed argument in a call binds `T`, and any later
+argument using the same `T` must agree or the call is rejected
+(`E-TYPE-PARAM-CONFLICT`). The resolved binding is then substituted into
+the return type for that specific call, so `recover_from(noisy_illumina)`
+and `recover_from(noisy_nanopore)` above both type-check as
+`Pool<Recovered>`, from the exact same declaration.
+
+- **Scope is deliberately narrow**: a type parameter is usable only as
+  the state slot inside `Pool<T>` (parameters, the return type, and
+  `let` annotations inside the body) — not on `Strand`/`Sequence`/
+  `Result`/anything else. There's no explicit type-argument syntax
+  (`foo::<Illumina>()`); a type parameter that no argument binds is a
+  real error (`E-TYPE-PARAM-UNRESOLVED`), not silently left generic.
+- **No trait-bound-style constraints exist**, because nothing in the
+  type system needs one — every operation a `Pool<T>`-typed value can be
+  used for already works identically across all three profiles (effect
+  classification never depends on profile at all).
+- **A real, honest limitation**: a handful of profile-*specific* typeck
+  warnings (e.g. `E-STORE-UNSATISFIABLE-RECOVERY`, which only fires for
+  `Nanopore`) can't fire while checking a generic body against an
+  abstract `P` — there's no concrete profile yet to check against. They
+  still fire correctly for the equivalent non-generic code, and would
+  still fire on a *non-generic* argument passed through a generic
+  parameter's own call-site checks to the extent those inspect the
+  argument's real type. This is the direct language-level analog of
+  `consensus_vote`/`protect`'s existing "type system honesty" precedent
+  (see [docs/stdlib.md](stdlib.md)) — a documented gap, not a silent one.
+
+See [docs/errors.md](errors.md) for `E-TYPE-PARAM-CONFLICT`/`E-TYPE-PARAM-
+UNRESOLVED`, and
+[`docs/examples/generic_pool_recovery.nsl`](examples/generic_pool_recovery.nsl)
 for a complete, runnable example.
 
 ---

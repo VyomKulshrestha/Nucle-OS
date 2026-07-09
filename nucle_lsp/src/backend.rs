@@ -180,9 +180,10 @@ fn hover_text_for(name: &str, symbols: &SymbolTable) -> Option<String> {
     }
     if let Some(func) = symbols.functions.get(name) {
         let params: Vec<String> = func.params.iter().map(|p| format!("{}: {}", p.name, describe_type(&p.ty))).collect();
+        let type_params = if func.type_params.is_empty() { String::new() } else { format!("<{}>", func.type_params.join(", ")) };
         return Some(format!(
-            "```nuclescript\nfn {}({}) -> {}\n```",
-            name, params.join(", "), describe_type(&func.return_type)
+            "```nuclescript\nfn {}{}({}) -> {}\n```",
+            name, type_params, params.join(", "), describe_type(&func.return_type)
         ));
     }
     if symbols.strands.contains_key(name) {

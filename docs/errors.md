@@ -81,8 +81,10 @@ Codes are grouped by which declaration/operation they check, matching
 | `E-TRY-NOT-RESULT` | error | `?` was applied to an expression that isn't `Result`-shaped — e.g. a `Pool<...>` binding, or `retrieve` (which never produces a `Result`; see the Retrieve section below). |
 | `E-TRY-OUTSIDE-RESULT-FN` | error | `?` was used at the top level, or inside a function whose declared return type isn't `Result<_, E>`. There is no top-level `?`. |
 | `E-TRY-ERROR-TYPE-MISMATCH` | error | `?`'s operand is `Result<T, E1>`, but the enclosing function is declared `Result<_, E2>` with `E1 != E2`. No coercion between error types exists. |
+| `E-TYPE-PARAM-CONFLICT` | error | A generic function's type parameter (e.g. the `P` in `fn combine<P>(a: Pool<P>, b: Pool<P>)`) is used in more than one parameter, and two arguments in the same call imply different concrete profiles for it. |
+| `E-TYPE-PARAM-UNRESOLVED` | error | A generic function's type parameter was never bound by any argument in a call — there's no explicit type-argument syntax (`foo::<Illumina>()`) to fall back on, so its return type (if the parameter also appears there) can't be resolved to anything concrete for that call. |
 
-**Fix:** rename the duplicate, rename the duplicate parameter, make the function body's last binding produce the declared return type, add the missing `?`, move `?` inside a `Result`-returning function, or fix the mismatched error type.
+**Fix:** rename the duplicate, rename the duplicate parameter, make the function body's last binding produce the declared return type, add the missing `?`, move `?` inside a `Result`-returning function, fix the mismatched error type, or pass arguments that consistently imply the same concrete profile for each type parameter.
 
 ## Strands (`strand` declarations)
 

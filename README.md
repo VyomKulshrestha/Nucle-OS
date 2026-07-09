@@ -545,6 +545,32 @@ caught error can only be produced and propagated, not branched on from
 within the same program) and [docs/examples/result_fallback_store.nsl](docs/examples/result_fallback_store.nsl)
 for a complete, runnable example.
 
+A function can be generic over `Pool<T>`'s profile — one function
+instead of a hardcoded copy per `Illumina`/`Nanopore`/`Twist`:
+
+```nuclescript
+pool illumina_archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+pool nanopore_archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Nanopore }
+
+fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+let recovered_a: Pool<Recovered> = recover_from(noisy_illumina)
+
+let noisy_nanopore: Pool<Nanopore, 5%> = simulate nanopore_archive under Nanopore
+let recovered_b: Pool<Recovered> = recover_from(noisy_nanopore)
+```
+
+`recover_from` is type-checked once, treating `P` as an opaque
+placeholder; each call site unifies `P` against its own argument's real
+profile — no runtime representation, no per-instantiation re-checking of
+the body. See the ["Generics"](docs/grammar.md) section of the grammar
+reference for the full semantics and
+[docs/examples/generic_pool_recovery.nsl](docs/examples/generic_pool_recovery.nsl)
+for a complete, runnable example.
+
 For ecosystem growth, the compiler also exposes stable integration surfaces:
 built-in preset imports, a serializable playground analysis API, and hardware
 bridge request extraction for effectful plans.
@@ -601,6 +627,7 @@ Current NucleScript result summary:
 | `docs/examples/preset_imports.nsl` | - | - | - | - | - | - | - | Built-in preset import validation |
 | `docs/examples/control_flow.nsl` | 31 B | 2 | 4 | 6 | 3012 nt | 502 nt | 3.00× | Compile-time `if`/`for` desugaring, then stored via VFS |
 | `docs/examples/result_fallback_store.nsl` | 31 B | 2 | 3 | 5 | 2356 nt | 471 nt | 2.50× | `Result<T, E>`/`?`: a real VFS failure caught inside a function instead of aborting the run |
+| `docs/examples/generic_pool_recovery.nsl` | - | - | - | - | - | - | - | Generics: one `fn recover_from<P>(...)` called with both `Pool<Illumina>` and `Pool<Nanopore>` |
 
 Compiler diagnostics are surfaced before execution. For example,
 `docs/examples/critical_redundancy_warning.nsl` warns when critical data uses
@@ -838,11 +865,11 @@ nucle agent "pool status"
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 140 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it) |
+| `nucle_lang` | 149 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list) |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **416 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **425 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

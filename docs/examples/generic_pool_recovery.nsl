@@ -1,0 +1,29 @@
+// Generics: one function, callable with a Pool of ANY profile -- the
+// motivating pain point this closes: without a type parameter, this
+// would need one hardcoded copy per profile (Illumina/Nanopore/Twist).
+
+pool illumina_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+pool nanopore_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Nanopore
+}
+
+/// Recovers any profile's noisy pool via consensus voting -- one function
+/// instead of one per profile.
+fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+
+let recovered_a: Pool<Recovered> = recover_from(noisy_illumina)
+
+let noisy_nanopore: Pool<Nanopore, 5%> = simulate nanopore_archive under Nanopore
+
+let recovered_b: Pool<Recovered> = recover_from(noisy_nanopore)

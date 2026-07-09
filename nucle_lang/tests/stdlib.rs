@@ -35,6 +35,7 @@ fn consensus_vote_wrong_arity_reports_the_same_code_a_user_function_would() {
         declarations: vec![
             Declaration::Function(FunctionDecl {
                 name: "two_args".into(),
+                type_params: vec![],
                 params: vec![
                     FnParam { name: "a".into(), ty: TypeExpr::Void },
                     FnParam { name: "b".into(), ty: TypeExpr::Void },
