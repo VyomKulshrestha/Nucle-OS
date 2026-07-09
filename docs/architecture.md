@@ -50,9 +50,10 @@ NucleScript source (.nsl)
 The compiler currently supports declarative pool definitions, store/retrieve
 operations, simulation options, pipeline programs, DNA-native `Sequence`
 literals such as `seq"ATCGATCG-GCTAGCTA"`, probabilistic pool annotations
-such as `Pool<Illumina, 0.35%>`, and compile-time `if`/`for` control flow
+such as `Pool<Illumina, 0.35%>`, compile-time `if`/`for` control flow
 with comparison/boolean operators (`==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`,
-`||`, `!`). Sequence literals are validated at compile time for DNA
+`||`, `!`), and `Result<T, E>`/`?` for genuinely catchable VFS failures
+(see below). Sequence literals are validated at compile time for DNA
 alphabet, GC balance, homopolymer length, and hairpin-prone palindromes.
 Probabilistic pool bindings are checked for profile/state compatibility and
 propagate an error budget through consensus recovery. Effect checking
@@ -63,16 +64,56 @@ redundancy for the selected profile and coverage before either executable VFS
 lowering or no-hardware simulation planning.
 
 `if`/`for` are resolved entirely inside `typeck::check_and_desugar`, before
-any of that MIR/optimizer/backend machinery runs — NucleScript's execution
-model is "compile a static plan, then run it," so there is no runtime branch
-or loop anywhere in a compiled program. `check_and_desugar` evaluates each
-`if` condition once and keeps only the taken branch (the untaken branch is
-never type-checked, closer to `#[cfg(...)]` than a real conditional), and
-unrolls each `for` by substituting the loop binding with every item in its
-literal list. The result is a plain, control-flow-free `Program` — `middle`,
-`codegen`, and `sim_backend` never see an `if`/`for` node at all. See
+any of that MIR/optimizer/backend machinery runs — until Step 9 below,
+NucleScript's execution model was "compile a static plan, then run it,"
+with no runtime branch or loop anywhere in a compiled program.
+`check_and_desugar` evaluates each `if` condition once and keeps only the
+taken branch (the untaken branch is never type-checked, closer to
+`#[cfg(...)]` than a real conditional), and unrolls each `for` by
+substituting the loop binding with every item in its literal list. The
+result is a plain, control-flow-free `Program` — `middle` never sees an
+`if`/`for` node at all. See
 [docs/grammar.md](grammar.md#control-flow-if--for) for the full semantics
 and a worked example.
+
+### Structured error handling (`Result<T, E>` / `?`)
+
+The one place NucleScript actually has a runtime, as opposed to a
+compile-time-resolved plan. Before this, `store`/`retrieve`/`delete`
+either succeeded or aborted the entire program via a bare `?` inside
+`codegen::execute_program` — there was no way for a NucleScript program to
+observe, inspect, or recover from an operation failure, and a function
+call was purely a compile-time signature lookup (`typeck::TypeChecker::
+infer_expr`'s `FunctionCall` arm), never something that actually ran.
+
+`store`/`delete` can now also appear in *expression* position
+(`Expr::StoreExpr`/`DeleteExpr`, reusing the exact `StoreOp`/`DeleteOp`
+structs the statement form already carries — one grammar, two surface
+positions), producing a `Result<T, Str>` a postfix `?` (`Expr::Try`) can
+unwrap or propagate to the enclosing function's own `Result` return type.
+`middle`/`MirOp` is deliberately untouched by this and stays that way —
+it still has zero notion of control flow or function bodies. Instead,
+`codegen.rs` gained a small, real interpreter (`eval_expr`/
+`exec_function_body`/`call_user_function`, sharing a minimal `value::
+{Value, EvalOutcome}` runtime representation with a lighter-weight
+narrating counterpart in `sim_backend.rs`) that runs directly off the
+already-desugared `Program`, executing a called function's body for the
+first time in this compiler's history — Rust's own call stack serves as
+NucleScript's; no bytecode VM was introduced. A function's own internal
+`?` short-circuit resolves entirely within that function's call: the
+caller always sees an ordinary, already-wrapped `Result` value at the
+call site, never an automatic propagation of its own.
+
+Backward compatibility here is a build-time guarantee, not a review-time
+one: every `Expr`/`Declaration` match this touches has no wildcard arm,
+so the new AST variants were a compile error in each of `effects.rs`,
+`typeck.rs`, `middle.rs`, `docgen.rs`, and `nucle_lsp/src/backend.rs`
+until explicitly handled. A golden-file regression test
+(`nucle_lang/tests/result_backward_compat.rs`) additionally pins every
+pre-existing example's execution output to what it was on the commit
+before this feature landed. See the "Result / Error Propagation" section
+of [docs/grammar.md](grammar.md) for the full semantics, including the
+deliberate scope boundary (no `match`/`if let` on `Result` yet).
 
 The language layer now exposes ecosystem-facing integration points:
 

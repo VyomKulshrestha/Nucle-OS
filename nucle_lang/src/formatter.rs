@@ -364,7 +364,7 @@ fn render_tokens(tokens: &[&Token], depth: &mut i32, generic_depth: &mut i32) ->
             TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => *depth += 1,
             TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => *depth -= 1,
             TokenKind::Lt => {
-                if is_pool_generic_open(prev) {
+                if is_generic_open(prev) {
                     *generic_depth += 1;
                 }
             }
@@ -376,8 +376,8 @@ fn render_tokens(tokens: &[&Token], depth: &mut i32, generic_depth: &mut i32) ->
     out
 }
 
-fn is_pool_generic_open(prev: Option<&Token>) -> bool {
-    matches!(prev.map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "Pool")
+fn is_generic_open(prev: Option<&Token>) -> bool {
+    matches!(prev.map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "Pool" || name == "Result")
 }
 
 /// Whether a space belongs between two adjacent tokens on the same
@@ -387,7 +387,7 @@ fn needs_space(prev: &Token, cur: &Token, generic_depth: i32) -> bool {
     // `Pool<Illumina, 0.35%>` -- type-parameter angle brackets, not a
     // comparison, are never spaced (commas inside them still are, via
     // the default rule below).
-    if matches!(cur.kind, TokenKind::Lt) && is_pool_generic_open(Some(prev)) {
+    if matches!(cur.kind, TokenKind::Lt) && is_generic_open(Some(prev)) {
         return false;
     }
     if matches!(prev.kind, TokenKind::Lt) && generic_depth > 0 {
@@ -410,13 +410,14 @@ fn needs_space(prev: &Token, cur: &Token, generic_depth: i32) -> bool {
     if matches!(&prev.kind, TokenKind::Ident(name) if name == "seq") && matches!(cur.kind, TokenKind::String(_)) {
         return false;
     }
-    // No space right before a closing paren/bracket, a comma, or a colon.
+    // No space right before a closing paren/bracket, a comma, a colon, or
+    // a postfix `?` (`x?` not `x ?`).
     // `}` is deliberately NOT here: unlike call-parens and list-brackets,
     // this grammar's `{ ... }` blocks are always written with a space
     // before the close (`{ codec: Ternary, ... }`, `} else {`), whether
     // on one line or as a lone closing line (where there's no preceding
     // token on that line to space against anyway).
-    if matches!(cur.kind, TokenKind::RParen | TokenKind::RBracket | TokenKind::Comma | TokenKind::Colon) {
+    if matches!(cur.kind, TokenKind::RParen | TokenKind::RBracket | TokenKind::Comma | TokenKind::Colon | TokenKind::Question) {
         return false;
     }
     // Function-call / builtin-call style: `name(` with no space, unless
@@ -457,6 +458,7 @@ fn token_text(token: &Token) -> String {
         TokenKind::AndAnd => "&&".to_string(),
         TokenKind::OrOr => "||".to_string(),
         TokenKind::Bang => "!".to_string(),
+        TokenKind::Question => "?".to_string(),
         // A `///` doc comment always occupies its own line (it consumes
         // the rest of the line it starts on, same as a plain `//`
         // comment), so it's always the sole token on whatever "code" line

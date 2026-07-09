@@ -48,10 +48,11 @@ Codes are grouped by which declaration/operation they check, matching
 |------|-------|---------|
 | `E-BINDING-DUPLICATE` | error | Two bindings (or a binding and a pool) share the same name. |
 | `E-SYNTHESIS-UNCONFIRMED` | error | The binding's expression has a `Synthesis`/`Sequencing`/`Destructive` effect (directly, or transitively through a function call) but is missing `confirm hardware`. |
-| `E-BINDING-TYPE-MISMATCH` | error | The binding's `Pool<State>` annotation doesn't match the state the expression actually produces. |
+| `E-BINDING-TYPE-MISMATCH` | error | The binding's `Pool<State>` annotation doesn't match the state the expression actually produces. Also reused for `let x: T = <fallible>?` when `?`'s unwrapped type doesn't match `T`. |
 | `E-BINDING-ERROR-RATE-MISMATCH` | error | The binding's annotated error-rate percentage differs from the inferred rate by more than 0.01%. |
+| `E-BINDING-RESULT-TYPE-MISMATCH` | error | Either a `let x: Result<T, E> = ...` binding's annotation doesn't match what the expression actually produces, or the expression produces a `Result<T, E>` (a `store`/`delete` used in expression position, or a call to a `Result`-returning function) but the binding isn't annotated as `Result<...>` at all — usually a forgotten `?`. |
 
-**Fix:** add `confirm hardware`, correct the annotation to match what the expression actually infers, or fix the upstream expression.
+**Fix:** add `confirm hardware`, correct the annotation to match what the expression actually infers, add the missing `?`, or fix the upstream expression.
 
 ## Expressions (inside any binding/argument)
 
@@ -75,8 +76,13 @@ Codes are grouped by which declaration/operation they check, matching
 | `E-FUNCTION-DUPLICATE` | error | Two `fn` declarations share the same name. |
 | `E-PARAM-DUPLICATE` | error | A function declares the same parameter name twice. |
 | `E-RETURN-TYPE-MISMATCH` | error | A function declared to return `Pool<State>` either produces a different state, doesn't end in a `let` binding that produces a pool at all, or its body doesn't end in a `let` binding. NucleScript has no explicit `return` — the last statement's binding is the implicit return value. |
+| `E-RETURN-TYPE-NOT-RESULT` | error | A function declared to return `Result<T, E>` doesn't end in a `let` binding that produces one at all (still-wrapped, or unwrapped via `?`), or its body doesn't end in a `let` binding. |
+| `E-RETURN-TYPE-RESULT-MISMATCH` | error | A function declared to return `Result<T, E>` ends in a binding that *is* Result-shaped (or already-unwrapped via `?`), but the actual `Ok`/`Err` types don't match `T`/`E`. |
+| `E-TRY-NOT-RESULT` | error | `?` was applied to an expression that isn't `Result`-shaped — e.g. a `Pool<...>` binding, or `retrieve` (which never produces a `Result`; see the Retrieve section below). |
+| `E-TRY-OUTSIDE-RESULT-FN` | error | `?` was used at the top level, or inside a function whose declared return type isn't `Result<_, E>`. There is no top-level `?`. |
+| `E-TRY-ERROR-TYPE-MISMATCH` | error | `?`'s operand is `Result<T, E1>`, but the enclosing function is declared `Result<_, E2>` with `E1 != E2`. No coercion between error types exists. |
 
-**Fix:** rename the duplicate, rename the duplicate parameter, or make the function body's last binding produce the declared return type.
+**Fix:** rename the duplicate, rename the duplicate parameter, make the function body's last binding produce the declared return type, add the missing `?`, move `?` inside a `Result`-returning function, or fix the mismatched error type.
 
 ## Strands (`strand` declarations)
 
@@ -109,6 +115,13 @@ Codes are grouped by which declaration/operation they check, matching
 | `E-STORE-IMPLICIT-COVERAGE` | warning | A `simulate store` doesn't set `coverage` explicitly, so it silently inherits the redundancy value as the assumed coverage. |
 
 **Fix:** prefix with `simulate` for a dry run, declare the target pool, raise redundancy for critical data, raise coverage or lower the recovery target, or set `coverage` explicitly.
+
+`store`/`delete`/`retrieve` used in *expression* position (Step 9 --
+`Result<T, E>`/`?`, see [docs/grammar.md](grammar.md)) run through this
+exact same validation, not a separate check -- an undeclared pool, a
+missing confirmation, or an unindexed query field is caught identically
+whether `store`/`delete`/`retrieve` appears as a bare statement or on the
+right-hand side of a `let`.
 
 ## Delete operations
 

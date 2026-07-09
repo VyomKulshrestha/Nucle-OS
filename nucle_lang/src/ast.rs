@@ -227,6 +227,19 @@ pub enum TypeExpr {
     DnaFile,
     Recovery,
     Void,
+    /// `Result<T, E>` -- the one generic type NucleScript has (no general
+    /// `Type<...>` mechanism exists; `Pool<Illumina>` above is its own
+    /// hardcoded parse path, unrelated to this). `Box` because `TypeExpr`
+    /// is now recursive, matching how `Expr::BinaryOp` already boxes.
+    Result(Box<TypeExpr>, Box<TypeExpr>),
+    /// A plain string error message -- meaningful only as `Result<_,
+    /// Str>`'s error slot (every VFS failure is a `String`; see
+    /// `nucle_vfs::syscall`). Not a general string type: there is no
+    /// string arithmetic, no other place `Str` is expected, and nothing
+    /// enforces that restriction beyond it simply being useless anywhere
+    /// else today -- deliberately the smallest addition that keeps a
+    /// Result's error side real instead of collapsing it to `Void`.
+    Str,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -296,6 +309,29 @@ pub enum Expr {
     Number(f64),
     BinaryOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },
     Not(Box<Expr>),
+    /// `expr?` -- unwraps a `Result<T,E>`-shaped `expr` to its `Ok(T)`
+    /// value, or short-circuits the enclosing function with its `Err(E)`.
+    /// See `typeck::TypeChecker::check_try` for the validity rules and
+    /// `codegen::eval_expr`/`sim_backend`'s equivalent for the runtime
+    /// short-circuit itself.
+    Try(Box<Expr>),
+    /// `store <file> into <pool> { ... }` used in *expression* position
+    /// (e.g. the right-hand side of a `let`), reusing the exact same
+    /// `StoreOp` the statement form (`Declaration::Operation(Operation::
+    /// Store)`) already carries -- one struct, two surface positions.
+    /// Produces a `Result<DnaFile, Str>` at runtime instead of the
+    /// statement form's all-or-nothing abort-the-whole-program behavior.
+    StoreExpr(StoreOp),
+    /// `retrieve from <pool> where ...` in expression position. Parsed
+    /// for symmetry with `StoreExpr`/`DeleteExpr`, but typeck never
+    /// infers it as `Result`-shaped: `retrieve` already soft-fails today
+    /// (an empty match list, never a VFS `Err`), so there's no real
+    /// failure for a `Result` to carry.
+    RetrieveExpr(RetrieveOp),
+    /// `delete <file> from <pool> confirm ...` in expression position --
+    /// same relationship to `Declaration::Operation(Operation::Delete)`
+    /// as `StoreExpr` has to `Operation::Store`.
+    DeleteExpr(DeleteOp),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

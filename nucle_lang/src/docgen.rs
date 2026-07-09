@@ -114,7 +114,10 @@ fn render_section<'a>(
     }
 }
 
-fn render_type(ty: &TypeExpr) -> String {
+/// Also reused by `typeck.rs` for Result/`?` diagnostic messages that
+/// need to name a type -- one renderer, not a duplicate ad hoc one per
+/// call site.
+pub(crate) fn render_type(ty: &TypeExpr) -> String {
     match ty {
         TypeExpr::Pool(pool_type) => match pool_type.error_rate_percent {
             Some(rate) => format!("Pool<{}, {}%>", pool_type.state, rate),
@@ -126,6 +129,8 @@ fn render_type(ty: &TypeExpr) -> String {
         TypeExpr::DnaFile => "DnaFile".to_string(),
         TypeExpr::Recovery => "Recovery".to_string(),
         TypeExpr::Void => "Void".to_string(),
+        TypeExpr::Result(ok, err) => format!("Result<{}, {}>", render_type(ok), render_type(err)),
+        TypeExpr::Str => "Str".to_string(),
     }
 }
 

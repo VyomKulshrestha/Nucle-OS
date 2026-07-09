@@ -406,8 +406,19 @@ impl Parser {
         } else if self.check_ident("Void") {
             self.advance();
             Ok(TypeExpr::Void)
+        } else if self.check_ident("Result") {
+            self.advance();
+            self.expect(TokenKind::Lt, "'<' after Result")?;
+            let ok_ty = self.parse_type_expr()?;
+            self.expect(TokenKind::Comma, "',' between Result's Ok and Err types")?;
+            let err_ty = self.parse_type_expr()?;
+            self.expect(TokenKind::Gt, "'>' after Result type")?;
+            Ok(TypeExpr::Result(Box::new(ok_ty), Box::new(err_ty)))
+        } else if self.check_ident("Str") {
+            self.advance();
+            Ok(TypeExpr::Str)
         } else {
-            Err(self.error_here("expected type annotation: Pool<...>, Strand, Sequence, File, DnaFile, Recovery, or Void"))
+            Err(self.error_here("expected type annotation: Pool<...>, Strand, Sequence, File, DnaFile, Recovery, Result<...>, Str, or Void"))
         }
     }
 
@@ -458,7 +469,7 @@ impl Parser {
     }
 
     fn parse_comparison_expr(&mut self) -> Result<Expr, ParseError> {
-        let left = self.parse_primary_expr()?;
+        let left = self.parse_postfix_expr()?;
         let op = if self.check(TokenKind::EqEq) {
             BinOp::Eq
         } else if self.check(TokenKind::NotEq) {
@@ -475,8 +486,25 @@ impl Parser {
             return Ok(left);
         };
         self.advance();
-        let right = self.parse_primary_expr()?;
+        let right = self.parse_postfix_expr()?;
         Ok(Expr::BinaryOp { op, left: Box::new(left), right: Box::new(right) })
+    }
+
+    /// A primary expression followed by zero or more postfix `?`
+    /// operators (`x?`, `x??` -- the latter isn't meaningful today since
+    /// nothing produces a nested `Result`, but the loop costs nothing and
+    /// avoids special-casing "exactly one `?`"). `?` binds tighter than
+    /// comparison, like Rust (`x? == y` means `(x?) == y`), so this sits
+    /// directly around `parse_primary_expr`'s result rather than as its
+    /// own precedence layer above comparison -- it's the only postfix
+    /// operator in the grammar, which doesn't justify a layer of its own.
+    fn parse_postfix_expr(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.parse_primary_expr()?;
+        while self.check(TokenKind::Question) {
+            self.advance();
+            expr = Expr::Try(Box::new(expr));
+        }
+        Ok(expr)
     }
 
     fn parse_primary_expr(&mut self) -> Result<Expr, ParseError> {
@@ -486,7 +514,23 @@ impl Parser {
             self.expect(TokenKind::RParen, "')' to close parenthesized expression")?;
             return Ok(inner);
         }
-        if self.check_ident("simulate") {
+        // `store`/`simulate store ... into ...`/`retrieve from ...`/
+        // `delete ... from ...` in *expression* position (e.g. the
+        // right-hand side of a `let`) -- reuses the exact same
+        // `parse_store`/`parse_retrieve`/`parse_delete` the *statement*
+        // form (`parse_declaration`) already calls, so there's exactly
+        // one grammar for each, not two. Checked before the bare
+        // `simulate <pool> under <profile>` (`Expr::SimulatePool`) branch
+        // below, with a one-token lookahead, since both start with the
+        // same `simulate` keyword: `simulate store` is unambiguously a
+        // store, `simulate <anything-else>` is unambiguously SimulatePool.
+        if self.check_ident("store") || (self.check_ident("simulate") && self.check_ident_ahead(1, "store")) {
+            Ok(Expr::StoreExpr(self.parse_store()?))
+        } else if self.check_ident("retrieve") {
+            Ok(Expr::RetrieveExpr(self.parse_retrieve()?))
+        } else if self.check_ident("delete") {
+            Ok(Expr::DeleteExpr(self.parse_delete()?))
+        } else if self.check_ident("simulate") {
             self.advance();
             let pool = self.expect_ident_any("pool name")?;
             self.expect_ident_text("under")?;
@@ -825,6 +869,15 @@ impl Parser {
 
     fn check_ident(&self, expected: &str) -> bool {
         matches!(&self.peek().kind, TokenKind::Ident(actual) if actual.eq_ignore_ascii_case(expected))
+    }
+
+    /// Like `check_ident`, but for the token `offset` positions ahead of
+    /// the current one -- used to disambiguate `simulate <pool> under
+    /// ...` (`Expr::SimulatePool`) from `simulate store <file> into ...`
+    /// (a `StoreOp` with `simulate: true`) before committing to either
+    /// parse, since both start with the same keyword.
+    fn check_ident_ahead(&self, offset: usize, expected: &str) -> bool {
+        matches!(self.tokens.get(self.index + offset).map(|t| &t.kind), Some(TokenKind::Ident(actual)) if actual.eq_ignore_ascii_case(expected))
     }
 
     fn consume_comma(&mut self) -> bool {

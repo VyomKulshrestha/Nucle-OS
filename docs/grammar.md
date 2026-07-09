@@ -51,6 +51,16 @@ FnParam             ::= Identifier ':' TypeExpr
 
 TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       | 'Strand' | 'Sequence' | 'File' | 'DnaFile' | 'Recovery' | 'Void'
+                      | 'Result' '<' TypeExpr ',' TypeExpr '>'
+                      | 'Str'
+                      // 'Result<T, E>' is the one generic type NucleScript
+                      // has -- no general 'Type<...>' mechanism exists;
+                      // 'Pool<Illumina>' above is its own hardcoded parse
+                      // path, unrelated to this. 'Str' is meaningful only
+                      // as 'Result<_, Str>''s error slot: every VFS
+                      // failure is a plain message string, and there is no
+                      // string arithmetic or any other place 'Str' is
+                      // expected. See "Result / Error Propagation" below.
 PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'Amplified' | 'Recovered'
 
 // `if`/`for` are resolved at COMPILE TIME, not runtime: NucleScript's
@@ -85,6 +95,7 @@ Expr                ::= 'simulate' Identifier 'under' ProfileLiteral
                       | 'sequence' Identifier 'via' ProfileLiteral ( 'confirm' 'hardware' )?
                       | 'consensus_vote' '(' Identifier ',' 'coverage' ':' MultiplierLiteral ')'
                       | 'protect' Identifier 'for' Identifier
+                      | StoreOp | RetrieveOp | DeleteOp
                       | Identifier '(' ExprList? ')'
                       | Identifier
                       | StringLiteral
@@ -94,6 +105,7 @@ Expr                ::= 'simulate' Identifier 'under' ProfileLiteral
                       | Expr '&&' Expr
                       | Expr '||' Expr
                       | '!' Expr
+                      | Expr '?'
 ExprList            ::= Expr ( ',' Expr )* ','?
                       // The boolean/comparison operators above bind exactly
                       // as in `Condition`: '||' loosest, then '&&', then
@@ -101,7 +113,21 @@ ExprList            ::= Expr ( ',' Expr )* ','?
                       // then a primary expression. There is no arithmetic
                       // ('+'/'-'/'*'/'/') -- literal numbers and a pool
                       // binding's inferred error rate are only ever compared,
-                      // never combined.
+                      // never combined. '?' binds tighter than comparison
+                      // (like Rust: 'x? == y' means '(x?) == y') -- see
+                      // "Result / Error Propagation" below.
+                      //
+                      // 'StoreOp'/'RetrieveOp'/'DeleteOp' appearing here
+                      // (as opposed to only under 'Operation' below) is
+                      // Step 9's one new capability: the exact same
+                      // grammar 'store'/'retrieve'/'delete' already have
+                      // as *statements*, now also usable in *expression*
+                      // position (e.g. the right-hand side of a 'let') --
+                      // one struct, two surface positions, per "Result /
+                      // Error Propagation" below. The statement forms
+                      // under 'Operation' are unaffected: the parser only
+                      // ever produces this expression form after 'let x =',
+                      // never at the top of a declaration.
 
 Operation           ::= StoreOp
                       | RetrieveOp
@@ -168,10 +194,12 @@ SizeBytesLiteral    ::= [0-9]+ ( 'mb' | 'MB' | 'kb' | 'KB' )
 
 ## Control Flow (`if` / `for`)
 
-NucleScript has no runtime: a program compiles to a static plan (a fixed
-list of pool schemas, probabilistic bindings, and store/retrieve/delete
-calls) which is then executed as-is. `if` and `for` fit into that model as
-**compile-time** constructs, not true runtime branching or looping:
+Before Step 9 (`Result<T, E>`/`?`, below), NucleScript had no runtime at
+all: a program compiled to a static plan (a fixed list of pool schemas,
+probabilistic bindings, and store/retrieve/delete calls) which was then
+executed as-is. `if` and `for` predate that feature and still fit this
+model exactly -- they are **compile-time** constructs, not true runtime
+branching or looping:
 
 ```nsl
 pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
@@ -202,6 +230,76 @@ for target in [archive] {
   type-checked independently.
 - Both are fully resolved away during type checking; `codegen`/the
   simulation backend only ever see a plain, control-flow-free program.
+
+---
+
+## Result / Error Propagation (`Result<T, E>` / `?`)
+
+Unlike `if`/`for` above, this genuinely is runtime behavior -- the first
+in this language. Before Step 9, every `store`/`retrieve`/`delete`
+either succeeded or aborted the entire program; there was no way for a
+NucleScript program to observe, inspect, or recover from an operation
+failure. `store`/`delete` (not `retrieve` -- see below) can now also
+appear in *expression* position, producing a `Result<T, Str>` a `?`
+can unwrap or propagate:
+
+```nsl
+pool primary: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+pool backup: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }
+
+fn archive_with_fallback() returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "genome.fasta" into primary
+    let saved: DnaFile = attempt?
+}
+```
+
+- **`store`/`delete` in expression position** reuse the exact same
+  `StoreOp`/`DeleteOp` grammar the *statement* form already has -- one
+  struct, two surface positions. The statement form (a bare `store ...
+  into ...`/`delete ... from ...` declaration) is completely unaffected
+  and keeps its original all-or-nothing abort-on-failure behavior; only
+  the new expression form produces a `Result`.
+- **`retrieve` is never `Result`-shaped**, even in expression position --
+  it already soft-fails today (an empty match list, never a real error),
+  so there is no genuine failure for a `Result` to carry.
+- **`?`** unwraps a `Result<T, E>`-typed expression to `T` on success, or
+  short-circuits the *enclosing function* with that `Err(E)` on failure.
+  It's only valid inside a function whose own declared return type is
+  `Result<_, E>` with a matching `E` (`E-TRY-OUTSIDE-RESULT-FN`/
+  `E-TRY-ERROR-TYPE-MISMATCH` otherwise) -- there is no top-level `?`, and
+  no coercion between different `Err` types.
+- **A function's tail `let` is its implicit return**, same convention as
+  a `Pool<...>`-returning function. Two valid shapes: still-wrapped (the
+  tail's own annotation is `Result<T, E>`, matching the function's
+  declared return type exactly) or already-unwrapped via `?` (the tail's
+  annotation is just `T`) -- a successful unwrapped tail is automatically
+  re-wrapped into `Ok(T)` at the call boundary, so a caller always sees
+  an ordinary `Result<T, E>` value regardless of which shape the callee
+  used internally.
+- **`Str`** is the one new primitive type this adds, meaningful only as
+  `Result<_, Str>`'s error slot -- every VFS failure is a plain message
+  string (`nucle_vfs`'s own `Result<T, String>`, unchanged), and nothing
+  else in the language expects a `Str`.
+- **Effect analysis treats a `?` exactly like an `if`'s untaken branch**:
+  conservatively, always. A function's effect is the join across *every*
+  declaration in its body, whether or not an earlier `?` might
+  short-circuit before a later one runs -- a `Destructive` operation
+  after a `?` still requires confirmation, since effect analysis is
+  static and never models which declarations actually execute at
+  runtime.
+- **No `match`/`if let` on `Result`** -- a caught `Err` can only be
+  produced and propagated, not branched on from within the same program.
+  Building on a caught error (retrying a different pool, logging why)
+  needs a second, independent function call from the caller, not
+  in-language conditional logic. This is a deliberate scope boundary, not
+  an oversight: NucleScript still has no pattern matching or general
+  boolean branching over runtime values, only over the same compile-time
+  `Condition` grammar `if`/`assert` already use.
+
+See [docs/errors.md](errors.md) for the six new `E-TRY-*`/`E-BINDING-
+RESULT-*`/`E-RETURN-TYPE-*` codes, and
+[`docs/examples/result_fallback_store.nsl`](examples/result_fallback_store.nsl)
+for a complete, runnable example.
 
 ---
 

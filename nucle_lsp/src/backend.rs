@@ -228,6 +228,8 @@ fn describe_type(ty: &TypeExpr) -> String {
         TypeExpr::DnaFile => "DnaFile".to_string(),
         TypeExpr::Recovery => "Recovery".to_string(),
         TypeExpr::Void => "Void".to_string(),
+        TypeExpr::Result(ok, err) => format!("Result<{}, {}>", describe_type(ok), describe_type(err)),
+        TypeExpr::Str => "Str".to_string(),
     }
 }
 

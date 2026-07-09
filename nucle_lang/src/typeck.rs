@@ -138,6 +138,18 @@ struct TypeChecker {
     strands: HashMap<String, Span>,
     sequences: HashMap<String, Span>,
     functions: HashMap<String, FunctionDecl>,
+    /// Bindings whose inferred type is `Result<Ok, Err>` -- parallel to
+    /// `pool_bindings`, but for the structurally different "this is a
+    /// Result, not a pool" shape `infer_expr` has no room for (see
+    /// `infer_result_expr`).
+    result_bindings: HashMap<String, (TypeExpr, TypeExpr)>,
+    /// The `(Ok, Err)` pair of the function currently being type-checked,
+    /// if it declares a `Result<...>` return type -- `None` at top level
+    /// (a `?` outside any function) and for a non-`Result`-returning
+    /// function, both of which make `?` invalid. Set once in
+    /// `check_function` before its body is checked; never mutated by
+    /// nested constructs (there's no lambda/closure to rebind it).
+    enclosing_result_return: Option<(TypeExpr, TypeExpr)>,
     report: TypeReport,
 }
 
@@ -395,7 +407,10 @@ impl TypeChecker {
     }
 
     fn check_let(&mut self, binding: &LetDecl) {
-        if self.pool_bindings.contains_key(&binding.name) || self.pools.contains_key(&binding.name) {
+        if self.pool_bindings.contains_key(&binding.name)
+            || self.pools.contains_key(&binding.name)
+            || self.result_bindings.contains_key(&binding.name)
+        {
             self.report.error(binding.span, "E-BINDING-DUPLICATE", format!("binding '{}' is declared more than once", binding.name));
             return;
         }
@@ -413,6 +428,58 @@ impl TypeChecker {
                 "binding '{}' has {} effect and requires explicit hardware confirmation",
                 binding.name, effect
             ));
+        }
+
+        // `let x: T = <fallible>?` -- the unwrap form. Checked before
+        // anything else since `?`'s own validity (is the inner expression
+        // really Result-shaped? is there an enclosing Result-returning
+        // function? does the Err type match it?) is entirely orthogonal to
+        // whatever T is.
+        if let Expr::Try(inner) = &binding.expr {
+            if let Some(ok_ty) = self.check_try(inner, binding.span) {
+                if ok_ty != binding.annotation {
+                    self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
+                        "binding '{}' is annotated as {} but '?' unwraps to {}",
+                        binding.name, crate::docgen::render_type(&binding.annotation), crate::docgen::render_type(&ok_ty)
+                    ));
+                } else {
+                    self.bindings.insert(binding.name.clone(), binding.clone());
+                }
+            }
+            return;
+        }
+
+        // `let x: Result<T, E> = store ... into ...` (or a variable/call
+        // already known to be Result-shaped) -- the un-unwrapped form.
+        // Checked before the Pool-shaped path below so a Result-producing
+        // expression bound to a non-Result annotation (a `?` was likely
+        // forgotten) is a clear error instead of `infer_expr` silently
+        // returning `None` and this function just giving up.
+        if let Some((ok, err)) = self.infer_result_expr(&binding.expr) {
+            match &binding.annotation {
+                TypeExpr::Result(expected_ok, expected_err) => {
+                    if &ok != expected_ok.as_ref() || &err != expected_err.as_ref() {
+                        self.report.error(binding.span, "E-BINDING-RESULT-TYPE-MISMATCH", format!(
+                            "binding '{}' is annotated as Result<{}, {}> but expression produces Result<{}, {}>",
+                            binding.name,
+                            crate::docgen::render_type(expected_ok), crate::docgen::render_type(expected_err),
+                            crate::docgen::render_type(&ok), crate::docgen::render_type(&err),
+                        ));
+                    } else {
+                        self.result_bindings.insert(binding.name.clone(), (ok, err));
+                        self.bindings.insert(binding.name.clone(), binding.clone());
+                    }
+                }
+                _ => {
+                    self.report.error(binding.span, "E-BINDING-RESULT-TYPE-MISMATCH", format!(
+                        "binding '{}' is annotated as {} but the expression produces Result<{}, {}> -- use '?' to unwrap it, or annotate the binding as Result<{}, {}>",
+                        binding.name, crate::docgen::render_type(&binding.annotation),
+                        crate::docgen::render_type(&ok), crate::docgen::render_type(&err),
+                        crate::docgen::render_type(&ok), crate::docgen::render_type(&err),
+                    ));
+                }
+            }
+            return;
         }
 
         let inferred = match self.infer_expr(&binding.expr, binding.span) {
@@ -443,6 +510,73 @@ impl TypeChecker {
 
         self.pool_bindings.insert(binding.name.clone(), inferred);
         self.bindings.insert(binding.name.clone(), binding.clone());
+    }
+
+    /// Infers the `(Ok, Err)` type pair of a `Result`-shaped expression --
+    /// `StoreExpr`/`DeleteExpr` (always `(DnaFile, Str)`/`(Void, Str)`), a
+    /// call to a `Result`-returning function, or a variable already bound
+    /// to one. Returns `None` for anything that isn't `Result`-shaped,
+    /// including `RetrieveExpr` (retrieve has no real failure mode today
+    /// -- see its doc comment in `ast.rs`) and `Expr::Try` (unwrapping
+    /// removes the `Result` wrapper entirely; `?` is handled at its use
+    /// site by `check_try` instead of through this function).
+    fn infer_result_expr(&mut self, expr: &Expr) -> Option<(TypeExpr, TypeExpr)> {
+        match expr {
+            // `check_store`/`check_delete`/`check_retrieve` are the SAME
+            // validation the statement form already runs (pool declared?
+            // confirmed? sane redundancy/coverage?) -- called here as a
+            // side effect so the expression-position surface form can't
+            // silently skip checks the statement form always runs, just
+            // because this function's job is normally type inference, not
+            // validation. `RetrieveExpr` still returns `None` (it's never
+            // Result-shaped -- see its doc comment in ast.rs), but its
+            // pool/query validation must still happen somewhere, and this
+            // is the one place every reachable occurrence passes through.
+            Expr::StoreExpr(op) => {
+                self.check_store(op);
+                Some((TypeExpr::DnaFile, TypeExpr::Str))
+            }
+            Expr::DeleteExpr(op) => {
+                self.check_delete(op);
+                Some((TypeExpr::Void, TypeExpr::Str))
+            }
+            Expr::RetrieveExpr(op) => {
+                self.check_retrieve(op);
+                None
+            }
+            Expr::Variable(name) => self.result_bindings.get(name).cloned(),
+            Expr::FunctionCall { name, .. } => match self.lookup_function(name)?.return_type {
+                TypeExpr::Result(ok, err) => Some((*ok, *err)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `expr?`'s validity: `expr` must itself be `Result`-shaped
+    /// (`E-TRY-NOT-RESULT` if not), there must be an enclosing function
+    /// declared to return `Result<_, E>` (`E-TRY-OUTSIDE-RESULT-FN` if
+    /// not), and its `Err` type must exactly match that function's
+    /// declared `Err` type -- no coercion, matching this project's
+    /// existing avoidance of implicit conversions (`E-TRY-ERROR-TYPE-
+    /// MISMATCH` if not). Returns the unwrapped `Ok` type on success.
+    fn check_try(&mut self, inner: &Expr, span: Span) -> Option<TypeExpr> {
+        let Some((ok_ty, err_ty)) = self.infer_result_expr(inner) else {
+            self.report.error(span, "E-TRY-NOT-RESULT", "'?' can only be applied to a Result<T, E>-typed expression");
+            return None;
+        };
+        let Some((_, enclosing_err)) = self.enclosing_result_return.clone() else {
+            self.report.error(span, "E-TRY-OUTSIDE-RESULT-FN", "'?' can only be used inside a function whose return type is Result<T, E>");
+            return None;
+        };
+        if err_ty != enclosing_err {
+            self.report.error(span, "E-TRY-ERROR-TYPE-MISMATCH", format!(
+                "'?' propagates an Err({}) but the enclosing function returns Result<_, {}>",
+                crate::docgen::render_type(&err_ty), crate::docgen::render_type(&enclosing_err),
+            ));
+            return None;
+        }
+        Some(ok_ty)
     }
 
     /// `span` is the enclosing declaration's span (a `let` binding, or a
@@ -557,6 +691,9 @@ impl TypeChecker {
             // `if` condition (see `eval_condition`/`eval_numeric`), which
             // is evaluated separately and doesn't route through here.
             Expr::StringLiteral(_) | Expr::Number(_) | Expr::BinaryOp { .. } | Expr::Not(_) => None,
+            // Result<T,E>-shaped, not Pool<...>-shaped -- see
+            // `infer_result_expr` for their actual (Ok, Err) inference.
+            Expr::Try(_) | Expr::StoreExpr(_) | Expr::RetrieveExpr(_) | Expr::DeleteExpr(_) => None,
         }
     }
 
@@ -644,6 +781,13 @@ impl TypeChecker {
         let mut body_checker = TypeChecker::default();
         body_checker.pools = self.pools.clone();
         body_checker.functions = self.functions.clone();
+        // Must be set before the body is checked below (not after): it's
+        // what `check_try` (reached through `check_let`, reached through
+        // `check_declaration_single`) reads to validate every `?` inside
+        // this function's body.
+        if let TypeExpr::Result(ok, err) = &func.return_type {
+            body_checker.enclosing_result_return = Some(((**ok).clone(), (**err).clone()));
+        }
         for param in &func.params {
             match &param.ty {
                 TypeExpr::Pool(pool_type) => {
@@ -706,6 +850,59 @@ impl TypeChecker {
                     self.report.error(func.span, "E-RETURN-TYPE-MISMATCH", format!(
                         "function '{}' is declared to return Pool<{}> but its body does not end in a binding that produces one",
                         func.name, expected.state
+                    ));
+                }
+            }
+        }
+
+        // Same idea as the `Pool<...>` case above, extended to `Result<T,
+        // E>`: the body's last `let` is the implicit return. Two valid
+        // shapes -- still-wrapped (`let x: Result<T,E> = store f into p`,
+        // no `?`) or already-unwrapped via `?` (`let x: T = <fallible>?`,
+        // the actual acceptance-example shape) -- since a Result-returning
+        // function auto-wraps a successful unwrapped tail into `Ok(...)`
+        // at the call boundary (see `codegen::call_user_function`).
+        if let TypeExpr::Result(expected_ok, expected_err) = &func.return_type {
+            match desugared_body.last() {
+                Some(Declaration::Let(last_binding)) if matches!(last_binding.expr, Expr::Try(_)) => {
+                    // The inner fallible expression's Err type was already
+                    // checked against `expected_err` by `check_try` (via
+                    // `enclosing_result_return`, set above) while checking
+                    // this binding -- only the Ok side is left to verify
+                    // here, against the function's declared Ok type
+                    // specifically (not just "whatever `?` unwrapped to",
+                    // which `check_let` already confirmed equals this
+                    // binding's own annotation).
+                    if &last_binding.annotation != expected_ok.as_ref() {
+                        self.report.error(last_binding.span, "E-RETURN-TYPE-RESULT-MISMATCH", format!(
+                            "function '{}' is declared to return Result<{}, {}> but its unwrapped tail produces {}",
+                            func.name, crate::docgen::render_type(expected_ok), crate::docgen::render_type(expected_err),
+                            crate::docgen::render_type(&last_binding.annotation)
+                        ));
+                    }
+                }
+                Some(Declaration::Let(last_binding)) => match body_checker.result_bindings.get(&last_binding.name) {
+                    Some((actual_ok, actual_err)) => {
+                        if actual_ok != expected_ok.as_ref() || actual_err != expected_err.as_ref() {
+                            self.report.error(last_binding.span, "E-RETURN-TYPE-RESULT-MISMATCH", format!(
+                                "function '{}' is declared to return Result<{}, {}> but its body produces Result<{}, {}>",
+                                func.name,
+                                crate::docgen::render_type(expected_ok), crate::docgen::render_type(expected_err),
+                                crate::docgen::render_type(actual_ok), crate::docgen::render_type(actual_err),
+                            ));
+                        }
+                    }
+                    None => {
+                        self.report.error(last_binding.span, "E-RETURN-TYPE-NOT-RESULT", format!(
+                            "function '{}' is declared to return Result<{}, {}> but its last binding does not produce a Result",
+                            func.name, crate::docgen::render_type(expected_ok), crate::docgen::render_type(expected_err)
+                        ));
+                    }
+                },
+                _ => {
+                    self.report.error(func.span, "E-RETURN-TYPE-NOT-RESULT", format!(
+                        "function '{}' is declared to return Result<{}, {}> but its body does not end in a binding that produces one",
+                        func.name, crate::docgen::render_type(expected_ok), crate::docgen::render_type(expected_err)
                     ));
                 }
             }
@@ -1039,6 +1236,29 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
             right: Box::new(substitute_expr(right, binding, value)),
         },
         Expr::Not(inner) => Expr::Not(Box::new(substitute_expr(inner, binding, value))),
+        Expr::Try(inner) => Expr::Try(Box::new(substitute_expr(inner, binding, value))),
+        // Mirrors the statement-form Operation::Store/Retrieve/Delete arms
+        // in substitute_declaration above exactly -- same fields, same
+        // `sub(...)` substitution, since both surface forms wrap the
+        // identical StoreOp/RetrieveOp/DeleteOp struct.
+        Expr::StoreExpr(op) => Expr::StoreExpr(StoreOp {
+            simulate: op.simulate,
+            file: sub(&op.file),
+            pool: sub(&op.pool),
+            options: op.options.clone(),
+            span: op.span,
+        }),
+        Expr::RetrieveExpr(op) => Expr::RetrieveExpr(RetrieveOp {
+            pool: sub(&op.pool),
+            query: op.query.clone(),
+            span: op.span,
+        }),
+        Expr::DeleteExpr(op) => Expr::DeleteExpr(DeleteOp {
+            file: sub(&op.file),
+            pool: sub(&op.pool),
+            confirmed: op.confirmed,
+            span: op.span,
+        }),
     }
 }
 

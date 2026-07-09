@@ -90,7 +90,7 @@
       "patterns": [
         {
           "name": "storage.type.nuclescript",
-          "match": "\\b(DnaPool|Pool|Strand|Sequence|File|DnaFile|Recovery|Void)\\b"
+          "match": "\\b(DnaPool|Pool|Strand|Sequence|File|DnaFile|Recovery|Void|Result|Str)\\b"
         }
       ]
     },
@@ -139,6 +139,11 @@
         {
           "name": "keyword.operator.assignment.nuclescript",
           "match": "="
+        },
+        {
+          "comment": "postfix Result-unwrap/propagate operator (Step 9) -- its own scope since it's semantically distinct enough from &&/||/! to deserve separate editor theming, matching how confirmation-keywords already gets its own scope over ordinary control-keywords for the same reason",
+          "name": "keyword.operator.try.nuclescript",
+          "match": "\\?"
         }
       ]
     },

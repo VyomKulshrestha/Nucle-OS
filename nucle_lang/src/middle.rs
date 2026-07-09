@@ -215,11 +215,23 @@ fn infer_binding(
             Some((PoolState::Recovered, consensus_error_rate_percent(*error_rate_percent, coverage)))
         }
         Expr::Variable(name) => bindings.get(name).cloned(),
+        // None of these produce a pool-shaped (PoolState, error_rate)
+        // value -- a Result<T,E>-typed binding (from Try/StoreExpr/
+        // RetrieveExpr/DeleteExpr) has nothing for MIR's probabilistic-
+        // binding tracking to record, so it's silently skipped here
+        // exactly like FunctionCall/StringLiteral/etc. already are. This
+        // is correct, not a gap: the actual Result/`?` execution runs
+        // directly off the desugared Program in codegen.rs/sim_backend.rs,
+        // never through this MIR pass at all -- see their module docs.
         Expr::FunctionCall { .. }
         | Expr::StringLiteral(_)
         | Expr::Number(_)
         | Expr::BinaryOp { .. }
-        | Expr::Not(_) => None,
+        | Expr::Not(_)
+        | Expr::Try(_)
+        | Expr::StoreExpr(_)
+        | Expr::RetrieveExpr(_)
+        | Expr::DeleteExpr(_) => None,
     }
 }
 

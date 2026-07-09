@@ -40,6 +40,8 @@ pub enum TokenKind {
     OrOr,
     /// `!`
     Bang,
+    /// `?` -- postfix Result-unwrap/propagate operator.
+    Question,
     /// `/// text` -- a doc comment, distinct from a plain `//` comment
     /// (which is discarded during tokenizing and never becomes a token at
     /// all). The `String` is the line's text with the leading `///` and
@@ -94,6 +96,7 @@ impl<'a> Lexer<'a> {
                 '=' => { self.bump(); TokenKind::Eq }
                 '!' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::NotEq }
                 '!' => { self.bump(); TokenKind::Bang }
+                '?' => { self.bump(); TokenKind::Question }
                 '>' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::Ge }
                 '>' => { self.bump(); TokenKind::Gt }
                 '<' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::Le }

@@ -40,6 +40,18 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, resolving: &mut Resolving
             join_effects(expr_effect(left, funcs, resolving), expr_effect(right, funcs, resolving))
         }
         Expr::Not(inner) => expr_effect(inner, funcs, resolving),
+        // Wrapping something in `?` never changes its effect classification
+        // -- `?` is purely a control-flow/unwrap operator, not an operation
+        // in its own right, so this forwards to the inner expression.
+        Expr::Try(inner) => expr_effect(inner, funcs, resolving),
+        // The expression-position and statement-position forms of these
+        // operations share the identical `StoreOp`/`RetrieveOp`/`DeleteOp`
+        // payload, so they get the identical effect via the same
+        // `operation_effect` the statement form already uses -- one
+        // resolution path, not two.
+        Expr::StoreExpr(op) => operation_effect(&Operation::Store(op.clone())),
+        Expr::RetrieveExpr(op) => operation_effect(&Operation::Retrieve(op.clone())),
+        Expr::DeleteExpr(op) => operation_effect(&Operation::Delete(op.clone())),
     }
 }
 
@@ -63,6 +75,15 @@ pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, resolv
             expr_has_required_confirmation(left, funcs, resolving) && expr_has_required_confirmation(right, funcs, resolving)
         }
         Expr::Not(inner) => expr_has_required_confirmation(inner, funcs, resolving),
+        Expr::Try(inner) => expr_has_required_confirmation(inner, funcs, resolving),
+        // Store's "confirmed" is always true today (see decl_effect_info's
+        // Operation::Store arm below) -- store never hard-blocks on
+        // confirmation the way Delete/Synthesize/Sequence do, it only
+        // drives a separate warning. Retrieve is always Pure, so it's
+        // trivially "confirmed". Delete mirrors the statement form exactly.
+        Expr::StoreExpr(_) => true,
+        Expr::RetrieveExpr(_) => true,
+        Expr::DeleteExpr(op) => op.confirmed,
     }
 }
 
@@ -213,6 +234,17 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, resolving: &m
             let mut joint_effect = Effect::Pure;
             let mut req = false;
             let mut conf = true;
+            // Note for `?`/Result: a body like `let x = risky()?;
+            // delete_something();` needs no special-casing here -- this
+            // loop already joins EVERY declaration in the body
+            // unconditionally, regardless of whether an earlier `?` might
+            // short-circuit before `delete_something()` ever runs (it
+            // doesn't model "declaration N might not execute" at all,
+            // exactly like `If`'s untaken branch above still counts). So a
+            // Destructive effect after a `?` still requires confirmation --
+            // conservatively correct, and free: `Expr::Try`'s own
+            // `expr_effect` arm just forwards to its inner expression's
+            // effect, contributing nothing extra to this join.
             for inner in &func.body {
                 let info = decl_effect_info(inner, funcs, resolving);
                 joint_effect = join_effects(joint_effect, info.effect);

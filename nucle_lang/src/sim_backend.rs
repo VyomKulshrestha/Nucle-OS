@@ -1,8 +1,10 @@
 //! Simulation backend for NucleScript programs.
 
-use crate::ast::Program;
+use crate::ast::*;
+use crate::effects::{function_table, FunctionTable};
 use crate::middle::{lower_program, MirOp};
 use crate::typeck::TypeReport;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimulationPlan {
@@ -97,10 +99,92 @@ pub fn compile_simulation(program: Program, type_report: TypeReport) -> Simulati
         }
     }
 
+    // Step 9 (`Result<T,E>`/`?`) additions never reach `MirOp` at all --
+    // they run through a real interpreter in `codegen.rs`/never touch
+    // MIR, since MIR has no notion of function bodies or control flow
+    // (see that module's doc comment). This backend narrates what a real
+    // run WOULD do without ever touching hardware or a real VFS, so a
+    // `store`/`delete` reached only through the new expression-position
+    // syntax (directly, or through a call to a `Result`-returning
+    // function) needs its own narration pass here too, or `nucle plan`/
+    // `nucle explain` would silently show nothing for it while `nucle
+    // run` does real work -- reuses the *existing* `SimulationStep::
+    // Store`/`Delete` variants directly, since `StoreExpr`/`DeleteExpr`
+    // wrap the identical `StoreOp`/`DeleteOp` payload the statement form
+    // already narrates.
+    let funcs = function_table(&program);
+    let pools: HashMap<String, PoolDecl> = program
+        .declarations
+        .iter()
+        .filter_map(|decl| match decl {
+            Declaration::Pool(pool) => Some((pool.name.clone(), pool.clone())),
+            _ => None,
+        })
+        .collect();
+    for declaration in &program.declarations {
+        if let Declaration::Let(binding) = declaration {
+            narrate_result_expr(&binding.expr, &pools, &funcs, &mut steps, &mut HashSet::new());
+        }
+    }
+
     SimulationPlan {
         steps,
         optimiser_notes: mir.notes,
         type_report,
+    }
+}
+
+/// Describes -- never executes -- what a `Result`-producing expression
+/// would do: `StoreExpr`/`DeleteExpr` narrate directly (same shape as
+/// the statement form); `Expr::Try` narrates its inner expression
+/// unchanged (unwrapping doesn't change what would run); a call to a
+/// `Result`-returning function narrates every store/delete in *that*
+/// function's own body, one level at a time via ordinary recursion.
+/// `calling` is a cycle guard mirroring `effects::ResolvingSet`'s pattern
+/// -- a function that (mutually) recurses into itself is described once
+/// per distinct name, not unrolled forever.
+fn narrate_result_expr(
+    expr: &Expr,
+    pools: &HashMap<String, PoolDecl>,
+    funcs: &FunctionTable,
+    steps: &mut Vec<SimulationStep>,
+    calling: &mut HashSet<String>,
+) {
+    match expr {
+        Expr::Try(inner) => narrate_result_expr(inner, pools, funcs, steps, calling),
+        Expr::StoreExpr(op) => {
+            if let Some(pool) = pools.get(&op.pool) {
+                let redundancy = op.options.redundancy.unwrap_or(pool.redundancy);
+                let coverage = op.options.coverage.unwrap_or(redundancy);
+                steps.push(SimulationStep::Store {
+                    file: op.file.clone(),
+                    pool: op.pool.clone(),
+                    redundancy,
+                    coverage,
+                    profile: pool.profile.to_string(),
+                    hardware_free: op.simulate,
+                });
+            }
+        }
+        Expr::DeleteExpr(op) => {
+            steps.push(SimulationStep::Delete { file: op.file.clone(), pool: op.pool.clone(), hardware_free: true });
+        }
+        Expr::FunctionCall { name, .. } => {
+            if let Some(func) = funcs.get(name) {
+                if calling.insert(name.clone()) {
+                    for decl in &func.body {
+                        if let Declaration::Let(binding) = decl {
+                            narrate_result_expr(&binding.expr, pools, funcs, steps, calling);
+                        }
+                    }
+                    calling.remove(name);
+                }
+            }
+        }
+        // Never Result-shaped (retrieve has no real failure mode) or not
+        // reachable in this position for a program that passed type-
+        // checking -- nothing to narrate.
+        _ => {}
     }
 }
 

@@ -25,6 +25,7 @@ nucle run docs/examples/store.nsl
 | `yinyang_schema.nsl` | Future codec schema parsing with current-backend compatibility warning |
 | `control_flow.nsl` | Compile-time `if`/`for`: a boolean-combined error-rate condition picking a recovery branch, and a `for` loop unrolled into a `store` |
 | `archive_fn.nsl` | A reusable, `///`-documented `fn` wrapping `protect ... for ...`, plus a `test { ... }`/`assert` block verifying `consensus_vote` actually reduces the inferred error rate — run with `nucle test archive_fn.nsl`, or `nucle doc archive_fn.nsl` for its generated Markdown |
+| `result_fallback_store.nsl` | `Result<T, E>` + `?`: two functions storing the same file into different pools, each propagating a real VFS failure via `?` instead of aborting the run, plus a top-level binding holding a still-wrapped `Result` |
 
 `sample_a.txt` and `sample_b.txt` are small payloads used by the examples.
 

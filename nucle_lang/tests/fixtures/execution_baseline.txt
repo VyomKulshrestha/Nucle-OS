@@ -1,0 +1,498 @@
+=== archive_fn.nsl === OK
+NucleScript diagnostics:
+6:5: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'plan' has Synthesis effect; use simulate store for no-hardware execution
+
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               0               ║
+║ Total strands:       0               ║
+║ Data strands:        0               ║
+║ Parity strands:      0               ║
+║ Nucleotides:         0               ║
+║ Avg strand len:      0 nt            ║
+║ Redundancy:      0.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+╚══════════════════════════════════════╝
+
+
+=== END archive_fn.nsl ===
+=== control_flow.nsl === OK
+NucleScript diagnostics:
+23:5: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
+
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       6               ║
+║ Data strands:        2               ║
+║ Parity strands:      4               ║
+║ Nucleotides:      3012               ║
+║ Avg strand len:    502 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+
+
+=== END control_flow.nsl ===
+=== critical_redundancy_warning.nsl === OK
+NucleScript diagnostics:
+2:1: warning [E-POOL-LOW-REDUNDANCY]: pool 'archive' has 1x redundancy; critical files should use at least 2x
+8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
+8:1: warning [E-STORE-CRITICAL-LOW-REDUNDANCY]: store 'sample_a.txt' is tagged critical but uses only 1x redundancy
+
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       6               ║
+║ Data strands:        2               ║
+║ Parity strands:      4               ║
+║ Nucleotides:      3012               ║
+║ Avg strand len:    502 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+
+
+=== END critical_redundancy_warning.nsl ===
+=== effect_confirmations.nsl === ERR
+execution failed: file 'old_archive.bin' not found
+=== END effect_confirmations.nsl ===
+=== hero.nsl === OK
+✓ store into medical_archive: Stored 'patient_records_2026.csv' (109 bytes → 4 data + 4 parity = 8 strands, 2.00× redundancy, primer=P0000)
+✓ verify roundtrip: 'patient_records_2026.csv' recovered exactly
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       8               ║
+║ Data strands:        4               ║
+║ Parity strands:      4               ║
+║ Nucleotides:      3204               ║
+║ Avg strand len:    400 nt            ║
+║ Redundancy:      2.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   patient_records_2026.csv (ID: archive-7f2a, 109 B, 4d+4p strands, 2.0×)
+╚══════════════════════════════════════╝
+
+--- Recovery Manifest: patient_records_2026.csv ---
+Observed Error Rate: 0.0000%
+Consensus Method:    majority-vote
+Sequencing Profile:  pristine
+Recovered Strands:   4
+ECC Success:         true
+Positions w/ errors: 0 of 4
+
+
+=== END hero.nsl ===
+=== minimal.nsl === OK
+NucleScript diagnostics:
+8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
+
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ retrieve from archive where : 1 match(es)
+  - 1.000  sample_a.txt  31 bytes
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       6               ║
+║ Data strands:        2               ║
+║ Parity strands:      4               ║
+║ Nucleotides:      3012               ║
+║ Avg strand len:    502 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+
+
+=== END minimal.nsl ===
+=== multi_store_search.nsl === OK
+NucleScript diagnostics:
+8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
+12:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_b.txt' has Synthesis effect; use simulate store for no-hardware execution
+
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_b.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0001)
+- retrieve from archive where name:README: no matches
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               2               ║
+║ Total strands:      12               ║
+║ Data strands:        4               ║
+║ Parity strands:      8               ║
+║ Nucleotides:      6024               ║
+║ Avg strand len:    502 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_b.txt (ID: archive-0eff, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+
+
+=== END multi_store_search.nsl ===
+=== nanopore_recovery_warning.nsl === OK
+NucleScript diagnostics:
+2:1: warning [E-POOL-LOW-REDUNDANCY]: pool 'field_pool' has 1x redundancy; critical files should use at least 2x
+8:1: warning [E-STORE-UNSATISFIABLE-RECOVERY]: expect recovery > 99.5% is statistically unsatisfiable for Nanopore at 1x coverage
+
+✓ store into field_pool: Stored 'sample_a.txt' (31 bytes → 2 data + 8 parity = 10 strands, 5.00× redundancy, primer=P0000)
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       8               ║
+║ Data strands:        2               ║
+║ Parity strands:      6               ║
+║ Nucleotides:      4312               ║
+║ Avg strand len:    539 nt            ║
+║ Redundancy:      4.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-94cc, 31 B, 2d+8p strands, 5.0×)
+╚══════════════════════════════════════╝
+
+
+=== END nanopore_recovery_warning.nsl ===
+=== pipeline_backup.nsl === OK
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ verify roundtrip: 'sample_a.txt' recovered exactly
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       6               ║
+║ Data strands:        2               ║
+║ Parity strands:      4               ║
+║ Nucleotides:      3012               ║
+║ Avg strand len:    502 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+
+--- Recovery Manifest: sample_a.txt ---
+Observed Error Rate: 0.0000%
+Consensus Method:    majority-vote
+Sequencing Profile:  pristine
+Recovered Strands:   2
+ECC Success:         true
+Positions w/ errors: 0 of 2
+
+
+=== END pipeline_backup.nsl ===
+=== preset_imports.nsl === OK
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               0               ║
+║ Total strands:       0               ║
+║ Data strands:        0               ║
+║ Parity strands:      0               ║
+║ Nucleotides:         0               ║
+║ Avg strand len:      0 nt            ║
+║ Redundancy:      0.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+╚══════════════════════════════════════╝
+
+
+=== END preset_imports.nsl ===
+=== probabilistic_recovery.nsl === OK
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               0               ║
+║ Total strands:       0               ║
+║ Data strands:        0               ║
+║ Parity strands:      0               ║
+║ Nucleotides:         0               ║
+║ Avg strand len:      0 nt            ║
+║ Redundancy:      0.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+╚══════════════════════════════════════╝
+
+
+=== END probabilistic_recovery.nsl ===
+=== retrieve_query.nsl === OK
+NucleScript diagnostics:
+8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
+
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ retrieve from archive where tag:medical size<10485760: 1 match(es)
+  - 0.044  sample_a.txt  31 bytes
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       6               ║
+║ Data strands:        2               ║
+║ Parity strands:      4               ║
+║ Nucleotides:      3012               ║
+║ Avg strand len:    502 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+
+
+=== END retrieve_query.nsl ===
+=== sequence_literals.nsl === OK
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               0               ║
+║ Total strands:       0               ║
+║ Data strands:        0               ║
+║ Parity strands:      0               ║
+║ Nucleotides:         0               ║
+║ Avg strand len:      0 nt            ║
+║ Redundancy:      0.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+╚══════════════════════════════════════╝
+
+
+=== END sequence_literals.nsl ===
+=== simulate_store.nsl === OK
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:      60               ║
+║ Data strands:       20               ║
+║ Parity strands:     40               ║
+║ Nucleotides:     30112               ║
+║ Avg strand len:    502 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-25b0, 31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+
+
+=== END simulate_store.nsl ===
+=== store.nsl === OK
+NucleScript diagnostics:
+8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
+
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       6               ║
+║ Data strands:        2               ║
+║ Parity strands:      4               ║
+║ Nucleotides:      3012               ║
+║ Avg strand len:    502 nt            ║
+║ Redundancy:      3.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+╚══════════════════════════════════════╝
+
+
+=== END store.nsl ===
+=== strand_constraints.nsl === ERR
+type check failed:
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: GC content 0.0% outside range [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [0-20] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [1-21] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [2-22] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [3-23] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [4-24] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [5-25] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [6-26] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [7-27] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [8-28] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [9-29] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [10-30] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [11-31] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [12-32] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [13-33] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [14-34] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [15-35] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [16-36] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [17-37] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [18-38] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [19-39] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [20-40] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [21-41] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [22-42] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [23-43] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [24-44] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [25-45] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [26-46] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [27-47] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [28-48] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [29-49] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [30-50] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [31-51] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [32-52] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [33-53] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [34-54] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [35-55] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [36-56] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [37-57] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [38-58] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [39-59] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [40-60] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [41-61] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [42-62] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [43-63] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [44-64] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [45-65] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [46-66] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [47-67] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [48-68] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [49-69] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [50-70] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [51-71] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [52-72] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [53-73] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [54-74] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [55-75] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [56-76] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [57-77] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [58-78] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [59-79] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [60-80] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [61-81] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [62-82] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [63-83] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [64-84] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [65-85] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [66-86] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [67-87] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [68-88] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [69-89] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [70-90] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [71-91] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [72-92] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [73-93] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [74-94] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [75-95] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [76-96] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [77-97] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [78-98] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [79-99] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [80-100] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [81-101] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [82-102] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [83-103] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [84-104] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [85-105] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [86-106] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [87-107] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [88-108] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [89-109] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [90-110] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [91-111] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [92-112] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [93-113] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [94-114] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [95-115] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [96-116] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [97-117] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [98-118] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [99-119] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [100-120] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [101-121] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [102-122] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [103-123] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [104-124] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [105-125] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [106-126] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [107-127] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [108-128] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [109-129] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [110-130] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [111-131] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [112-132] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [113-133] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [114-134] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [115-135] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [116-136] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [117-137] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [118-138] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [119-139] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [120-140] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [121-141] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [122-142] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [123-143] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [124-144] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [125-145] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [126-146] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [127-147] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [128-148] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [129-149] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [130-150] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [131-151] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [132-152] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [133-153] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [134-154] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [135-155] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [136-156] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [137-157] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [138-158] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [139-159] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: local GC 0.0% at [140-160] outside [40%–60%]
+9:1: error [E-STRAND-CONSTRAINT-VIOLATION]: strand 'bad_literal' violates NucleScript biological constraint: homopolymer run of 160×A at position 0 (max 3)
+
+=== END strand_constraints.nsl ===
+=== yinyang_schema.nsl === OK
+NucleScript diagnostics:
+8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
+
+✓ store into archive: Stored 'sample_a.txt' (31 bytes → 1 data + 3 parity = 4 strands, 4.00× redundancy, primer=P0000)
+
+╔══════════════════════════════════════╗
+║         NucleOS Pool Status          ║
+╠══════════════════════════════════════╣
+║ Files:               1               ║
+║ Total strands:       4               ║
+║ Data strands:        1               ║
+║ Parity strands:      3               ║
+║ Nucleotides:      2084               ║
+║ Avg strand len:    521 nt            ║
+║ Redundancy:      4.00×              ║
+╟──────────────────────────────────────╢
+║ Files:                               ║
+║   sample_a.txt (ID: archive-9cc6, 31 B, 1d+3p strands, 4.0×)
+╚══════════════════════════════════════╝
+
+
+=== END yinyang_schema.nsl ===

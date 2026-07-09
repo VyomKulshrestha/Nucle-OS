@@ -1,0 +1,36 @@
+// Step 9: `Result<T, E>` + `?` -- a store that can genuinely fail (the
+// same file stored twice into the same pool) is caught inside a
+// function instead of aborting the whole program, and a plain top-level
+// binding can hold the still-wrapped Result for a caller to inspect.
+
+pool primary: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+pool backup: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+/// Stores `sample_a.txt` into `primary`, propagating a real VFS failure
+/// (e.g. "file already exists") via `?` instead of aborting the run.
+fn archive_in_primary() returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+    let saved: DnaFile = attempt?
+}
+
+/// Same file, different pool -- the fallback path a caller reaches for
+/// once `archive_in_primary`'s `Result` comes back `Err`.
+fn archive_in_backup() returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into backup
+    let saved: DnaFile = attempt?
+}
+
+// Kept wrapped (no `?`) since this is top-level, not inside a
+// `Result`-returning function -- `?` here would be
+// `E-TRY-OUTSIDE-RESULT-FN`. Whether this comes back `Ok` or `Err`
+// depends on what's already in `primary` when this file runs.
+let outcome: Result<DnaFile, Str> = archive_in_primary()

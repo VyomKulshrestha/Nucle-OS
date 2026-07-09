@@ -22,6 +22,7 @@ pub mod test_runner;
 pub mod typeck;
 pub mod diagnostics;
 pub mod formatter;
+pub mod value;
 
 use std::fmt;
 use std::path::Path;
