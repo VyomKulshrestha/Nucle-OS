@@ -234,6 +234,66 @@ running the shipped example against the real `nucle-cli` binary — see the
 semantics, including the deliberate scope limits (fixed arm order, no
 `Ok`/`Err` constructor syntax, no composability with `?`/nested `match`).
 
+### Closures (`Fn(...)` / `fn(params) -> T { body }`)
+
+The capture-semantics question this was originally deferred over ("by
+value or by reference? what does capturing a mutated-in-place pool even
+mean?") turned out to have a structural, not chosen, answer: every `let`
+binding in NucleScript is single-assignment, so there is no "later
+mutation" a by-value/by-reference distinction could ever observe --
+capture-by-snapshot is simply correct here, not a design compromise.
+Separately, pools are never mutated *as bindings* -- `store`/`delete`
+reference a `pool` *declaration* by name (always globally visible),
+never a captured probabilistic binding -- and have no runtime `Value`
+representation at all, so "capturing a pool" was never a coherent
+runtime operation to begin with. Capture in `codegen.rs`'s `eval_expr`
+is therefore just one `env.clone()` at the point a closure literal is
+evaluated (`Value::Closure`'s `captured_env` field) -- nothing to
+filter, since `env` already only ever holds `Value`-representable
+things (a captured `Pool`/`Strand`/`Sequence` binding, if present at
+all, is an inert `Value::Unit` placeholder, exactly as harmless to
+capture as it already is to pass around anywhere else).
+
+Calling a closure reuses the *existing* `name(args)` surface syntax
+(`Expr::FunctionCall` is completely unchanged) -- typeck's `self.closures`
+map and the runtime's `env`-before-`funcs` lookup both resolve a
+closure-bound name *before* falling back to the global function table,
+so a call site looks identical whether `name` is a top-level `fn` or a
+local closure. This is also why no cycle-guard machinery was needed for
+closures at all: a closure literal has no name to reference inside its
+own body, so it can call an *earlier*-defined closure/function but
+never itself or another closure mutually -- `codegen.rs`'s existing
+`calling`/`func.name` guard (built for named function recursion) stays
+completely untouched.
+
+`effects.rs` needed a real signature change, not just an additive match
+arm -- the one place this feature couldn't stay purely additive. It's a
+free-function pass over `&FunctionTable` with no visibility into
+typeck's per-scope state, so `expr_effect`/`expr_has_required_
+confirmation`/`function_call_effect` all gained a second `closures:
+&FunctionTable` parameter: a synthetic `FunctionDecl` per `let`-bound
+closure (real params/return_type/body, so its actual effect can be
+computed by recursing into it, exactly like a named function already
+can) that `typeck::TypeChecker::check_let` populates and passes through
+at its own confirmation-gating call site -- the one place that actually
+gates compilation. Two related, deliberately *not* fixed gaps, both
+because the real fix would require either unsafe cross-scope guessing or
+disproportionate new machinery for a secondary reporting concern: a
+`Fn(...)`-typed *parameter*'s call (its real body isn't knowable until
+runtime, so it's optimistically treated as `Pure`/confirmed, no worse
+than the pre-existing "can't resolve, assume Pure" fallback for any
+unresolvable name); and `effect_summary`/`decl_effect_info`'s own
+independent, scope-free walk (used by `nucle explain`), which always
+passes an empty closures table and so treats every closure call as
+inert -- deliberately not given a whole-program closure pre-scan, since
+pooling same-named closures from unrelated scopes by name alone would
+risk silently picking the *wrong* one's effect, a correctness bug worse
+than the honest incompleteness it would "fix." `sim_backend.rs`'s
+narrator has the identical, symmetric gap for the same reason (it
+resolves callees by static name and has no runtime environment to
+consult) -- see the "Closures" section of [docs/grammar.md](grammar.md)
+for the full semantics and every documented limitation.
+
 ### Language Server (`nucle_lsp`)
 
 `nucle_lsp` is a thin LSP protocol adapter, not a second compiler: every

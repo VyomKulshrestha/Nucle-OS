@@ -254,6 +254,11 @@ pub fn execute_program(
 fn is_result_producing(expr: &Expr, funcs: &FunctionTable) -> bool {
     match expr {
         Expr::StoreExpr(_) | Expr::DeleteExpr(_) | Expr::Try(_) | Expr::Match { .. } => true,
+        // A closure literal's own scrutinee is always `Result`-shaped in
+        // the sense that it always needs real evaluation: capture is a
+        // real `env.clone()` at the exact point of the literal, which
+        // only happens by actually running `eval_expr` on it.
+        Expr::Closure { .. } => true,
         Expr::FunctionCall { name, .. } => matches!(funcs.get(name).map(|f| &f.return_type), Some(TypeExpr::Result(_, _))),
         _ => false,
     }
@@ -321,7 +326,35 @@ fn eval_expr(
             // unresolvable name as inert-but-shouldn't-happen.
             None => EvalOutcome::Err(format!("internal error: undeclared variable '{}' reached execution", name)),
         },
+        // Capture *is* this `env.clone()` -- see `Value::Closure`'s doc
+        // comment in value.rs. Nothing to filter: a captured `Pool`/
+        // `Strand`/`Sequence` binding (if present in `env` at all --
+        // inside a function body every `Let` reaches `eval_expr`
+        // unconditionally, landing here as an inert `Value::Unit`
+        // placeholder, same as it already is for any other expression;
+        // see `eval_expr`'s trailing wildcard arm) is just as harmless to
+        // capture as it already is to pass around anywhere else.
+        Expr::Closure { params, return_type, body, .. } => EvalOutcome::Value(Value::Closure {
+            params: params.clone(),
+            return_type: return_type.clone(),
+            body: body.clone(),
+            captured_env: env.clone(),
+        }),
         Expr::FunctionCall { name, args } => {
+            // Closures resolve first, same priority `typeck::TypeChecker`
+            // already validated the program against (a closure-bound
+            // name shadows a same-named global function) -- see
+            // `infer_expr`'s own `FunctionCall` arm comment for why.
+            if let Some(Value::Closure { params, return_type, body, captured_env }) = env.get(name).cloned() {
+                let mut arg_values = Vec::with_capacity(args.len());
+                for arg in args {
+                    match eval_expr(arg, env, funcs, pools, os, base_dir, steps, calling) {
+                        EvalOutcome::Value(v) => arg_values.push(v),
+                        err @ EvalOutcome::Err(_) => return err,
+                    }
+                }
+                return call_closure(&params, &return_type, &body, &captured_env, arg_values, funcs, pools, os, base_dir, steps, calling);
+            }
             let Some(func) = funcs.get(name).cloned() else {
                 return EvalOutcome::Err(format!("internal error: undeclared function '{}' reached execution", name));
             };
@@ -472,6 +505,46 @@ fn call_user_function(
         EvalOutcome::Err(msg) => EvalOutcome::Err(msg),
         EvalOutcome::Value(Value::Result(r)) => EvalOutcome::Value(Value::Result(r)),
         EvalOutcome::Value(v) if matches!(func.return_type, TypeExpr::Result(_, _)) => EvalOutcome::Value(Value::Result(Ok(Box::new(v)))),
+        EvalOutcome::Value(v) => EvalOutcome::Value(v),
+    }
+}
+
+/// Calls a closure -- a close mirror of `call_user_function`, except it
+/// starts from `captured_env.clone()` (the snapshot taken when the
+/// closure literal was evaluated) instead of an empty environment before
+/// binding params on top (params intentionally shadow a captured name of
+/// the same name). No cycle guard: a closure literal has no name to
+/// reference inside its own body, so it can call an *earlier*-defined
+/// closure/function but never itself, and two distinct closures can
+/// never be mutually recursive either (each only ever sees what was
+/// already bound *before* its own literal) -- there is no cycle this
+/// could ever need to detect, unlike `call_user_function`'s
+/// `calling`/`func.name` guard.
+fn call_closure(
+    params: &[FnParam],
+    return_type: &TypeExpr,
+    body: &[Declaration],
+    captured_env: &HashMap<String, Value>,
+    args: Vec<Value>,
+    funcs: &FunctionTable,
+    pools: &HashMap<String, PoolDecl>,
+    os: &mut NucleOS,
+    base_dir: &Path,
+    steps: &mut Vec<String>,
+    calling: &mut HashSet<String>,
+) -> EvalOutcome {
+    let mut env = captured_env.clone();
+    for (param, arg) in params.iter().zip(args) {
+        env.insert(param.name.clone(), arg);
+    }
+    let outcome = exec_function_body(body, &mut env, funcs, pools, os, base_dir, steps, calling);
+    // Same tail-wrapping logic as `call_user_function`'s own boundary --
+    // see its doc comment for the full rationale.
+    match outcome {
+        EvalOutcome::Err(msg) if matches!(return_type, TypeExpr::Result(_, _)) => EvalOutcome::Value(Value::Result(Err(msg))),
+        EvalOutcome::Err(msg) => EvalOutcome::Err(msg),
+        EvalOutcome::Value(Value::Result(r)) => EvalOutcome::Value(Value::Result(r)),
+        EvalOutcome::Value(v) if matches!(return_type, TypeExpr::Result(_, _)) => EvalOutcome::Value(Value::Result(Ok(Box::new(v)))),
         EvalOutcome::Value(v) => EvalOutcome::Value(v),
     }
 }

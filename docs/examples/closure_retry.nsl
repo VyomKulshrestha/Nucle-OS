@@ -1,0 +1,65 @@
+// Step 12: closures / higher-order functions. Two demonstrations: a
+// genuinely higher-order function that calls whatever closure it's
+// given (no capture needed), and a `let`-bound closure that captures a
+// Result binding from its enclosing function.
+
+pool primary: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+pool secondary: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+/// Genuinely higher-order: calls whatever closure it's given, retrying
+/// once more on a caught failure -- the caller decides what "trying"
+/// actually means, `retry_once` just knows how to retry it.
+fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = attempt_fn()
+    let saved: DnaFile = match attempt {
+        Ok(file) => file,
+        Err(reason) => attempt_fn()?
+    }
+}
+
+/// Passes an inline closure literal directly as an argument -- no
+/// capture needed here, the closure's body only stores a fixed file.
+fn archive_with_retry() returns Result<DnaFile, Str> {
+    let result: Result<DnaFile, Str> = retry_once(fn() -> Result<DnaFile, Str> {
+            let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+    })
+}
+
+/// Demonstrates real capture: the closure's body references
+/// `primary_attempt`, a `Result` binding from the *enclosing* function,
+/// not a parameter of its own.
+fn archive_with_logged_fallback() returns Result<DnaFile, Str> {
+    let primary_attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+    let fallback: Fn() -> Result<DnaFile, Str> = fn() -> Result<DnaFile, Str> {
+        let saved: DnaFile = match primary_attempt {
+            Ok(file) => file,
+            Err(reason) => (store "sample_b.txt" into secondary)?
+        }
+    }
+    let result: Result<DnaFile, Str> = fallback()
+}
+
+// First call: `primary` is empty, so `retry_once`'s first attempt
+// already succeeds -- the retry path isn't needed yet.
+let first: Result<DnaFile, Str> = archive_with_retry()
+
+// Second call: `primary` already has `sample_a.txt` (from `first`), so
+// `archive_with_logged_fallback`'s own attempt fails and its captured-
+// binding fallback into `secondary` succeeds instead.
+let second: Result<DnaFile, Str> = archive_with_logged_fallback()
+
+// Third call: `primary` still has `sample_a.txt`, so `retry_once` calls
+// `attempt_fn` a *second* time -- and since retrying the identical
+// store against the identical pool state fails identically, this
+// demonstrates the honest limit noted on `retry_once` itself: a second
+// real failure propagates as `Err`, it isn't papered over.
+let third: Result<DnaFile, Str> = archive_with_retry()

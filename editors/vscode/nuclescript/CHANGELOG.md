@@ -8,6 +8,20 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.7]
+
+- **NucleScript now supports closures / higher-order functions.**
+  `fn(params) -> T { body }` is an anonymous closure literal — bind one
+  to a variable, pass one as an argument (`Fn(...) -> T` is its type),
+  and it captures real values from its enclosing scope. Highlighting,
+  live diagnostics, hover, and formatting all understand `Fn(...)` and
+  closure literals — see the updated README and
+  [`docs/examples/closure_retry.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/closure_retry.nsl)
+  in the main repo.
+- Bumped the downloaded `nucle-lsp`/`nucle-cli` binaries to the release
+  that actually understands the new syntax, same reason as every prior
+  language-feature bump.
+
 ## [0.1.6]
 
 - **NucleScript now supports pattern matching over `Result<T, E>`.**

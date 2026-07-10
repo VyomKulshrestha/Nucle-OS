@@ -82,7 +82,9 @@ pub fn lower_program(program: &Program) -> MirProgram {
                     name: binding.name.clone(),
                     state,
                     error_rate_percent,
-                    effect: expr_effect(&binding.expr, &funcs, &mut std::collections::HashSet::new()),
+                    // No scope-tracking here either -- same documented
+                    // gap as `effects::decl_effect_info`'s own `Let` arm.
+                    effect: expr_effect(&binding.expr, &funcs, &crate::effects::FunctionTable::new(), &mut std::collections::HashSet::new()),
                 });
             }
             Declaration::Operation(Operation::Store(store)) => {
@@ -232,7 +234,8 @@ fn infer_binding(
         | Expr::StoreExpr(_)
         | Expr::RetrieveExpr(_)
         | Expr::DeleteExpr(_)
-        | Expr::Match { .. } => None,
+        | Expr::Match { .. }
+        | Expr::Closure { .. } => None,
     }
 }
 

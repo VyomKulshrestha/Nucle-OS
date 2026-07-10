@@ -28,6 +28,7 @@ nucle run docs/examples/store.nsl
 | `result_fallback_store.nsl` | `Result<T, E>` + `?`: two functions storing the same file into different pools, each propagating a real VFS failure via `?` instead of aborting the run, plus a top-level binding holding a still-wrapped `Result` |
 | `generic_pool_recovery.nsl` | Generics: one `fn recover_from<P>(...)` called with a `Pool<Illumina>` and a `Pool<Nanopore>` argument in the same program — fails to type-check without a type parameter |
 | `match_result_fallback.nsl` | Pattern matching: `match attempt { Ok(file) => file, Err(reason) => ... }` branches on a caught `Result` directly inside one function — calling it twice in one run exercises both the `Ok` arm and the `Err` arm's fallback store |
+| `closure_retry.nsl` | Closures: a genuinely higher-order `fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>)` that calls whatever closure it's given, and a `let`-bound closure that captures a `Result` binding from its enclosing function |
 
 `sample_a.txt` and `sample_b.txt` are small payloads used by the examples.
 

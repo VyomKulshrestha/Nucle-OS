@@ -143,12 +143,32 @@ struct TypeChecker {
     /// Result, not a pool" shape `infer_expr` has no room for (see
     /// `infer_result_expr`).
     result_bindings: HashMap<String, (TypeExpr, TypeExpr)>,
-    /// The `(Ok, Err)` pair of the function currently being type-checked,
-    /// if it declares a `Result<...>` return type -- `None` at top level
-    /// (a `?` outside any function) and for a non-`Result`-returning
-    /// function, both of which make `?` invalid. Set once in
-    /// `check_function` before its body is checked; never mutated by
-    /// nested constructs (there's no lambda/closure to rebind it).
+    /// Bindings whose inferred type is `Fn(params) -> Ok` -- a closure
+    /// (from a `let`) or a `Fn(...)`-typed function parameter, parallel
+    /// to `result_bindings`/`pool_bindings`. Only the signature is kept
+    /// (a call site only ever needs to validate args/return type against
+    /// it); the closure's actual body/captured values live purely at
+    /// runtime in `codegen::Value::Closure`, never here.
+    closures: HashMap<String, (Vec<TypeExpr>, TypeExpr)>,
+    /// Real, callable bodies for `let`-bound closures ONLY -- a synthetic
+    /// `FunctionDecl` per closure (`name`/`type_params`/`doc` unused,
+    /// `params`/`return_type`/`body` real), so `effects::expr_effect`'s
+    /// call-site resolution can compute the closure's *actual* effect by
+    /// recursing into it, exactly like a named function already can.
+    /// Deliberately NOT populated for a `Fn(...)`-typed *parameter* --
+    /// whatever closure a caller passes isn't knowable here at all, only
+    /// at runtime, so that case is a real, documented gap (see
+    /// `effects::expr_effect`'s doc comment), not silently guessed at.
+    closure_decls: HashMap<String, FunctionDecl>,
+    /// The `(Ok, Err)` pair of the function/closure currently being
+    /// type-checked, if it declares a `Result<...>` return type -- `None`
+    /// at top level (a `?` outside any function) and for a non-`Result`-
+    /// returning function/closure, both of which make `?` invalid. Set
+    /// once in `check_function`/`check_closure_expr` before the body is
+    /// checked, from that function/closure's *own* declared return type
+    /// -- a closure's `?` always validates against the closure's own
+    /// signature, never an outer function's, even though the closure's
+    /// checker otherwise inherits the outer scope's bindings for capture.
     enclosing_result_return: Option<(TypeExpr, TypeExpr)>,
     report: TypeReport,
 }
@@ -410,6 +430,7 @@ impl TypeChecker {
         if self.pool_bindings.contains_key(&binding.name)
             || self.pools.contains_key(&binding.name)
             || self.result_bindings.contains_key(&binding.name)
+            || self.closures.contains_key(&binding.name)
         {
             self.report.error(binding.span, "E-BINDING-DUPLICATE", format!("binding '{}' is declared more than once", binding.name));
             return;
@@ -422,8 +443,8 @@ impl TypeChecker {
         // common shape for a side-effecting function. Bailing out on `None`
         // before this check would silently skip confirmation checking for
         // exactly that case.
-        let effect = expr_effect(&binding.expr, &self.functions, &mut std::collections::HashSet::new());
-        if !expr_has_required_confirmation(&binding.expr, &self.functions, &mut std::collections::HashSet::new()) {
+        let effect = expr_effect(&binding.expr, &self.functions, &self.closure_decls, &mut std::collections::HashSet::new());
+        if !expr_has_required_confirmation(&binding.expr, &self.functions, &self.closure_decls, &mut std::collections::HashSet::new()) {
             self.report.error(binding.span, "E-SYNTHESIS-UNCONFIRMED", format!(
                 "binding '{}' has {} effect and requires explicit hardware confirmation",
                 binding.name, effect
@@ -471,13 +492,44 @@ impl TypeChecker {
             return;
         }
 
+        // `let f: Fn(...) -> T = fn(params) -> T { body }` -- a closure
+        // literal. Checked before the un-unwrapped Result path below for
+        // the same reason `Match` is: it needs its own dispatch, not
+        // either of the other two.
+        if let Expr::Closure { params, return_type, body, span } = &binding.expr {
+            if let Some(closure_ty) = self.check_closure_expr(params, return_type, body, *span) {
+                if closure_ty != binding.annotation {
+                    self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
+                        "binding '{}' is annotated as {} but this closure's own type is {}",
+                        binding.name, crate::docgen::render_type(&binding.annotation), crate::docgen::render_type(&closure_ty)
+                    ));
+                } else if let TypeExpr::Fn(param_types, ret) = closure_ty {
+                    self.closures.insert(binding.name.clone(), (param_types, *ret));
+                    // A real body to recurse into -- see `effects::
+                    // expr_effect`'s doc comment for why this is the one
+                    // case effect analysis can actually resolve.
+                    self.closure_decls.insert(binding.name.clone(), FunctionDecl {
+                        name: binding.name.clone(),
+                        type_params: Vec::new(),
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        body: body.clone(),
+                        span: *span,
+                        doc: None,
+                    });
+                    self.bindings.insert(binding.name.clone(), binding.clone());
+                }
+            }
+            return;
+        }
+
         // `let x: Result<T, E> = store ... into ...` (or a variable/call
         // already known to be Result-shaped) -- the un-unwrapped form.
         // Checked before the Pool-shaped path below so a Result-producing
         // expression bound to a non-Result annotation (a `?` was likely
         // forgotten) is a clear error instead of `infer_expr` silently
         // returning `None` and this function just giving up.
-        if let Some((ok, err)) = self.infer_result_expr(&binding.expr) {
+        if let Some((ok, err)) = self.infer_result_expr(&binding.expr, binding.span) {
             match &binding.annotation {
                 TypeExpr::Result(expected_ok, expected_err) => {
                     if &ok != expected_ok.as_ref() || &err != expected_err.as_ref() {
@@ -542,7 +594,7 @@ impl TypeChecker {
     /// -- see its doc comment in `ast.rs`) and `Expr::Try` (unwrapping
     /// removes the `Result` wrapper entirely; `?` is handled at its use
     /// site by `check_try` instead of through this function).
-    fn infer_result_expr(&mut self, expr: &Expr) -> Option<(TypeExpr, TypeExpr)> {
+    fn infer_result_expr(&mut self, expr: &Expr, span: Span) -> Option<(TypeExpr, TypeExpr)> {
         match expr {
             // `check_store`/`check_delete`/`check_retrieve` are the SAME
             // validation the statement form already runs (pool declared?
@@ -567,10 +619,36 @@ impl TypeChecker {
                 None
             }
             Expr::Variable(name) => self.result_bindings.get(name).cloned(),
-            Expr::FunctionCall { name, .. } => match self.lookup_function(name)?.return_type {
-                TypeExpr::Result(ok, err) => Some((*ok, *err)),
-                _ => None,
-            },
+            // Closures resolve first, same priority as `infer_expr`'s own
+            // `FunctionCall` arm -- see its comment for why.
+            Expr::FunctionCall { name, args } if self.closures.contains_key(name) => {
+                let (param_types, return_type) = self.closures[name].clone();
+                self.check_closure_call_args(name, &param_types, args, span);
+                match return_type {
+                    TypeExpr::Result(ok, err) => Some(((*ok).clone(), (*err).clone())),
+                    _ => None,
+                }
+            }
+            // Argument validation for non-`Fn`-typed parameters is
+            // intentionally skipped here, matching the pre-existing
+            // (unrelated to closures) gap this path has always had --
+            // but a `Fn(...)`-typed parameter's own argument *is*
+            // validated (see `check_fn_typed_arg`): unlike an unchecked
+            // `Pool`/`Str`/etc. argument, an unchecked closure argument
+            // would mean its entire body -- and whatever it does at
+            // runtime -- was never type-checked at all.
+            Expr::FunctionCall { name, args } => {
+                let func = self.lookup_function(name)?;
+                for (param, arg) in func.params.iter().zip(args.iter()) {
+                    if let TypeExpr::Fn(expected_params, expected_return) = &param.ty {
+                        self.check_fn_typed_arg(expected_params, expected_return, arg, &param.name, span);
+                    }
+                }
+                match func.return_type {
+                    TypeExpr::Result(ok, err) => Some((*ok, *err)),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
@@ -583,7 +661,7 @@ impl TypeChecker {
     /// existing avoidance of implicit conversions (`E-TRY-ERROR-TYPE-
     /// MISMATCH` if not). Returns the unwrapped `Ok` type on success.
     fn check_try(&mut self, inner: &Expr, span: Span) -> Option<TypeExpr> {
-        let Some((ok_ty, err_ty)) = self.infer_result_expr(inner) else {
+        let Some((ok_ty, err_ty)) = self.infer_result_expr(inner, span) else {
             self.report.error(span, "E-TRY-NOT-RESULT", "'?' can only be applied to a Result<T, E>-typed expression");
             return None;
         };
@@ -612,7 +690,7 @@ impl TypeChecker {
         let Expr::Match { scrutinee, ok_pattern, ok_body, err_pattern, err_body } = m else {
             unreachable!("check_match called on a non-Match expression");
         };
-        let Some((ok_ty, err_ty)) = self.infer_result_expr(scrutinee) else {
+        let Some((ok_ty, err_ty)) = self.infer_result_expr(scrutinee, span) else {
             self.report.error(span, "E-MATCH-NOT-RESULT", "'match' can only scrutinize a Result<T, E>-typed expression");
             return None;
         };
@@ -648,7 +726,7 @@ impl TypeChecker {
         if let Expr::Try(inner) = body {
             return self.check_try(inner, span);
         }
-        if let Some((ok, err)) = self.infer_result_expr(body) {
+        if let Some((ok, err)) = self.infer_result_expr(body, span) {
             return Some(TypeExpr::Result(Box::new(ok), Box::new(err)));
         }
         if let Some(pool_ty) = self.infer_expr(body, span) {
@@ -656,6 +734,191 @@ impl TypeChecker {
         }
         self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "match arm's body must be the pattern's own bound name, a Result-shaped expression, or a Pool-shaped expression");
         None
+    }
+
+    /// `fn(params) -> return_type { body }` in expression position -- see
+    /// `Expr::Closure`'s doc comment in ast.rs for the capture rationale.
+    /// Returns the closure's own `Fn(param_types, return_type)` type on
+    /// success. Deliberately its own small validation block rather than
+    /// sharing `check_function`'s return-type-validation verbatim -- see
+    /// this project's stated preference for additive changes over
+    /// invasive refactors of already-well-tested code.
+    fn check_closure_expr(&mut self, params: &[FnParam], return_type: &TypeExpr, body: &[Declaration], span: Span) -> Option<TypeExpr> {
+        let mut param_names = HashSet::new();
+        for param in params {
+            if !param_names.insert(&param.name) {
+                self.report.error(span, "E-PARAM-DUPLICATE", format!("duplicate parameter name '{}' in this closure", param.name));
+            }
+        }
+
+        // Capture: the closure's own checker starts as a full snapshot of
+        // everything already in scope at this literal's own position --
+        // params, `let` bindings of any shape, and other already-defined
+        // closures. This *is* capture (see `Expr::Closure`'s doc comment
+        // for why capture-by-snapshot is simply correct here); `pools`/
+        // `functions` are cloned the same way `check_function` already
+        // clones them for a top-level function with no outer scope.
+        let mut closure_checker = TypeChecker::default();
+        closure_checker.pools = self.pools.clone();
+        closure_checker.functions = self.functions.clone();
+        closure_checker.pool_bindings = self.pool_bindings.clone();
+        closure_checker.bindings = self.bindings.clone();
+        closure_checker.result_bindings = self.result_bindings.clone();
+        closure_checker.strands = self.strands.clone();
+        closure_checker.sequences = self.sequences.clone();
+        closure_checker.closures = self.closures.clone();
+        closure_checker.closure_decls = self.closure_decls.clone();
+        // Set from the CLOSURE's own return type, not inherited from the
+        // outer scope's `self.enclosing_result_return` -- a `?` inside
+        // this closure's body validates against this closure's own
+        // signature, exactly like `check_function` sets it from `func`'s
+        // own return type regardless of any caller's context.
+        if let TypeExpr::Result(ok, err) = return_type {
+            closure_checker.enclosing_result_return = Some(((**ok).clone(), (**err).clone()));
+        }
+
+        for param in params {
+            match &param.ty {
+                TypeExpr::Pool(pool_type) => {
+                    closure_checker.pool_bindings.insert(
+                        param.name.clone(),
+                        ProbPoolType { state: pool_type.state.clone(), error_rate_percent: pool_type.error_rate_percent.unwrap_or(0.0) },
+                    );
+                }
+                TypeExpr::Sequence => {
+                    closure_checker.sequences.insert(param.name.clone(), span);
+                }
+                TypeExpr::Strand => {
+                    closure_checker.strands.insert(param.name.clone(), span);
+                }
+                TypeExpr::Fn(param_types, ret) => {
+                    closure_checker.closures.insert(param.name.clone(), (param_types.clone(), (**ret).clone()));
+                }
+                _ => {}
+            }
+        }
+
+        let mut desugared_body = Vec::new();
+        for decl in body {
+            desugared_body.extend(closure_checker.check_declaration_single(decl));
+        }
+
+        self.report.diagnostics.extend(closure_checker.report.diagnostics);
+
+        // Mirrors `check_function`'s own return-type validation exactly
+        // (same two shapes it validates, same "unwrapped tail auto-wraps
+        // at the boundary" rule for `Result`) -- see its own doc comment
+        // for the full rationale. Anything else (`Void`/`DnaFile`/`File`/
+        // `Str`/`Fn`) isn't validated here either, the same pre-existing
+        // gap `check_function` already has for those return types.
+        let ok = match return_type {
+            TypeExpr::Result(expected_ok, expected_err) => match desugared_body.last() {
+                Some(Declaration::Let(last_binding))
+                    if matches!(last_binding.expr, Expr::Try(_))
+                        || (matches!(last_binding.expr, Expr::Match { .. }) && !matches!(last_binding.annotation, TypeExpr::Result(_, _))) =>
+                {
+                    &last_binding.annotation == expected_ok.as_ref()
+                }
+                Some(Declaration::Let(last_binding)) => closure_checker
+                    .result_bindings
+                    .get(&last_binding.name)
+                    .is_some_and(|(ok, err)| ok == expected_ok.as_ref() && err == expected_err.as_ref()),
+                _ => false,
+            },
+            TypeExpr::Pool(expected) => match desugared_body.last() {
+                Some(Declaration::Let(last_binding)) => {
+                    closure_checker.pool_bindings.get(&last_binding.name).is_some_and(|actual| actual.state == expected.state)
+                }
+                _ => false,
+            },
+            _ => true,
+        };
+
+        if !ok {
+            self.report.error(span, "E-CLOSURE-RETURN-TYPE-MISMATCH", format!(
+                "this closure is declared to return {} but its body does not produce that",
+                crate::docgen::render_type(return_type)
+            ));
+            return None;
+        }
+        Some(TypeExpr::Fn(params.iter().map(|p| p.ty.clone()).collect(), Box::new(return_type.clone())))
+    }
+
+    /// Validates a call's arguments against a closure's own `(param_types,
+    /// return_type)` signature -- arity via the same `E-FUNCTION-ARITY` a
+    /// named function call already uses, each `Pool<...>`-typed
+    /// parameter's argument via the same `E-ARG-TYPE-MISMATCH`, and each
+    /// `Fn(...)`-typed parameter's argument via `check_fn_typed_arg`. No
+    /// generics (closures are never generic) and no `consensus_vote`-
+    /// style intrinsic recognition -- both are named-function-only
+    /// concerns. Non-`Pool`/`Fn` parameter types aren't validated here,
+    /// the same honest, pre-existing gap the named-function arg-checking
+    /// loop above already has for its own non-`Pool`/`Fn` parameters.
+    fn check_closure_call_args(&mut self, name: &str, param_types: &[TypeExpr], args: &[Expr], span: Span) {
+        if param_types.len() != args.len() {
+            self.report.error(span, "E-FUNCTION-ARITY", format!(
+                "'{}' expects {} arguments, but {} were provided",
+                name, param_types.len(), args.len()
+            ));
+            return;
+        }
+        for (expected, arg) in param_types.iter().zip(args.iter()) {
+            match expected {
+                TypeExpr::Pool(expected_pool) => {
+                    let Some(inferred_arg) = self.infer_expr(arg, span) else {
+                        self.report.error(span, "E-ARG-TYPE-INVALID", format!("an argument for '{}' must be a Pool type", name));
+                        continue;
+                    };
+                    if expected_pool.state != inferred_arg.state {
+                        self.report.error(span, "E-ARG-TYPE-MISMATCH", format!(
+                            "an argument for '{}' expects Pool<{}>, but got Pool<{}>",
+                            name, expected_pool.state, inferred_arg.state
+                        ));
+                    }
+                }
+                TypeExpr::Fn(expected_params, expected_return) => {
+                    self.check_fn_typed_arg(expected_params, expected_return, arg, name, span);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Validates one `Fn(...)`-typed argument -- either a bare
+    /// `Expr::Variable` naming an already-bound closure (looked up in
+    /// `self.closures`) or an inline `Expr::Closure` literal (type-checked
+    /// on the spot via `check_closure_expr`) -- against the parameter's
+    /// declared signature. Reuses `E-ARG-TYPE-MISMATCH` for both "wrong
+    /// signature" and "not a closure at all" -- the same code an ordinary
+    /// mismatched argument already reports.
+    fn check_fn_typed_arg(&mut self, expected_params: &[TypeExpr], expected_return: &TypeExpr, arg: &Expr, param_name: &str, span: Span) {
+        let actual = match arg {
+            Expr::Variable(name) => self.closures.get(name).cloned(),
+            Expr::Closure { params, return_type, body, span: closure_span } => {
+                match self.check_closure_expr(params, return_type, body, *closure_span) {
+                    Some(TypeExpr::Fn(actual_params, actual_return)) => Some((actual_params, *actual_return)),
+                    _ => return,
+                }
+            }
+            _ => None,
+        };
+        match actual {
+            Some((actual_params, actual_return)) => {
+                if actual_params != expected_params || &actual_return != expected_return {
+                    self.report.error(span, "E-ARG-TYPE-MISMATCH", format!(
+                        "argument for parameter '{}' expects Fn({}) -> {}, but got Fn({}) -> {}",
+                        param_name,
+                        expected_params.iter().map(crate::docgen::render_type).collect::<Vec<_>>().join(", "),
+                        crate::docgen::render_type(expected_return),
+                        actual_params.iter().map(crate::docgen::render_type).collect::<Vec<_>>().join(", "),
+                        crate::docgen::render_type(&actual_return),
+                    ));
+                }
+            }
+            None => {
+                self.report.error(span, "E-ARG-TYPE-MISMATCH", format!("argument for parameter '{}' must be a closure", param_name));
+            }
+        }
     }
 
     /// `span` is the enclosing declaration's span (a `let` binding, or a
@@ -699,6 +962,23 @@ impl TypeChecker {
                 ))
             }
             Expr::FunctionCall { name, args } => {
+                // Closures resolve first: a name bound to a `let`-closure
+                // or a `Fn(...)`-typed parameter shadows a same-named
+                // global function/stdlib entry, exactly like typeck
+                // resolves it consistently for `codegen::eval_expr`'s
+                // own env-before-`funcs` lookup order. A name in neither
+                // table falls through to the pre-existing
+                // `E-FUNCTION-UNDECLARED` below, completely unaffected.
+                if let Some((param_types, return_type)) = self.closures.get(name).cloned() {
+                    self.check_closure_call_args(name, &param_types, args, span);
+                    return match &return_type {
+                        TypeExpr::Pool(pool_type) => Some(ProbPoolType {
+                            state: pool_type.state.clone(),
+                            error_rate_percent: pool_type.error_rate_percent.unwrap_or(0.0),
+                        }),
+                        _ => None,
+                    };
+                }
                 let Some(func) = self.lookup_function(name) else {
                     let candidates = self.function_name_candidates();
                     let suggestion = suggest_name(name, &candidates);
@@ -751,6 +1031,8 @@ impl TypeChecker {
                                 }
                             }
                         }
+                    } else if let TypeExpr::Fn(expected_params, expected_return) = &param.ty {
+                        self.check_fn_typed_arg(expected_params, expected_return, arg, &param.name, span);
                     }
                 }
 
@@ -815,7 +1097,10 @@ impl TypeChecker {
             // `check_match_arm`'s own `infer_expr` fallback -- but that's
             // resolved through `check_match`, never by recursing into
             // this function, so it's `None` here too, same as `Try`.
-            Expr::Try(_) | Expr::StoreExpr(_) | Expr::RetrieveExpr(_) | Expr::DeleteExpr(_) | Expr::Match { .. } => None,
+            // `Closure` is `Fn(...)`-shaped, never `Pool<...>`-shaped --
+            // resolved through `check_closure_expr`/`self.closures`,
+            // never by recursing into this function.
+            Expr::Try(_) | Expr::StoreExpr(_) | Expr::RetrieveExpr(_) | Expr::DeleteExpr(_) | Expr::Match { .. } | Expr::Closure { .. } => None,
         }
     }
 
@@ -929,6 +1214,15 @@ impl TypeChecker {
                 }
                 TypeExpr::Strand => {
                     body_checker.strands.insert(param.name.clone(), func.span);
+                }
+                // A `Fn(...)`-typed parameter -- what makes calling
+                // `func` "higher-order": whatever closure the caller
+                // passes becomes callable by this parameter's own name
+                // inside the body, resolved through `infer_expr`/
+                // `infer_result_expr`'s closures-first `FunctionCall`
+                // lookup exactly like a `let`-bound closure already is.
+                TypeExpr::Fn(param_types, return_type) => {
+                    body_checker.closures.insert(param.name.clone(), (param_types.clone(), (**return_type).clone()));
                 }
                 _ => {}
             }
@@ -1403,6 +1697,15 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
             ok_body: Box::new(substitute_expr(ok_body, binding, value)),
             err_pattern: err_pattern.clone(),
             err_body: Box::new(substitute_expr(err_body, binding, value)),
+        },
+        // Params are their own local namespace (same shadowing model as
+        // any nested `let` reusing the loop variable's name) -- only the
+        // body's declarations get recursed into.
+        Expr::Closure { params, return_type, body, span } => Expr::Closure {
+            params: params.clone(),
+            return_type: return_type.clone(),
+            body: body.iter().map(|decl| substitute_declaration(decl, binding, value)).collect(),
+            span: *span,
         },
     }
 }

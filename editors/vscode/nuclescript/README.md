@@ -40,6 +40,11 @@ NucleScript, the declarative DNA-storage operations language for
   second, independent function call from the caller. Highlighting,
   diagnostics, hover, and formatting all understand `match`/`Ok`/`Err`/
   `=>`.
+- **Closures** — `fn(params) -> T { body }` is an anonymous closure
+  literal with real lexical capture; `Fn(...) -> T` is its type, usable
+  as a `let` annotation or a function parameter's type (genuinely
+  higher-order functions). Highlighting, diagnostics, hover, and
+  formatting all understand `Fn(...)` and closure literals.
 
 Not yet included: autocomplete, rename/refactoring, and semantic-token
 highlighting (syntax highlighting already covers most of that).
@@ -79,11 +84,12 @@ More complete examples (per-store options, a full simulate → consensus
 vote → encode/protect/store/verify pipeline, catching a real store
 failure with `Result<T, E>`/`?` instead of aborting the run, one function
 generic over three different pool profiles, branching on a caught
-`Result` directly with `match`) live in
+`Result` directly with `match`, a genuinely higher-order function with
+real closure capture) live in
 [`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
 in the main repo — start with `store.nsl`, then `hero.nsl`, then
 `result_fallback_store.nsl`, then `generic_pool_recovery.nsl`, then
-`match_result_fallback.nsl`.
+`match_result_fallback.nsl`, then `closure_retry.nsl`.
 
 **Using the official packages:** imports like `from "nuclescript/presets"`
 (`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,

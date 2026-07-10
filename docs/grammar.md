@@ -57,6 +57,7 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       | 'Strand' | 'Sequence' | 'File' | 'DnaFile' | 'Recovery' | 'Void'
                       | 'Result' '<' TypeExpr ',' TypeExpr '>'
                       | 'Str'
+                      | 'Fn' '(' ( TypeExpr ( ',' TypeExpr )* )? ')' ( '->' | 'returns' ) TypeExpr
                       // 'Result<T, E>' and generic 'Pool<T>' (via PoolState's
                       // 'Var' case below) are the only two generic
                       // mechanisms NucleScript has -- no general
@@ -65,8 +66,11 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       // as 'Result<_, Str>''s error slot: every VFS
                       // failure is a plain message string, and there is no
                       // string arithmetic or any other place 'Str' is
-                      // expected. See "Result / Error Propagation" and
-                      // "Generics" below.
+                      // expected. 'Fn(...)' is a closure/function's own
+                      // type -- always non-generic, usable as a 'let'
+                      // annotation or a function parameter's type. See
+                      // "Result / Error Propagation", "Generics", and
+                      // "Closures" below.
 PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'Amplified' | 'Recovered' | Identifier
                       // the bare Identifier case is only ever a name
                       // already declared in the enclosing FunctionDecl's
@@ -118,6 +122,7 @@ Expr                ::= 'simulate' Identifier 'under' ProfileLiteral
                       | '!' Expr
                       | Expr '?'
                       | MatchExpr
+                      | ClosureExpr
 ExprList            ::= Expr ( ',' Expr )* ','?
                       // The boolean/comparison operators above bind exactly
                       // as in `Condition`: '||' loosest, then '&&', then
@@ -147,6 +152,13 @@ MatchExpr           ::= 'match' Expr '{' 'Ok' '(' Identifier ')' '=>' Expr ','
                       // is fixed ('Ok' then 'Err') -- Result is a closed,
                       // two-variant type with no general/reorderable arm
                       // machinery. See "Pattern Matching" below.
+
+ClosureExpr         ::= 'fn' '(' FnParamList? ')' ( '->' | 'returns' ) TypeExpr '{' Declaration* '}'
+                      // An anonymous function literal -- same params/
+                      // return-type/body grammar as FunctionDecl, minus
+                      // the name and TypeParamList (a closure is always
+                      // non-generic). Its own type is TypeExpr's 'Fn(...)'
+                      // case above. See "Closures" below.
 
 Operation           ::= StoreOp
                       | RetrieveOp
@@ -449,6 +461,72 @@ See [docs/errors.md](errors.md) for `E-MATCH-NOT-RESULT`/`E-MATCH-ARM-
 TYPE-MISMATCH`/`E-MATCH-ARM-UNTYPABLE`, and
 [`docs/examples/match_result_fallback.nsl`](examples/match_result_fallback.nsl)
 for a complete, runnable example.
+
+---
+
+## Closures (`Fn(...)` / `fn(params) -> T { body }`)
+
+`fn name<T>(...)`-style declarations are still named, top-level, and
+fixed-signature — there was previously no way to write an anonymous
+function, bind one to a variable, or pass one as an argument. `Fn(...)`
+is a closure's own type; `fn(params) -> T { body }` in expression
+position is the closure literal itself:
+
+```nsl
+pool primary: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }
+
+fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = attempt_fn()
+    let saved: DnaFile = match attempt {
+        Ok(file) => file,
+        Err(reason) => attempt_fn()?
+    }
+}
+
+fn archive_with_retry() returns Result<DnaFile, Str> {
+    let result: Result<DnaFile, Str> = retry_once(fn() -> Result<DnaFile, Str> {
+        let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+    })
+}
+```
+
+- **Capture is real, lexical, and by snapshot** — a closure's body can
+  reference any name already bound in its enclosing scope at the exact
+  point of the literal (params, `let` bindings of any shape, other
+  already-defined closures). This is the direct answer to the capture-
+  semantics question closures were originally deferred over: "by value
+  or by reference?" is moot here, because every `let` binding in
+  NucleScript is single-assignment — there is no `let mut`, no
+  reassignment syntax anywhere in the grammar — so there is no "later
+  mutation" a by-value/by-reference distinction could ever observe.
+  Capturing a `Pool<...>`/`Strand`/`Sequence` binding is likewise
+  harmless-but-inert: those have no runtime representation at all (they
+  stay purely compile-time-inferred), the same as passing one to an
+  ordinary function parameter already is.
+- **Calling a closure reuses the existing `name(args)` syntax** —
+  whether `name` is a top-level `fn` or a local closure/`Fn(...)`-typed
+  parameter, the call site looks identical; typeck/the runtime both
+  resolve closures *before* falling back to the global function table.
+- **No generic closures** (`fn<T>(...)`) — a closure's signature is
+  always fixed and concrete.
+- **No self-recursion.** A closure literal has no name to reference
+  inside its own body — it can call an *earlier*-defined closure/
+  function but never itself, and two distinct closures can never be
+  mutually recursive either (each only ever sees what was already bound
+  *before* its own literal). There is no cycle here to guard against.
+- **A real, honest limitation: `nucle plan`/`nucle explain` can't see
+  through an indirect call.** Both resolve a callee by static name; a
+  closure held in a variable has no name to look up, so a closure call
+  is invisible to them — only `nucle run`'s real execution reflects it.
+  The same applies to effect analysis for a `Fn(...)`-typed
+  *parameter*'s call specifically (its real body isn't knowable until
+  runtime, so it's optimistically treated as `Pure`) — but a *`let`-
+  bound* closure's real effect *is* resolved correctly at its call site,
+  since its actual body is right there in the source.
+
+See [docs/errors.md](errors.md) for `E-CLOSURE-RETURN-TYPE-MISMATCH`, and
+[`docs/examples/closure_retry.nsl`](examples/closure_retry.nsl) for a
+complete, runnable example.
 
 ---
 

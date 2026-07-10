@@ -90,7 +90,7 @@
       "patterns": [
         {
           "name": "storage.type.nuclescript",
-          "match": "\\b(DnaPool|Pool|Strand|Sequence|File|DnaFile|Recovery|Void|Result|Str)\\b"
+          "match": "\\b(DnaPool|Pool|Strand|Sequence|File|DnaFile|Recovery|Void|Result|Str|Fn)\\b"
         }
       ]
     },

@@ -246,6 +246,14 @@ pub enum TypeExpr {
     /// else today -- deliberately the smallest addition that keeps a
     /// Result's error side real instead of collapsing it to `Void`.
     Str,
+    /// `Fn(ParamType, ...) -> ReturnType` -- a closure/function's own
+    /// type, usable as a `let` annotation or a function parameter's type
+    /// (what makes a function "higher-order"). Non-generic: a closure
+    /// literal (`Expr::Closure`) always has a fixed, concrete signature,
+    /// never its own `type_params`. Capitalized to match `Pool`/`Result`/
+    /// `Str`'s existing type-name convention, distinct from the lowercase
+    /// `fn` keyword used for both named declarations and closure literals.
+    Fn(Vec<TypeExpr>, Box<TypeExpr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -366,6 +374,25 @@ pub enum Expr {
         ok_body: Box<Expr>,
         err_pattern: String,
         err_body: Box<Expr>,
+    },
+    /// `fn(params) -> ReturnType { body }` in expression position -- an
+    /// anonymous closure literal, never a top-level `Declaration`. Unlike
+    /// `FunctionDecl`, always non-generic (no `type_params`) and has no
+    /// `name` -- it's identified only by whatever `let`/parameter binds
+    /// it, exactly like any other value. Capture is real and lexical:
+    /// `typeck::TypeChecker::check_closure_expr` type-checks `body`
+    /// against a snapshot of every binding already in scope at this
+    /// literal's own position (see its doc comment for why capture-by-
+    /// snapshot is simply correct here, not a design compromise --
+    /// NucleScript's `let` bindings are single-assignment, so there is no
+    /// "later mutation" a by-value/by-reference distinction could ever
+    /// observe). `codegen::eval_expr`'s `Expr::Closure` arm is the runtime
+    /// counterpart: capture there is just one `env.clone()`.
+    Closure {
+        params: Vec<FnParam>,
+        return_type: TypeExpr,
+        body: Vec<Declaration>,
+        span: Span,
     },
 }
 

@@ -132,6 +132,11 @@ pub(crate) fn render_type(ty: &TypeExpr) -> String {
         TypeExpr::Void => "Void".to_string(),
         TypeExpr::Result(ok, err) => format!("Result<{}, {}>", render_type(ok), render_type(err)),
         TypeExpr::Str => "Str".to_string(),
+        TypeExpr::Fn(params, ret) => format!(
+            "Fn({}) -> {}",
+            params.iter().map(render_type).collect::<Vec<_>>().join(", "),
+            render_type(ret)
+        ),
     }
 }
 

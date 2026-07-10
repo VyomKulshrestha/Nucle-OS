@@ -471,8 +471,25 @@ impl Parser {
         } else if self.check_ident("Str") {
             self.advance();
             Ok(TypeExpr::Str)
+        } else if self.check_ident("Fn") {
+            self.advance();
+            self.expect(TokenKind::LParen, "'(' after Fn")?;
+            let mut params = Vec::new();
+            while !self.check(TokenKind::RParen) {
+                params.push(self.parse_type_expr()?);
+                if !self.consume_comma() && !self.check(TokenKind::RParen) {
+                    return Err(self.error_here("expected ',' or ')' in Fn's parameter type list"));
+                }
+            }
+            self.expect(TokenKind::RParen, "')' after Fn's parameter type list")?;
+            if !self.check(TokenKind::Arrow) && !self.check_ident("returns") {
+                return Err(self.error_here("expected '->' or 'returns' after Fn's parameter type list"));
+            }
+            self.advance();
+            let return_type = self.parse_type_expr()?;
+            Ok(TypeExpr::Fn(params, Box::new(return_type)))
         } else {
-            Err(self.error_here("expected type annotation: Pool<...>, Strand, Sequence, File, DnaFile, Recovery, Result<...>, Str, or Void"))
+            Err(self.error_here("expected type annotation: Pool<...>, Strand, Sequence, File, DnaFile, Recovery, Result<...>, Str, Fn(...), or Void"))
         }
     }
 
@@ -644,6 +661,8 @@ impl Parser {
             })
         } else if self.check_ident("match") {
             self.parse_match_expr()
+        } else if self.check_ident("fn") {
+            self.parse_closure_expr()
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             let name = name.clone();
             if self.tokens.get(self.index + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
@@ -696,6 +715,46 @@ impl Parser {
             err_pattern,
             err_body: Box::new(err_body),
         })
+    }
+
+    /// `fn(params) -> ReturnType { body }` in *expression* position -- an
+    /// anonymous closure literal, never a name. Deliberately not sharing
+    /// `parse_function_decl_rest`'s param-list/return-type/body-parsing
+    /// with a refactor: that function is tightly coupled to building a
+    /// named `FunctionDecl` (with `type_params`/`doc` fields a closure
+    /// doesn't have), so a small amount of duplication here is the
+    /// additive-over-invasive-refactor tradeoff this project already
+    /// prefers elsewhere.
+    fn parse_closure_expr(&mut self) -> Result<Expr, ParseError> {
+        let start = self.start_span();
+        self.advance(); // `fn`
+        self.expect(TokenKind::LParen, "'(' after 'fn'")?;
+        let mut params = Vec::new();
+        while !self.check(TokenKind::RParen) {
+            let param_name = self.expect_ident_any("parameter name")?;
+            self.expect(TokenKind::Colon, "':' after parameter name")?;
+            let ty = self.parse_type_expr()?;
+            params.push(FnParam { name: param_name, ty });
+            if !self.consume_comma() && !self.check(TokenKind::RParen) {
+                return Err(self.error_here("expected ',' or ')' in closure parameter list"));
+            }
+        }
+        self.expect(TokenKind::RParen, "')' after closure parameter list")?;
+        if !self.check(TokenKind::Arrow) && !self.check_ident("returns") {
+            return Err(self.error_here("expected '->' or 'returns' followed by a return type after a closure's parameters"));
+        }
+        self.advance();
+        let return_type = self.parse_type_expr()?;
+        self.expect(TokenKind::LBrace, "'{' to start closure body")?;
+        let mut body = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            if self.consume_comma() {
+                continue;
+            }
+            body.push(self.parse_declaration()?);
+        }
+        self.expect(TokenKind::RBrace, "'}' to end closure body")?;
+        Ok(Expr::Closure { params, return_type, body, span: self.span_since(start) })
     }
 
     fn parse_match_arm(&mut self, keyword: &str) -> Result<(String, Expr), ParseError> {

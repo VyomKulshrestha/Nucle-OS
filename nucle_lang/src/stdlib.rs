@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn builtin_functions_are_pure_and_confirmed_via_the_shared_effect_path() {
-        use crate::effects::{expr_effect, expr_has_required_confirmation, ResolvingSet};
+        use crate::effects::{expr_effect, expr_has_required_confirmation, FunctionTable, ResolvingSet};
         use crate::ast::Expr;
 
         let funcs = builtin_functions();
@@ -105,14 +105,14 @@ mod tests {
             name: "consensus_vote".to_string(),
             args: vec![Expr::Variable("noisy".to_string()), Expr::Number(10.0)],
         };
-        assert_eq!(expr_effect(&call, &funcs, &mut ResolvingSet::new()), crate::ast::Effect::Pure);
-        assert!(expr_has_required_confirmation(&call, &funcs, &mut ResolvingSet::new()));
+        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), crate::ast::Effect::Pure);
+        assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
 
         let call = Expr::FunctionCall {
             name: "protect".to_string(),
             args: vec![Expr::Variable("data".to_string()), Expr::Variable("guarantee".to_string())],
         };
-        assert_eq!(expr_effect(&call, &funcs, &mut ResolvingSet::new()), crate::ast::Effect::Pure);
-        assert!(expr_has_required_confirmation(&call, &funcs, &mut ResolvingSet::new()));
+        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), crate::ast::Effect::Pure);
+        assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
 }

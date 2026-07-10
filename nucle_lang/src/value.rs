@@ -8,6 +8,9 @@
 //! execution path) and `sim_backend.rs` (its narrating counterpart)
 //! consume this -- every other pipeline stage is unaffected.
 
+use crate::ast::{Declaration, FnParam, TypeExpr};
+use std::collections::HashMap;
+
 /// A value NucleScript code can bind and pass around at runtime. Never
 /// constructed for `Pool`/`Strand`/`Sequence`/plain-number bindings --
 /// those stay compile-time-only.
@@ -35,6 +38,20 @@ pub enum Value {
     /// `Value::Result` inertly; only `Expr::Try` interprets one as
     /// control flow (see `codegen::eval_expr`'s `Expr::Try` arm).
     Result(Result<Box<Value>, String>),
+    /// A closure literal's runtime value -- `params`/`return_type`/`body`
+    /// are the literal's own AST verbatim; `captured_env` is a snapshot
+    /// of the environment at the exact point the literal was evaluated
+    /// (see `codegen::eval_expr`'s `Expr::Closure` arm). This snapshot
+    /// *is* capture -- see `Expr::Closure`'s doc comment in ast.rs for
+    /// why capture-by-snapshot is simply correct for this language
+    /// (single-assignment `let` bindings mean there is no "later
+    /// mutation" a by-value/by-reference distinction could ever observe).
+    Closure {
+        params: Vec<FnParam>,
+        return_type: TypeExpr,
+        body: Vec<Declaration>,
+        captured_env: HashMap<String, Value>,
+    },
 }
 
 /// What evaluating one `Expr` produces: an ordinary value, or a signal to

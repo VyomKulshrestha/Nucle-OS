@@ -231,6 +231,11 @@ fn describe_type(ty: &TypeExpr) -> String {
         TypeExpr::Void => "Void".to_string(),
         TypeExpr::Result(ok, err) => format!("Result<{}, {}>", describe_type(ok), describe_type(err)),
         TypeExpr::Str => "Str".to_string(),
+        TypeExpr::Fn(params, ret) => format!(
+            "Fn({}) -> {}",
+            params.iter().map(describe_type).collect::<Vec<_>>().join(", "),
+            describe_type(ret)
+        ),
     }
 }
 

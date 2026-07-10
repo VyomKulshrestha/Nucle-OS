@@ -29,21 +29,37 @@ pub fn function_table(program: &Program) -> FunctionTable {
     table
 }
 
-pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, resolving: &mut ResolvingSet) -> Effect {
+/// `closures` resolves a call to a `let`-bound closure literal to its own
+/// real effect, computed by recursing into its actual body -- the one
+/// case this analysis CAN see through, because the body is right there
+/// in the AST. It is deliberately *not* populated for a `Fn(...)`-typed
+/// *parameter*'s call: whatever closure a caller actually passes isn't
+/// knowable at all here, so that case falls through to
+/// `function_call_effect`'s existing "can't resolve" fallback -- no
+/// worse than the pre-existing behavior for any other unresolvable name,
+/// just now also covering this one. `effect_summary`'s own top-level
+/// pass (used by `nucle explain`) always passes an empty table here: it
+/// has no per-scope tracking of its own, and correctness matters more
+/// than completeness -- see `decl_effect_info`'s `Declaration::Let` arm.
+pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, resolving: &mut ResolvingSet) -> Effect {
     match expr {
         Expr::SimulatePool { .. } => Effect::Pure,
         Expr::SynthesizePool { .. } => Effect::Synthesis,
         Expr::SequencePool { .. } => Effect::Sequencing,
-        Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, resolving).0,
+        Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, closures, resolving).0,
         Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => Effect::Pure,
+        // Defining a closure is always inert -- nothing runs until it's
+        // called. The call site (`Expr::FunctionCall` above) is where its
+        // real effect gets resolved, via `closures`.
+        Expr::Closure { .. } => Effect::Pure,
         Expr::BinaryOp { left, right, .. } => {
-            join_effects(expr_effect(left, funcs, resolving), expr_effect(right, funcs, resolving))
+            join_effects(expr_effect(left, funcs, closures, resolving), expr_effect(right, funcs, closures, resolving))
         }
-        Expr::Not(inner) => expr_effect(inner, funcs, resolving),
+        Expr::Not(inner) => expr_effect(inner, funcs, closures, resolving),
         // Wrapping something in `?` never changes its effect classification
         // -- `?` is purely a control-flow/unwrap operator, not an operation
         // in its own right, so this forwards to the inner expression.
-        Expr::Try(inner) => expr_effect(inner, funcs, resolving),
+        Expr::Try(inner) => expr_effect(inner, funcs, closures, resolving),
         // The expression-position and statement-position forms of these
         // operations share the identical `StoreOp`/`RetrieveOp`/`DeleteOp`
         // payload, so they get the identical effect via the same
@@ -58,8 +74,8 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, resolving: &mut Resolving
         // branch already counts), so a `Destructive` operation in only
         // the `Err` arm still requires confirmation.
         Expr::Match { scrutinee, ok_body, err_body, .. } => join_effects(
-            join_effects(expr_effect(scrutinee, funcs, resolving), expr_effect(ok_body, funcs, resolving)),
-            expr_effect(err_body, funcs, resolving),
+            join_effects(expr_effect(scrutinee, funcs, closures, resolving), expr_effect(ok_body, funcs, closures, resolving)),
+            expr_effect(err_body, funcs, closures, resolving),
         ),
     }
 }
@@ -74,17 +90,20 @@ pub fn operation_effect(operation: &Operation) -> Effect {
     }
 }
 
-pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, resolving: &mut ResolvingSet) -> bool {
+pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, resolving: &mut ResolvingSet) -> bool {
     match expr {
         Expr::SimulatePool { .. } => true,
         Expr::SynthesizePool { confirmed, .. } | Expr::SequencePool { confirmed, .. } => *confirmed,
-        Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, resolving).1,
+        Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, closures, resolving).1,
         Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => true,
+        // Same reasoning as `expr_effect`'s `Closure` arm: defining one is
+        // always inert.
+        Expr::Closure { .. } => true,
         Expr::BinaryOp { left, right, .. } => {
-            expr_has_required_confirmation(left, funcs, resolving) && expr_has_required_confirmation(right, funcs, resolving)
+            expr_has_required_confirmation(left, funcs, closures, resolving) && expr_has_required_confirmation(right, funcs, closures, resolving)
         }
-        Expr::Not(inner) => expr_has_required_confirmation(inner, funcs, resolving),
-        Expr::Try(inner) => expr_has_required_confirmation(inner, funcs, resolving),
+        Expr::Not(inner) => expr_has_required_confirmation(inner, funcs, closures, resolving),
+        Expr::Try(inner) => expr_has_required_confirmation(inner, funcs, closures, resolving),
         // Store's "confirmed" is always true today (see decl_effect_info's
         // Operation::Store arm below) -- store never hard-blocks on
         // confirmation the way Delete/Synthesize/Sequence do, it only
@@ -97,9 +116,9 @@ pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, resolv
         // same conservative "every declaration in this join counts"
         // reasoning as `expr_effect`'s `Match` arm above.
         Expr::Match { scrutinee, ok_body, err_body, .. } => {
-            expr_has_required_confirmation(scrutinee, funcs, resolving)
-                && expr_has_required_confirmation(ok_body, funcs, resolving)
-                && expr_has_required_confirmation(err_body, funcs, resolving)
+            expr_has_required_confirmation(scrutinee, funcs, closures, resolving)
+                && expr_has_required_confirmation(ok_body, funcs, closures, resolving)
+                && expr_has_required_confirmation(err_body, funcs, closures, resolving)
         }
     }
 }
@@ -139,10 +158,20 @@ pub fn join_effects(a: Effect, b: Effect) -> Effect {
 /// because its own effect couldn't be fully resolved. The SAME `resolving`
 /// set must be threaded through every nested lookup within one resolution
 /// (never a fresh one per call), or the cycle can't be detected.
-fn function_call_effect(name: &str, funcs: &FunctionTable, resolving: &mut ResolvingSet) -> (Effect, bool) {
-    let Some(func) = funcs.get(name) else {
-        // Undeclared function: typeck's infer_expr already reports this as
-        // its own error. Treat as inert here rather than compounding it.
+fn function_call_effect(name: &str, funcs: &FunctionTable, closures: &FunctionTable, resolving: &mut ResolvingSet) -> (Effect, bool) {
+    // Global functions take priority (matches typeck's own closures-
+    // *before*-global lookup order for resolving *what* gets called --
+    // but here it doesn't actually matter which table wins first, since
+    // a name can only ever be in one of the two by the time typeck has
+    // validated the program: `self.closures`' own duplicate-binding
+    // check already rejects a closure shadowing anything, so this `or`
+    // is never ambiguous in practice).
+    let Some(func) = funcs.get(name).or_else(|| closures.get(name)) else {
+        // Undeclared function, or a `Fn(...)`-typed *parameter*'s call
+        // (its real body isn't knowable here, only at runtime): typeck's
+        // infer_expr already reports the former as its own error; the
+        // latter is a real, documented gap (see `expr_effect`'s doc
+        // comment) -- treat both as inert rather than guessing wrong.
         return (Effect::Pure, true);
     };
     if !resolving.insert(name.to_string()) {
@@ -185,9 +214,18 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, resolving: &m
             confirmed: true,
         },
         Declaration::Let(binding) => {
-            let eff = expr_effect(&binding.expr, funcs, resolving);
+            // No scope-tracking of its own here (unlike `typeck::
+            // TypeChecker::check_let`, which passes its real, current
+            // `self.closure_decls`) -- an empty table means a call to a
+            // `let`-bound closure is treated as inert by this pass alone.
+            // This only affects `nucle explain`'s effect summary, a
+            // secondary reporting tool; the actual compilation-gating
+            // confirmation check (`E-SYNTHESIS-UNCONFIRMED`) runs through
+            // `check_let` directly, with real closure information.
+            let empty_closures = FunctionTable::new();
+            let eff = expr_effect(&binding.expr, funcs, &empty_closures, resolving);
             let req = eff == Effect::Synthesis || eff == Effect::Sequencing || eff == Effect::Destructive;
-            let conf = expr_has_required_confirmation(&binding.expr, funcs, resolving);
+            let conf = expr_has_required_confirmation(&binding.expr, funcs, &empty_closures, resolving);
             DeclEffect {
                 name: binding.name.clone(),
                 kind: "let".into(),
@@ -386,7 +424,7 @@ mod tests {
         let mut funcs = FunctionTable::new();
         funcs.insert("wipe".into(), destructive_delete_fn("wipe", true));
         let call = Expr::FunctionCall { name: "wipe".into(), args: vec![] };
-        assert_eq!(expr_effect(&call, &funcs, &mut ResolvingSet::new()), Effect::Destructive);
+        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), Effect::Destructive);
     }
 
     #[test]
@@ -394,7 +432,7 @@ mod tests {
         let mut funcs = FunctionTable::new();
         funcs.insert("wipe".into(), destructive_delete_fn("wipe", false));
         let call = Expr::FunctionCall { name: "wipe".into(), args: vec![] };
-        assert!(!expr_has_required_confirmation(&call, &funcs, &mut ResolvingSet::new()));
+        assert!(!expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
 
     #[test]
@@ -402,7 +440,7 @@ mod tests {
         let mut funcs = FunctionTable::new();
         funcs.insert("wipe".into(), destructive_delete_fn("wipe", true));
         let call = Expr::FunctionCall { name: "wipe".into(), args: vec![] };
-        assert!(expr_has_required_confirmation(&call, &funcs, &mut ResolvingSet::new()));
+        assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
 
     #[test]
@@ -413,16 +451,16 @@ mod tests {
             FunctionDecl { name: "noop".into(), type_params: vec![], params: vec![], return_type: TypeExpr::Void, body: vec![], span: Span::default(), doc: None },
         );
         let call = Expr::FunctionCall { name: "noop".into(), args: vec![] };
-        assert_eq!(expr_effect(&call, &funcs, &mut ResolvingSet::new()), Effect::Pure);
-        assert!(expr_has_required_confirmation(&call, &funcs, &mut ResolvingSet::new()));
+        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), Effect::Pure);
+        assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
 
     #[test]
     fn undeclared_function_call_does_not_panic() {
         let funcs = FunctionTable::new();
         let call = Expr::FunctionCall { name: "missing".into(), args: vec![] };
-        assert_eq!(expr_effect(&call, &funcs, &mut ResolvingSet::new()), Effect::Pure);
-        assert!(expr_has_required_confirmation(&call, &funcs, &mut ResolvingSet::new()));
+        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), Effect::Pure);
+        assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
 
     #[test]
@@ -447,8 +485,8 @@ mod tests {
         );
         let call = Expr::FunctionCall { name: "loop_fn".into(), args: vec![] };
         // Must terminate (no stack overflow) and must not report Pure/confirmed.
-        assert_eq!(expr_effect(&call, &funcs, &mut ResolvingSet::new()), Effect::Destructive);
-        assert!(!expr_has_required_confirmation(&call, &funcs, &mut ResolvingSet::new()));
+        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), Effect::Destructive);
+        assert!(!expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
 
     #[test]
