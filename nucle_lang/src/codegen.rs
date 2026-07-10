@@ -253,7 +253,7 @@ pub fn execute_program(
 /// produced a `VfsCall`/needed runtime action either.
 fn is_result_producing(expr: &Expr, funcs: &FunctionTable) -> bool {
     match expr {
-        Expr::StoreExpr(_) | Expr::DeleteExpr(_) | Expr::Try(_) => true,
+        Expr::StoreExpr(_) | Expr::DeleteExpr(_) | Expr::Try(_) | Expr::Match { .. } => true,
         Expr::FunctionCall { name, .. } => matches!(funcs.get(name).map(|f| &f.return_type), Some(TypeExpr::Result(_, _))),
         _ => false,
     }
@@ -286,6 +286,30 @@ fn eval_expr(
         },
         Expr::StoreExpr(op) => eval_store_expr(op, pools, os, base_dir, steps),
         Expr::DeleteExpr(op) => eval_delete_expr(op, os, steps),
+        // Evaluates the scrutinee, then picks and evaluates the matching
+        // arm in a *cloned* environment with the pattern bound -- unlike
+        // `Try`, this never turns an `Err` into a short-circuit, since
+        // both arms are ordinary (not propagating) code paths. `env`
+        // itself is never mutated, so the pattern binding can't leak into
+        // the surrounding function's own bindings once the arm returns.
+        Expr::Match { scrutinee, ok_pattern, ok_body, err_pattern, err_body } => {
+            match eval_expr(scrutinee, env, funcs, pools, os, base_dir, steps, calling) {
+                EvalOutcome::Value(Value::Result(Ok(v))) => {
+                    let mut arm_env = env.clone();
+                    arm_env.insert(ok_pattern.clone(), *v);
+                    eval_expr(ok_body, &arm_env, funcs, pools, os, base_dir, steps, calling)
+                }
+                EvalOutcome::Value(Value::Result(Err(msg))) => {
+                    let mut arm_env = env.clone();
+                    arm_env.insert(err_pattern.clone(), Value::Str(msg));
+                    eval_expr(err_body, &arm_env, funcs, pools, os, base_dir, steps, calling)
+                }
+                // Unreachable for a program that passed type-checking
+                // (`check_match` guarantees the scrutinee is Result-shaped)
+                // -- passed through defensively rather than panicking.
+                other => other,
+            }
+        }
         // Never Result-shaped (see the type's own doc comment in
         // ast.rs) -- nothing meaningful to produce.
         Expr::RetrieveExpr(_) => EvalOutcome::Value(Value::Unit),

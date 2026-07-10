@@ -21,6 +21,13 @@ pub enum Value {
     Deleted { filename: String, strands_removed: usize },
     /// `Void`'s one runtime inhabitant.
     Unit,
+    /// A plain `Str` value -- today, only ever an `Err`'s message bound
+    /// by a `match` arm's `Err(<name>)` pattern (see `codegen::eval_expr`'s
+    /// `Expr::Match` arm). Contrast `EvalOutcome::Err`, which is the same
+    /// message flowing as in-flight control-flow, not stored data; this
+    /// is what it becomes once a `match` has "landed" it into an ordinary
+    /// binding.
+    Str(String),
     /// An unforced `Result<T, Str>` sitting in a binding or being passed
     /// around -- the only place Ok/Err-ness lives as *data*. Contrast
     /// `EvalOutcome`, which is about in-flight evaluation control flow,

@@ -642,6 +642,8 @@ impl Parser {
                 name: "protect".to_string(),
                 args: vec![Expr::Variable(data), Expr::Variable(guarantee)],
             })
+        } else if self.check_ident("match") {
+            self.parse_match_expr()
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             let name = name.clone();
             if self.tokens.get(self.index + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
@@ -670,6 +672,40 @@ impl Parser {
         } else {
             Err(self.error_here("expected expression"))
         }
+    }
+
+    /// `match <scrutinee> { Ok(<name>) => <expr>, Err(<name>) => <expr> }`.
+    /// Arm order is fixed (`Ok` then `Err`, an optional trailing comma
+    /// after `Err`) rather than general/reorderable -- `Result` is the
+    /// only sum type in the language and it's closed to exactly two
+    /// variants, so there's nothing to check beyond "both present, right
+    /// order" (see `Expr::Match`'s doc comment in ast.rs).
+    fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
+        self.advance(); // `match`
+        let scrutinee = self.parse_expr()?;
+        self.expect(TokenKind::LBrace, "'{' to open match arms")?;
+        let (ok_pattern, ok_body) = self.parse_match_arm("Ok")?;
+        self.expect(TokenKind::Comma, "',' between match arms")?;
+        let (err_pattern, err_body) = self.parse_match_arm("Err")?;
+        self.consume_comma(); // optional trailing comma
+        self.expect(TokenKind::RBrace, "'}' to close match arms")?;
+        Ok(Expr::Match {
+            scrutinee: Box::new(scrutinee),
+            ok_pattern,
+            ok_body: Box::new(ok_body),
+            err_pattern,
+            err_body: Box::new(err_body),
+        })
+    }
+
+    fn parse_match_arm(&mut self, keyword: &str) -> Result<(String, Expr), ParseError> {
+        self.expect_ident_text(keyword)?;
+        self.expect(TokenKind::LParen, "'(' after pattern")?;
+        let name = self.expect_ident_any("pattern binding name")?;
+        self.expect(TokenKind::RParen, "')' to close pattern")?;
+        self.expect(TokenKind::FatArrow, "'=>'")?;
+        let body = self.parse_expr()?;
+        Ok((name, body))
     }
 
     fn consume_confirmation(&mut self, marker: &str) -> Result<bool, ParseError> {

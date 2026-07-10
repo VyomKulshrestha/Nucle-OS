@@ -449,6 +449,28 @@ impl TypeChecker {
             return;
         }
 
+        // `let x: T = match <result-expr> { Ok(...) => ..., Err(...) => ... }`.
+        // Checked before the un-unwrapped Result path below (and before
+        // `Expr::Try`'s check above, though the two can never both match
+        // the same `binding.expr` shape) since `match` needs its own
+        // arm-unification logic, not either of the other two dispatches.
+        if let Expr::Match { .. } = &binding.expr {
+            if let Some(matched_ty) = self.check_match(&binding.expr, binding.span) {
+                if matched_ty != binding.annotation {
+                    self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
+                        "binding '{}' is annotated as {} but 'match' produces {}",
+                        binding.name, crate::docgen::render_type(&binding.annotation), crate::docgen::render_type(&matched_ty)
+                    ));
+                } else {
+                    if let TypeExpr::Result(ok, err) = &matched_ty {
+                        self.result_bindings.insert(binding.name.clone(), ((**ok).clone(), (**err).clone()));
+                    }
+                    self.bindings.insert(binding.name.clone(), binding.clone());
+                }
+            }
+            return;
+        }
+
         // `let x: Result<T, E> = store ... into ...` (or a variable/call
         // already known to be Result-shaped) -- the un-unwrapped form.
         // Checked before the Pool-shaped path below so a Result-producing
@@ -577,6 +599,63 @@ impl TypeChecker {
             return None;
         }
         Some(ok_ty)
+    }
+
+    /// `match <scrutinee> { Ok(<name>) => <ok_body>, Err(<name>) => <err_body> }`'s
+    /// validity: `scrutinee` must be `Result`-shaped (`E-MATCH-NOT-RESULT`
+    /// if not), each arm's body must resolve to a type (see
+    /// `check_match_arm`), and both arms' types must agree
+    /// (`E-MATCH-ARM-TYPE-MISMATCH` if not). Returns the unified type on
+    /// success -- exactly what a `match` expression "is", the same way
+    /// `check_try` returns `?`'s unwrapped type.
+    fn check_match(&mut self, m: &Expr, span: Span) -> Option<TypeExpr> {
+        let Expr::Match { scrutinee, ok_pattern, ok_body, err_pattern, err_body } = m else {
+            unreachable!("check_match called on a non-Match expression");
+        };
+        let Some((ok_ty, err_ty)) = self.infer_result_expr(scrutinee) else {
+            self.report.error(span, "E-MATCH-NOT-RESULT", "'match' can only scrutinize a Result<T, E>-typed expression");
+            return None;
+        };
+        let ok_result = self.check_match_arm(ok_body, ok_pattern, &ok_ty, span);
+        let err_result = self.check_match_arm(err_body, err_pattern, &err_ty, span);
+        let (ok_result, err_result) = (ok_result?, err_result?);
+        if ok_result != err_result {
+            self.report.error(span, "E-MATCH-ARM-TYPE-MISMATCH", format!(
+                "match arms produce different types: Ok(...) => {}, Err(...) => {}",
+                crate::docgen::render_type(&ok_result), crate::docgen::render_type(&err_result)
+            ));
+            return None;
+        }
+        Some(ok_result)
+    }
+
+    /// A match arm's body is one of: the pattern variable itself (the
+    /// trivial "use the unwrapped value as-is" arm), `?` (reuses
+    /// `check_try`, validated against `enclosing_result_return` exactly
+    /// as anywhere else `?` appears), a Result-shaped expression (reuses
+    /// `infer_result_expr` -- an arm can produce a still-wrapped
+    /// `Result`, e.g. a fallback `store`), or a Pool-shaped expression
+    /// (reuses `infer_expr`) -- the same dispatch `check_let` already
+    /// runs for a `let`'s RHS, plus the one new case (the bare pattern
+    /// name) an arm needs that a `let` doesn't. There is deliberately no
+    /// `Ok(...)`/`Err(...)` *constructor* syntax -- see `Expr::Match`'s
+    /// doc comment in ast.rs -- so these four cases are exhaustive over
+    /// everything an arm body can legally be today.
+    fn check_match_arm(&mut self, body: &Expr, pattern: &str, pattern_ty: &TypeExpr, span: Span) -> Option<TypeExpr> {
+        if matches!(body, Expr::Variable(name) if name == pattern) {
+            return Some(pattern_ty.clone());
+        }
+        if let Expr::Try(inner) = body {
+            return self.check_try(inner, span);
+        }
+        if let Some((ok, err)) = self.infer_result_expr(body) {
+            return Some(TypeExpr::Result(Box::new(ok), Box::new(err)));
+        }
+        if let Some(pool_ty) = self.infer_expr(body, span) {
+            return Some(TypeExpr::Pool(PoolType { state: pool_ty.state, error_rate_percent: Some(pool_ty.error_rate_percent) }));
+        }
+        self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "match arm's body must be the pattern's own bound name, a Result-shaped expression, or a Pool-shaped expression");
+        None
     }
 
     /// `span` is the enclosing declaration's span (a `let` binding, or a
@@ -732,7 +811,11 @@ impl TypeChecker {
             Expr::StringLiteral(_) | Expr::Number(_) | Expr::BinaryOp { .. } | Expr::Not(_) => None,
             // Result<T,E>-shaped, not Pool<...>-shaped -- see
             // `infer_result_expr` for their actual (Ok, Err) inference.
-            Expr::Try(_) | Expr::StoreExpr(_) | Expr::RetrieveExpr(_) | Expr::DeleteExpr(_) => None,
+            // `Match` can (rarely) itself be Pool-shaped -- see
+            // `check_match_arm`'s own `infer_expr` fallback -- but that's
+            // resolved through `check_match`, never by recursing into
+            // this function, so it's `None` here too, same as `Try`.
+            Expr::Try(_) | Expr::StoreExpr(_) | Expr::RetrieveExpr(_) | Expr::DeleteExpr(_) | Expr::Match { .. } => None,
         }
     }
 
@@ -903,7 +986,10 @@ impl TypeChecker {
         // at the call boundary (see `codegen::call_user_function`).
         if let TypeExpr::Result(expected_ok, expected_err) = &func.return_type {
             match desugared_body.last() {
-                Some(Declaration::Let(last_binding)) if matches!(last_binding.expr, Expr::Try(_)) => {
+                Some(Declaration::Let(last_binding))
+                    if matches!(last_binding.expr, Expr::Try(_))
+                        || (matches!(last_binding.expr, Expr::Match { .. }) && !matches!(last_binding.annotation, TypeExpr::Result(_, _))) =>
+                {
                     // The inner fallible expression's Err type was already
                     // checked against `expected_err` by `check_try` (via
                     // `enclosing_result_return`, set above) while checking
@@ -911,7 +997,15 @@ impl TypeChecker {
                     // here, against the function's declared Ok type
                     // specifically (not just "whatever `?` unwrapped to",
                     // which `check_let` already confirmed equals this
-                    // binding's own annotation).
+                    // binding's own annotation). A `match` tail whose
+                    // unified type isn't itself `Result<...>` (i.e. both
+                    // arms already unwrapped, e.g. `Ok(x) => x`) is the
+                    // exact same shape -- `check_match`/`check_let` already
+                    // validated it, only the Ok side needs checking here.
+                    // A `match` tail whose unified type *is* `Result<...>`
+                    // (both arms still-wrapped) instead falls through to
+                    // the generic arm below, since `check_let`'s `Match`
+                    // branch already populated `result_bindings` for it.
                     if &last_binding.annotation != expected_ok.as_ref() {
                         self.report.error(last_binding.span, "E-RETURN-TYPE-RESULT-MISMATCH", format!(
                             "function '{}' is declared to return Result<{}, {}> but its unwrapped tail produces {}",
@@ -1299,6 +1393,17 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
             confirmed: op.confirmed,
             span: op.span,
         }),
+        // The pattern names themselves are a separate, function-body-local
+        // namespace from the `for`-loop's substituted `binding` -- only
+        // the scrutinee and arm bodies can reference it, so only they get
+        // recursed into.
+        Expr::Match { scrutinee, ok_pattern, ok_body, err_pattern, err_body } => Expr::Match {
+            scrutinee: Box::new(substitute_expr(scrutinee, binding, value)),
+            ok_pattern: ok_pattern.clone(),
+            ok_body: Box::new(substitute_expr(ok_body, binding, value)),
+            err_pattern: err_pattern.clone(),
+            err_body: Box::new(substitute_expr(err_body, binding, value)),
+        },
     }
 }
 

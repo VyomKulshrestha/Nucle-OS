@@ -117,6 +117,7 @@ Expr                ::= 'simulate' Identifier 'under' ProfileLiteral
                       | Expr '||' Expr
                       | '!' Expr
                       | Expr '?'
+                      | MatchExpr
 ExprList            ::= Expr ( ',' Expr )* ','?
                       // The boolean/comparison operators above bind exactly
                       // as in `Condition`: '||' loosest, then '&&', then
@@ -139,6 +140,13 @@ ExprList            ::= Expr ( ',' Expr )* ','?
                       // under 'Operation' are unaffected: the parser only
                       // ever produces this expression form after 'let x =',
                       // never at the top of a declaration.
+
+MatchExpr           ::= 'match' Expr '{' 'Ok' '(' Identifier ')' '=>' Expr ','
+                                        'Err' '(' Identifier ')' '=>' Expr ','? '}'
+                      // Destructures a Result<T, E>-shaped Expr. Arm order
+                      // is fixed ('Ok' then 'Err') -- Result is a closed,
+                      // two-variant type with no general/reorderable arm
+                      // machinery. See "Pattern Matching" below.
 
 Operation           ::= StoreOp
                       | RetrieveOp
@@ -298,14 +306,11 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   after a `?` still requires confirmation, since effect analysis is
   static and never models which declarations actually execute at
   runtime.
-- **No `match`/`if let` on `Result`** -- a caught `Err` can only be
-  produced and propagated, not branched on from within the same program.
-  Building on a caught error (retrying a different pool, logging why)
-  needs a second, independent function call from the caller, not
-  in-language conditional logic. This is a deliberate scope boundary, not
-  an oversight: NucleScript still has no pattern matching or general
-  boolean branching over runtime values, only over the same compile-time
-  `Condition` grammar `if`/`assert` already use.
+- **`match` (Step 11) now lets a caught `Err` be inspected directly** --
+  see "Pattern Matching" below. Before that, a caught `Err` could only be
+  produced and propagated, never branched on from within the same
+  program; building on it (retrying a different pool, logging why) needed
+  a second, independent function call from the caller.
 
 See [docs/errors.md](errors.md) for the six new `E-TRY-*`/`E-BINDING-
 RESULT-*`/`E-RETURN-TYPE-*` codes, and
@@ -373,6 +378,76 @@ and `recover_from(noisy_nanopore)` above both type-check as
 See [docs/errors.md](errors.md) for `E-TYPE-PARAM-CONFLICT`/`E-TYPE-PARAM-
 UNRESOLVED`, and
 [`docs/examples/generic_pool_recovery.nsl`](examples/generic_pool_recovery.nsl)
+for a complete, runnable example.
+
+---
+
+## Pattern Matching (`match` / `Ok` / `Err`)
+
+The gap Step 9 itself named as "not implemented": a caught `Err` could
+only be inspected by a second, independent function call from the
+caller, never branched on from within the same function. `match`
+destructures a `Result<T, E>`-shaped expression directly, binding each
+arm's payload to a name visible only within that arm:
+
+```nsl
+pool primary: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }
+pool secondary: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }
+
+fn archive_with_fallback() returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+    let saved: DnaFile = match attempt {
+        Ok(file) => file,
+        Err(reason) => (store "sample_b.txt" into secondary)?
+    }
+}
+```
+
+- **`Result` is the only sum type in the language, and it's closed to
+  exactly two variants** -- so `match` needs no general pattern-matching
+  engine or exhaustiveness algorithm, just a fixed two-arm form. Arm
+  order is fixed (`Ok` always first, `Err` always second, with an
+  optional trailing comma) -- reordering them is a parse error, not a
+  semantic one. A real multi-arm/reorderable `match` only becomes worth
+  building once user-defined enums exist (still deferred).
+- **Both arms must unify to one type**, which becomes the whole `match`
+  expression's type -- usable directly as a `let`'s RHS, exactly like a
+  function call or any other expression. If both arms happen to still be
+  `Result`-shaped (neither used `?`), the match's own value is itself a
+  still-wrapped `Result` a caller can `?`/re-match later.
+- **No `Ok(...)`/`Err(...)` *constructor* syntax.** This feature is about
+  destructuring an existing `Result`, not building new ones -- a
+  function still only ever produces a `Result` the way it already did
+  before `match` existed (an unwrapped `?`-tail auto-wraps at the call
+  boundary, or a still-wrapped `store`/`delete`/`Result`-returning call
+  flows through as-is). An arm's body is therefore one of exactly four
+  shapes: the pattern's own bound name (`Ok(file) => file`), `?` applied
+  to a fallible expression (checked against the *enclosing function's*
+  return type, exactly like `?` anywhere else), a still-wrapped
+  `Result`-shaped expression, or a `Pool<...>`-shaped expression.
+- **No composability with `?`, nested `match`, or function-call
+  arguments.** A `match`'s scrutinee must be one of the shapes the
+  checker already recognizes as `Result`-shaped (a variable bound to one,
+  a `store`/`delete` expression, or a call to a `Result`-returning
+  function) -- `match (match a {...}) {...}` and `(match a {...})?`
+  aren't supported. The core case (`match` directly over a `let`-bound
+  `Result`) is what actually closes Step 9's gap; composability is a
+  real but narrow follow-on gap, named here rather than silently broken.
+- **Arm bodies are a single expression, not a block** -- matching the
+  language's existing convention that there's no bare-block-as-expression
+  anywhere (`?` is the model: it wraps exactly one inner expression). An
+  arm that needs a fallback operation writes it directly as its one
+  expression, as `(store ... into ...)?` does above; it doesn't get its
+  own local `let` sequence the way a function body does.
+- **Effect analysis joins the scrutinee and both arms unconditionally**,
+  the same conservative "every declaration in this join counts" rule
+  `if`/`?` already follow -- a `Destructive` operation in only the `Err`
+  arm still requires confirmation, since this analysis has never modeled
+  "this branch might not run."
+
+See [docs/errors.md](errors.md) for `E-MATCH-NOT-RESULT`/`E-MATCH-ARM-
+TYPE-MISMATCH`/`E-MATCH-ARM-UNTYPABLE`, and
+[`docs/examples/match_result_fallback.nsl`](examples/match_result_fallback.nsl)
 for a complete, runnable example.
 
 ---

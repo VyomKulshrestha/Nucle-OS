@@ -231,7 +231,8 @@ fn infer_binding(
         | Expr::Try(_)
         | Expr::StoreExpr(_)
         | Expr::RetrieveExpr(_)
-        | Expr::DeleteExpr(_) => None,
+        | Expr::DeleteExpr(_)
+        | Expr::Match { .. } => None,
     }
 }
 

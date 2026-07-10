@@ -8,6 +8,20 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.6]
+
+- **NucleScript now supports pattern matching over `Result<T, E>`.**
+  `match attempt { Ok(file) => file, Err(reason) => ... }` branches on a
+  caught `Result` directly inside one function, instead of needing a
+  second, independent function call from the caller. Highlighting, live
+  diagnostics, hover, formatting, and `nucle doc` all understand the new
+  `match`/`Ok`/`Err`/`=>` syntax — see the updated README and
+  [`docs/examples/match_result_fallback.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/match_result_fallback.nsl)
+  in the main repo.
+- Bumped the downloaded `nucle-lsp`/`nucle-cli` binaries to the release
+  that actually understands the new syntax, same reason as 0.1.4's/
+  0.1.5's bumps.
+
 ## [0.1.5]
 
 - **NucleScript now supports generics over `Pool<T>`'s profile.** `fn

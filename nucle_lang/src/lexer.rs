@@ -26,6 +26,8 @@ pub enum TokenKind {
     Gt,
     Lt,
     Arrow,
+    /// `=>` -- separates a `match` arm's pattern from its body.
+    FatArrow,
     /// `==`
     EqEq,
     /// `!=`
@@ -93,6 +95,7 @@ impl<'a> Lexer<'a> {
                 ':' => { self.bump(); TokenKind::Colon }
                 ',' => { self.bump(); TokenKind::Comma }
                 '=' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::EqEq }
+                '=' if self.peek_next() == Some('>') => { self.bump(); self.bump(); TokenKind::FatArrow }
                 '=' => { self.bump(); TokenKind::Eq }
                 '!' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::NotEq }
                 '!' => { self.bump(); TokenKind::Bang }

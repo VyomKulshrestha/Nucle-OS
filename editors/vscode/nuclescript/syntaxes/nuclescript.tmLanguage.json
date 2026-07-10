@@ -82,7 +82,7 @@
       "patterns": [
         {
           "name": "keyword.control.nuclescript",
-          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test)\\b"
+          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test|match)\\b"
         }
       ]
     },
@@ -135,6 +135,11 @@
           "comment": "&&/||/! -- '!' alone only matches here when it isn't part of '!=', which the comparison pattern above already claims",
           "name": "keyword.operator.logical.nuclescript",
           "match": "&&|\\|\\||!"
+        },
+        {
+          "comment": "match arm separator -- listed before the plain '=' assignment pattern below so '=>' is matched as one token, not '=' followed by a separately-scoped '>'",
+          "name": "keyword.operator.match-arm.nuclescript",
+          "match": "=>"
         },
         {
           "name": "keyword.operator.assignment.nuclescript",

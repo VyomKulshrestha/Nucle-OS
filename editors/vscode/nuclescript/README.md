@@ -35,6 +35,11 @@ NucleScript, the declarative DNA-storage operations language for
   function works for `Illumina`/`Nanopore`/`Twist` instead of needing one
   copy per profile. Highlighting, diagnostics, hover, formatting, and
   `nucle doc` all render and check the type-parameter list correctly.
+- **Pattern matching** — `match attempt { Ok(file) => file, Err(reason)
+  => ... }` branches on a caught `Result` directly, instead of needing a
+  second, independent function call from the caller. Highlighting,
+  diagnostics, hover, and formatting all understand `match`/`Ok`/`Err`/
+  `=>`.
 
 Not yet included: autocomplete, rename/refactoring, and semantic-token
 highlighting (syntax highlighting already covers most of that).
@@ -73,10 +78,12 @@ ended up in a different folder than `hello.nsl`.)
 More complete examples (per-store options, a full simulate → consensus
 vote → encode/protect/store/verify pipeline, catching a real store
 failure with `Result<T, E>`/`?` instead of aborting the run, one function
-generic over three different pool profiles) live in
+generic over three different pool profiles, branching on a caught
+`Result` directly with `match`) live in
 [`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
 in the main repo — start with `store.nsl`, then `hero.nsl`, then
-`result_fallback_store.nsl`, then `generic_pool_recovery.nsl`.
+`result_fallback_store.nsl`, then `generic_pool_recovery.nsl`, then
+`match_result_fallback.nsl`.
 
 **Using the official packages:** imports like `from "nuclescript/presets"`
 (`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,

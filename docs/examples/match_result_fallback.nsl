@@ -1,0 +1,38 @@
+// Step 11: pattern matching over `Result<T, E>` -- unlike Step 9's
+// `result_fallback_store.nsl` (which needs a *second* caller-side
+// function to inspect a caught `Err`), `match` branches on `Ok`/`Err`
+// directly inside the same function: try storing `sample_a.txt`, and
+// fall back to a *different* file (`sample_b.txt`, into a secondary
+// pool) on failure, without a second call. Calling this twice within
+// one run demonstrates both arms: the first call's store into `primary`
+// succeeds (`Ok`); the second's fails ("file already exists" -- NucleOS
+// tracks filenames globally, not per-pool, so a same-named fallback
+// could never succeed either) and falls back to `secondary` (`Err`).
+
+pool primary: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+pool secondary: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+/// Tries `primary` first; if that `store` fails, falls back to a
+/// different file into `secondary` in the same function -- the `Err`
+/// arm's `?` still propagates a *second* real failure (if `secondary`
+/// is also full) rather than papering over it.
+fn archive_with_fallback() returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+    let saved: DnaFile = match attempt {
+        Ok(file) => file,
+        Err(reason) => (store "sample_b.txt" into secondary)?
+    }
+}
+
+let first: Result<DnaFile, Str> = archive_with_fallback()
+
+let second: Result<DnaFile, Str> = archive_with_fallback()

@@ -15,11 +15,11 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // Pinned to the newest NucleOS release known to publish nucle-cli
 // binaries for every platform (.github/workflows/release.yml). Bump this
 // when a newer `v*` release ships with an updated nucle-cli -- e.g.
-// v0.1.2 exists specifically because v0.1.1's nucle-cli predates
-// generics (`fn name<T>(...)` over `Pool<T>`'s profile) entirely, so a
-// fresh install downloading it would fail to parse any .nsl file using
-// the new syntax.
-const CLI_RELEASE_TAG = "v0.1.2";
+// v0.1.3 exists specifically because v0.1.2's nucle-cli predates
+// pattern matching (`match`/`Ok`/`Err`/`=>` over `Result<T, E>`) entirely,
+// so a fresh install downloading it would fail to parse any .nsl file
+// using the new syntax.
+const CLI_RELEASE_TAG = "v0.1.3";
 
 /** The release asset name published for this platform, or `undefined` if
  * none exists (arm64 Linux/Windows) -- caller falls back to asking the

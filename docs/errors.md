@@ -83,8 +83,11 @@ Codes are grouped by which declaration/operation they check, matching
 | `E-TRY-ERROR-TYPE-MISMATCH` | error | `?`'s operand is `Result<T, E1>`, but the enclosing function is declared `Result<_, E2>` with `E1 != E2`. No coercion between error types exists. |
 | `E-TYPE-PARAM-CONFLICT` | error | A generic function's type parameter (e.g. the `P` in `fn combine<P>(a: Pool<P>, b: Pool<P>)`) is used in more than one parameter, and two arguments in the same call imply different concrete profiles for it. |
 | `E-TYPE-PARAM-UNRESOLVED` | error | A generic function's type parameter was never bound by any argument in a call — there's no explicit type-argument syntax (`foo::<Illumina>()`) to fall back on, so its return type (if the parameter also appears there) can't be resolved to anything concrete for that call. |
+| `E-MATCH-NOT-RESULT` | error | `match`'s scrutinee isn't `Result`-shaped — e.g. a `Pool<...>` binding, or anything else `?` couldn't be applied to either. |
+| `E-MATCH-ARM-TYPE-MISMATCH` | error | The `Ok` and `Err` arms produce different types (e.g. one arm ends in the bound value directly, the other in a still-wrapped `Result`). Both arms must unify to the same type, which becomes the whole `match` expression's type. |
+| `E-MATCH-ARM-UNTYPABLE` | error | An arm's body is none of the four shapes `match` supports: the pattern's own bound name, `?` applied to a fallible expression, a `Result`-shaped expression, or a `Pool<...>`-shaped expression. There is deliberately no `Ok(...)`/`Err(...)` *constructor* syntax — see `docs/grammar.md`'s "Pattern Matching" section. |
 
-**Fix:** rename the duplicate, rename the duplicate parameter, make the function body's last binding produce the declared return type, add the missing `?`, move `?` inside a `Result`-returning function, fix the mismatched error type, or pass arguments that consistently imply the same concrete profile for each type parameter.
+**Fix:** rename the duplicate, rename the duplicate parameter, make the function body's last binding produce the declared return type, add the missing `?`, move `?` inside a `Result`-returning function, fix the mismatched error type, pass arguments that consistently imply the same concrete profile for each type parameter, or rewrite a match arm's body to one of the four shapes `match` supports.
 
 ## Strands (`strand` declarations)
 

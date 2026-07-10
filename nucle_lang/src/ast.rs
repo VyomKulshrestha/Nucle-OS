@@ -350,6 +350,23 @@ pub enum Expr {
     /// same relationship to `Declaration::Operation(Operation::Delete)`
     /// as `StoreExpr` has to `Operation::Store`.
     DeleteExpr(DeleteOp),
+    /// `match <scrutinee> { Ok(<name>) => <expr>, Err(<name>) => <expr> }`
+    /// -- destructures a `Result<T, E>`-shaped `scrutinee`, binding its
+    /// payload to `ok_pattern`/`err_pattern` (visible only within that
+    /// arm's own `*_body`) before evaluating it. Deliberately narrow:
+    /// `Result` is the only sum type in the language and it's closed to
+    /// exactly two variants, so arm order is fixed (`Ok` then `Err`)
+    /// rather than general/reorderable -- see `typeck::TypeChecker::
+    /// check_match` for the validity rules and `codegen::eval_expr`/
+    /// `sim_backend::narrate_result_expr` for the runtime/narration
+    /// counterparts.
+    Match {
+        scrutinee: Box<Expr>,
+        ok_pattern: String,
+        ok_body: Box<Expr>,
+        err_pattern: String,
+        err_body: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -169,6 +169,15 @@ fn narrate_result_expr(
         Expr::DeleteExpr(op) => {
             steps.push(SimulationStep::Delete { file: op.file.clone(), pool: op.pool.clone(), hardware_free: true });
         }
+        // The narrator can't know at plan-time which arm would actually
+        // run, so -- like effects/confirmation above it -- it narrates
+        // all three (scrutinee and both arms) unconditionally: describing
+        // everything that could possibly run, not guessing which will.
+        Expr::Match { scrutinee, ok_body, err_body, .. } => {
+            narrate_result_expr(scrutinee, pools, funcs, steps, calling);
+            narrate_result_expr(ok_body, pools, funcs, steps, calling);
+            narrate_result_expr(err_body, pools, funcs, steps, calling);
+        }
         Expr::FunctionCall { name, .. } => {
             if let Some(func) = funcs.get(name) {
                 if calling.insert(name.clone()) {

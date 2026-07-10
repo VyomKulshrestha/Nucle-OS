@@ -202,6 +202,38 @@ with no notion of "generic" at any point. See the "Generics" section of
 honest limitation (a handful of profile-specific typeck warnings can't
 fire while checking a generic body against an abstract type parameter).
 
+### Pattern matching (`match` / `Ok` / `Err`)
+
+Resolves entirely within the existing `Result<T,E>`/`?` execution model
+above — no new execution model, no exhaustiveness algorithm, and no
+general pattern-matching engine, because `Result` is the only sum type
+in the language and it's closed to exactly two variants. `Expr::Match`
+carries its scrutinee plus each arm's pattern name and body directly (no
+separate `MatchArm`/`Pattern` AST layer); typeck's `check_match`
+type-checks each arm by reusing the same three-way dispatch `check_let`
+already runs for a `let`'s right-hand side (`?`, a `Result`-shaped
+expression, or a `Pool<...>`-shaped expression), plus one new case (the
+arm's bound name used directly) a `let` doesn't need. The runtime
+(`codegen.rs`'s `eval_expr`) evaluates the scrutinee, then evaluates
+whichever arm matched in a *cloned* copy of the current environment with
+the pattern bound — never mutating the caller's own environment, so the
+binding can't leak past the arm it belongs to. The one genuinely new
+runtime value, `Value::Str`, exists because an `Err`'s message was
+previously only ever in-flight control-flow data (`EvalOutcome::Err`),
+never something a program could bind and hold onto; `Err(reason) => ...`
+needed a real storable representation for it. Two sites have a real
+wildcard `_` arm rather than an exhaustive match (`codegen.rs`'s
+`eval_expr`, `sim_backend.rs`'s `narrate_result_expr`), so adding
+`Expr::Match` to the AST did *not* force a compile error at either site —
+unlike every other site this feature touches (`effects.rs`, `middle.rs`,
+`typeck.rs`'s `substitute_expr`, `formatter.rs`'s `token_text`), which are
+fully exhaustive and did. Both wildcard sites were found by direct code
+reading, not by the compiler, and are only actually proven correct by
+running the shipped example against the real `nucle-cli` binary — see the
+"Pattern Matching" section of [docs/grammar.md](grammar.md) for the full
+semantics, including the deliberate scope limits (fixed arm order, no
+`Ok`/`Err` constructor syntax, no composability with `?`/nested `match`).
+
 ### Language Server (`nucle_lsp`)
 
 `nucle_lsp` is a thin LSP protocol adapter, not a second compiler: every

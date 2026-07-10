@@ -493,6 +493,7 @@ fn token_text(token: &Token) -> String {
         TokenKind::Gt => ">".to_string(),
         TokenKind::Lt => "<".to_string(),
         TokenKind::Arrow => "->".to_string(),
+        TokenKind::FatArrow => "=>".to_string(),
         TokenKind::EqEq => "==".to_string(),
         TokenKind::NotEq => "!=".to_string(),
         TokenKind::Le => "<=".to_string(),

@@ -52,6 +52,15 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, resolving: &mut Resolving
         Expr::StoreExpr(op) => operation_effect(&Operation::Store(op.clone())),
         Expr::RetrieveExpr(op) => operation_effect(&Operation::Retrieve(op.clone())),
         Expr::DeleteExpr(op) => operation_effect(&Operation::Delete(op.clone())),
+        // Joins the scrutinee and both arms unconditionally, mirroring
+        // `Declaration::If`'s existing branch-join: this analysis has
+        // never modeled "this branch might not run" (an `If`'s untaken
+        // branch already counts), so a `Destructive` operation in only
+        // the `Err` arm still requires confirmation.
+        Expr::Match { scrutinee, ok_body, err_body, .. } => join_effects(
+            join_effects(expr_effect(scrutinee, funcs, resolving), expr_effect(ok_body, funcs, resolving)),
+            expr_effect(err_body, funcs, resolving),
+        ),
     }
 }
 
@@ -84,6 +93,14 @@ pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, resolv
         Expr::StoreExpr(_) => true,
         Expr::RetrieveExpr(_) => true,
         Expr::DeleteExpr(op) => op.confirmed,
+        // All three (scrutinee, both arms) must already be confirmed --
+        // same conservative "every declaration in this join counts"
+        // reasoning as `expr_effect`'s `Match` arm above.
+        Expr::Match { scrutinee, ok_body, err_body, .. } => {
+            expr_has_required_confirmation(scrutinee, funcs, resolving)
+                && expr_has_required_confirmation(ok_body, funcs, resolving)
+                && expr_has_required_confirmation(err_body, funcs, resolving)
+        }
     }
 }
 
