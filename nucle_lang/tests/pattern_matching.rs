@@ -148,6 +148,58 @@ fn question_mark_inside_an_arm_validates_against_the_enclosing_functions_return_
 }
 
 // ---------------------------------------------------------------------
+// Composability: nested `match`, `?` on a `match`, `Ok`/`Err` as arms
+// ---------------------------------------------------------------------
+
+#[test]
+fn ok_and_err_as_match_arm_bodies_have_no_diagnostics() {
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let saved: DnaFile = (match attempt {{\n        Ok(file) => Ok(file),\n        Err(reason) => Err(reason)\n    }})?\n}}\n",
+        POOL
+    );
+    let report = check_source(&src);
+    assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
+}
+
+#[test]
+fn err_as_a_match_arm_body_uses_the_ok_arms_bare_type_not_its_wrapped_result_type() {
+    // A real bug found during development: `check_match` was handing the
+    // `Err` arm the `Ok` arm's own *resolved value type* as context --
+    // for `Ok(file) => Ok(file)`, that's already `Result<DnaFile, Str>`,
+    // not the bare `DnaFile` `Err(reason) => Err(reason)` actually needs
+    // -- producing a spurious `Result<Result<DnaFile, Str>, Str>` and a
+    // false `E-MATCH-ARM-TYPE-MISMATCH`. Pins the fix (using the
+    // scrutinee's own Ok-side type instead) down directly.
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let saved: DnaFile = (match attempt {{\n        Ok(file) => Ok(file),\n        Err(reason) => Err(reason)\n    }})?\n}}\n",
+        POOL
+    );
+    assert!(!diagnostic_codes(&src).contains(&"E-MATCH-ARM-TYPE-MISMATCH".to_string()));
+}
+
+#[test]
+fn question_mark_applies_directly_to_a_match_expression() {
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let saved: DnaFile = (match attempt {{\n        Ok(file) => Ok(file),\n        Err(reason) => Err(reason)\n    }})?\n}}\n",
+        POOL
+    );
+    let program = parse(&src);
+    let Declaration::Function(func) = &program.declarations[1] else { panic!("expected a function") };
+    let Declaration::Let(second) = &func.body[1] else { panic!("expected a let") };
+    assert!(matches!(&second.expr, Expr::Try(inner) if matches!(inner.as_ref(), Expr::Match { .. })));
+}
+
+#[test]
+fn a_match_expression_nests_inside_another_matchs_scrutinee() {
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let saved: DnaFile = match (match attempt {{\n        Ok(file) => Ok(file),\n        Err(reason) => store \"b.txt\" into archive\n    }}) {{\n        Ok(file) => file,\n        Err(reason) => (store \"c.txt\" into archive)?\n    }}\n}}\n",
+        POOL
+    );
+    let report = check_source(&src);
+    assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
+}
+
+// ---------------------------------------------------------------------
 // Effects
 // ---------------------------------------------------------------------
 
@@ -204,7 +256,14 @@ fn the_ok_arm_runs_and_the_err_arm_runs_and_its_fallback_write_lands() {
         result.steps
     );
     assert!(result.steps.iter().any(|s| s.contains("✓ store into secondary")), "steps: {:?}", result.steps);
-    assert_eq!(os.dna_stat().file_count, 2);
+    // `archive_with_labeled_outcome` (composability: `?` on a `match`
+    // expression, `Ok`/`Err` as match-arm bodies) and
+    // `archive_with_nested_check` (a `match` scrutinizing another
+    // `match`'s own result) each land one more real store on top of the
+    // two above -- `sample_c.txt`/`sample_d.txt`.
+    assert!(result.steps.iter().any(|s| s.contains("✓ store into primary") && s.contains("sample_c.txt")), "steps: {:?}", result.steps);
+    assert!(result.steps.iter().any(|s| s.contains("✓ store into primary") && s.contains("sample_d.txt")), "steps: {:?}", result.steps);
+    assert_eq!(os.dna_stat().file_count, 4);
 }
 
 // ---------------------------------------------------------------------

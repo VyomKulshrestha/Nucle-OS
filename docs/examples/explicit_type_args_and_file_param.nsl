@@ -1,0 +1,52 @@
+// Step 10/9: explicit type-argument syntax (item 3) and real function-
+// parameter values (item 4), demonstrated together.
+
+pool illumina_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+pool vault: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+/// `P` appears only inside `recover_fn`'s own `Fn(...)`-typed parameter,
+/// never as a directly `Pool<P>`-shaped argument -- the named-function
+/// argument-checking loop only unifies a type parameter from a
+/// `Pool<...>`-shaped argument (see `infer_expr`'s `FunctionCall` arm),
+/// not from inside a `Fn(...)`-typed one, so inference has nothing to
+/// resolve `P` from at this call site. Omitting `::<Illumina>()` below
+/// reports `E-TYPE-PARAM-UNRESOLVED`.
+fn recover_generically<P>(source: Pool<Illumina, 0.35%>, recover_fn: Fn(Pool<P, 0.35%>) -> Pool<Recovered>) returns Pool<Recovered> {
+    let recovered: Pool<Recovered> = recover_fn(source)
+}
+
+/// A `File`-typed parameter carries a real runtime value: `name`'s
+/// bound filename flows through `env` into the statement-form `store`
+/// below (no `let`, so it never contributes to this function's own
+/// return value) -- if it fails, the whole function aborts via the
+/// statement form's own unconditional-abort contract (Step 9); if it
+/// succeeds, execution falls through to the expression-form `store`
+/// that actually produces this function's `Result`. Proves parameters
+/// carry real values, not just type-checked labels.
+fn archive_named_file_twice(name: File) returns Result<DnaFile, Str> {
+    store name into vault
+    let confirmation: Result<DnaFile, Str> = store "sample_h.txt" into vault
+    let saved: DnaFile = confirmation?
+}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+
+// The closure literal must re-declare its own `<P>` (matching
+// `recover_generically`'s own type-parameter name) for its structural
+// `Fn(...)` type to compare equal against the parameter's declared
+// signature -- see `check_fn_typed_arg`'s own doc comment for why this
+// comparison is by declared name, not by call-site unification.
+let recovered: Pool<Recovered> = recover_generically::<Illumina>(noisy_illumina, fn<P>(source: Pool<P, 0.35%>) -> Pool<Recovered> {
+        let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+})
+
+let confirmed: Result<DnaFile, Str> = archive_named_file_twice("sample_g.txt")

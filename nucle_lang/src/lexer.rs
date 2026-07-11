@@ -21,6 +21,8 @@ pub enum TokenKind {
     LParen,
     RParen,
     Colon,
+    /// `::` -- precedes an explicit type-argument list, `name::<Profile>(...)`.
+    ColonColon,
     Comma,
     Eq,
     Gt,
@@ -92,6 +94,7 @@ impl<'a> Lexer<'a> {
                 ']' => { self.bump(); TokenKind::RBracket }
                 '(' => { self.bump(); TokenKind::LParen }
                 ')' => { self.bump(); TokenKind::RParen }
+                ':' if self.peek_next() == Some(':') => { self.bump(); self.bump(); TokenKind::ColonColon }
                 ':' => { self.bump(); TokenKind::Colon }
                 ',' => { self.bump(); TokenKind::Comma }
                 '=' if self.peek_next() == Some('=') => { self.bump(); self.bump(); TokenKind::EqEq }

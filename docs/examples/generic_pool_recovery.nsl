@@ -20,10 +20,29 @@ fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {
     let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
 }
 
+/// Same recovery logic, but reached through a `let`-bound generic
+/// closure nested inside a generic function instead of calling
+/// `consensus_vote` directly -- proves a closure literal can be generic
+/// too (`fn<P>(...)`), not just a top-level `fn`, and that calling it
+/// unifies `P` exactly like a named generic function call already does.
+fn recover_via_closure<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {
+    let recover: Fn(Pool<P, 0.35%>) -> Pool<Recovered> = fn<P>(inner: Pool<P, 0.35%>) -> Pool<Recovered> {
+        let recovered: Pool<Recovered> = consensus_vote(inner, coverage: 10x)
+    }
+    let recovered: Pool<Recovered> = recover(source)
+}
+
 let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
 
 let recovered_a: Pool<Recovered> = recover_from(noisy_illumina)
 
+// Same call, but with the type argument spelled out explicitly instead
+// of left to inference from `noisy_illumina`'s own type -- proves
+// `::<Profile>()` and ordinary inference agree rather than conflict.
+let recovered_a_explicit: Pool<Recovered> = recover_from::<Illumina>(noisy_illumina)
+
 let noisy_nanopore: Pool<Nanopore, 5%> = simulate nanopore_archive under Nanopore
 
 let recovered_b: Pool<Recovered> = recover_from(noisy_nanopore)
+
+let recovered_c: Pool<Recovered> = recover_via_closure(noisy_illumina)

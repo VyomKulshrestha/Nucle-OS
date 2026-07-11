@@ -112,8 +112,26 @@ until explicitly handled. A golden-file regression test
 (`nucle_lang/tests/result_backward_compat.rs`) additionally pins every
 pre-existing example's execution output to what it was on the commit
 before this feature landed. See the "Result / Error Propagation" section
-of [docs/grammar.md](grammar.md) for the full semantics, including the
-deliberate scope boundary (no `match`/`if let` on `Result` yet).
+of [docs/grammar.md](grammar.md) for the full semantics, plus "Pattern
+Matching" below for `match`/`Ok`/`Err`.
+
+**A real, pre-existing gap in this interpreter, closed only later
+(Step 13)**: `exec_function_body` originally only ever processed
+`Declaration::Let` — a bare statement-form `store`/`retrieve`/`delete`
+inside *any* function body (present in the source, type-checked, never
+producing the function's own return value) was silently skipped, never
+reaching the real VFS, regardless of whether closures existed yet. Fixed
+by adding a `Declaration::Operation` arm that reuses the same
+VFS-executing helpers the top-level path already had; a statement-form
+failure inside a function aborts that function unconditionally (the same
+all-or-nothing contract the top-level form always had), which a caller
+catches through the ordinary `?`/`match` machinery. Paired with making
+`Expr::StringLiteral` a real, unconditional `Value::Str` (previously an
+inert placeholder except inside `Err(...)`) — what makes a `File`/`Str`-
+typed *parameter*'s argument become a real, bound value inside the
+callee's own `env`, which `store <ident> into <pool>`'s existing "file
+variable" syntax (accepted since it was written, never actually resolved)
+now resolves through via a new `resolve_file_arg` helper.
 
 The language layer now exposes ecosystem-facing integration points:
 
@@ -202,6 +220,21 @@ with no notion of "generic" at any point. See the "Generics" section of
 honest limitation (a handful of profile-specific typeck warnings can't
 fire while checking a generic body against an abstract type parameter).
 
+**Explicit type-argument syntax, `name::<Illumina>(...)` (Step 13)**:
+seeds the call's substitution map from the explicit arguments (zipped
+against the function's own declared `<T, U>` list) *before* the
+pre-existing per-argument unification loop runs, reusing the same
+`E-TYPE-PARAM-CONFLICT` an ordinary disagreeing argument already reports,
+plus a new `E-TYPE-PARAM-ARITY` for the wrong explicit-argument count.
+This closes the one real gap the original design left: a type parameter
+that appears *only* inside a `Fn(...)`-typed parameter's own signature,
+never as a directly `Pool<P>`-shaped argument itself, has nothing for the
+named-function argument loop to unify it from (that loop only inspects
+`TypeExpr::Pool`-shaped arguments; a `Fn(...)`-typed argument is validated
+by a separate helper, `check_fn_typed_arg`, that doesn't feed the outer
+substitution map at all) — an explicit type argument is the only way to
+call it.
+
 ### Pattern matching (`match` / `Ok` / `Err`)
 
 Resolves entirely within the existing `Result<T,E>`/`?` execution model
@@ -232,7 +265,26 @@ reading, not by the compiler, and are only actually proven correct by
 running the shipped example against the real `nucle-cli` binary — see the
 "Pattern Matching" section of [docs/grammar.md](grammar.md) for the full
 semantics, including the deliberate scope limits (fixed arm order, no
-`Ok`/`Err` constructor syntax, no composability with `?`/nested `match`).
+reorderable/duplicate-detected arms, no general exhaustiveness engine).
+
+**`Ok(...)`/`Err(...)` constructors and composability (Step 13)**: new
+`Expr::Ok`/`Expr::Err` variants construct a `Result` directly, rather than
+only ever receiving one from `store`/`delete`/a `Result`-returning call.
+The one change that makes nested `match` and `?` applied directly to a
+`match` expression both resolve: `infer_result_expr` gained an
+`Expr::Match` arm delegating to `check_match` and unwrapping a
+`Result`-shaped answer — every existing caller (`check_try`,
+`check_match`'s own scrutinee check, `check_match_arm`) benefits
+automatically, with no separate composability-specific machinery needed.
+A real bug found while verifying this directly: `check_match` was handing
+the `Err` arm the *`Ok` arm's own resolved value type* as context for
+`Err(reason) => Err(reason)`'s missing `Ok` side — correct when the `Ok`
+arm is a bare unwrap, but wrong when it re-wraps (`Ok(file) => Ok(file)`,
+whose own resolved type is already `Result<DnaFile, Str>`, not the bare
+`DnaFile` the `Err` arm actually needs) — producing a spurious doubly-
+wrapped `Result<Result<...>, Str>` and a false `E-MATCH-ARM-TYPE-
+MISMATCH`. Fixed by handing down the scrutinee's own plain Ok-side type
+instead.
 
 ### Closures (`Fn(...)` / `fn(params) -> T { body }`)
 
@@ -259,12 +311,64 @@ Calling a closure reuses the *existing* `name(args)` surface syntax
 map and the runtime's `env`-before-`funcs` lookup both resolve a
 closure-bound name *before* falling back to the global function table,
 so a call site looks identical whether `name` is a top-level `fn` or a
-local closure. This is also why no cycle-guard machinery was needed for
-closures at all: a closure literal has no name to reference inside its
-own body, so it can call an *earlier*-defined closure/function but
-never itself or another closure mutually -- `codegen.rs`'s existing
-`calling`/`func.name` guard (built for named function recursion) stays
-completely untouched.
+local closure.
+
+**Self-recursion (Step 13) — the one genuine runtime bug found in this
+whole language's development, not a design gap.** `codegen.rs`'s
+`call_closure` always started a call's own `env` fresh from
+`captured_env`, the snapshot `Expr::Closure` takes at evaluation time --
+*before* its enclosing `let` finishes binding, so `captured_env` never
+contains the closure's own name. A self-recursive call therefore actually
+resolved to "internal error: undeclared function," silently wrapped into
+a `Value::Result(Err(...))` with no VFS step to show for it -- close
+enough to a real, caught failure that a first hand-verification pass
+misread it as the self-recursion actually working (one real failure plus
+one silently-swallowed internal error looks identical to two real
+failures unless you check the count). The real bug surfaced two ways: an
+automated test asserting the *count* of real steps failed outright, and
+once fixed, the fix immediately produced a stack overflow on the existing
+example -- a closure retrying the exact same failing operation with no
+changing state now genuinely recursed, forever, since nothing ever made a
+later attempt behave differently. Fixed by having `call_closure`
+re-insert the closure under the name it was just called through, into
+its own fresh `env`, before running its own body -- on *every* call, not
+just the first, which is what makes arbitrarily deep recursion work
+rather than one level. The shipped example was redesigned alongside the
+fix to retry into a genuinely different fallback target on the second
+attempt, so the recursion is real *and* terminates.
+
+**Generic closures, `fn<T>(...)` (Step 13)**: `Expr::Closure` gained its
+own `type_params: Vec<String>`, mirroring `FunctionDecl`. Because a fresh
+type-parameter name is only recognized inside a closure literal's own
+declared `<...>` list at parse time (not inferred from surrounding
+context), a generic closure is only expressible nested inside an
+already-generic enclosing function/closure sharing the same
+type-parameter name -- the parser's `type_params_in_scope` now *merges*
+with the outer scope in both `parse_function_decl` and the new
+`parse_closure_expr`, instead of clobbering it, since closures can nest
+this way. `check_closure_call_args` was rewritten to perform the same
+`PoolState::Var` unification a named function's call-site checking
+already does, rather than a flat equality comparison -- surfacing and
+fixing a real, latent false-positive `E-ARG-TYPE-MISMATCH` along the way
+(a `Pool<Var>`-typed expected parameter was being compared for flat
+equality against any concrete argument, which is always unequal).
+
+**`nucle plan`/`nucle explain` narration through a `let`-bound closure's
+own call (Step 13)**: `sim_backend.rs`'s `narrate_result_expr` now threads
+a `closures: &mut HashMap<String, Vec<Declaration>>` map (name → body),
+built incrementally by the same two declaration-walking loops that
+already existed, checked *before* the named-function lookup -- the exact
+priority `effects.rs`'s own Step 12 fix already established. A closure
+received as a `Fn(...)`-typed *parameter*, or an inline closure literal
+passed directly as a call argument, remains unnarratable, since neither's
+real body is known at that call site, only at runtime -- this closes only
+the `let`-bound case.
+
+This is also why no cycle-guard machinery was needed for *mutual*
+recursion between closures: capture only ever sees bindings from *before*
+the literal's own position, so two independently-`let`-bound closures can
+never see each other -- `codegen.rs`'s existing `calling`/`func.name`
+guard (built for named function recursion) stays completely untouched.
 
 `effects.rs` needed a real signature change, not just an additive match
 arm -- the one place this feature couldn't stay purely additive. It's a

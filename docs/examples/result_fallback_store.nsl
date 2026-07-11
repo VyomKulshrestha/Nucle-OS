@@ -29,8 +29,29 @@ fn archive_in_backup() returns Result<DnaFile, Str> {
     let saved: DnaFile = attempt?
 }
 
+/// Demonstrates constructing `Ok(...)` directly as a function's tail --
+/// not just receiving one from `store`/`?`. `saved` is a plain bound
+/// `DnaFile` (via `?`), and `Ok(saved)` re-wraps it into a fresh
+/// `Result`, independent of whatever `store` itself returned.
+fn confirm_backup_copy() returns Result<DnaFile, Str> {
+    let saved: DnaFile = (store "sample_c.txt" into backup)?
+    let confirmed: Result<DnaFile, Str> = Ok(saved)
+}
+
+/// A `Result`-returning function whose only declaration is a bare
+/// `Err(...)` tail -- proves `Err`'s missing `Ok` type resolves from the
+/// enclosing function's own declared return type, with no `store`/`?`
+/// anywhere in the body at all.
+fn archival_disabled() returns Result<DnaFile, Str> {
+    let disabled: Result<DnaFile, Str> = Err("archival is temporarily disabled by policy")
+}
+
 // Kept wrapped (no `?`) since this is top-level, not inside a
 // `Result`-returning function -- `?` here would be
 // `E-TRY-OUTSIDE-RESULT-FN`. Whether this comes back `Ok` or `Err`
 // depends on what's already in `primary` when this file runs.
 let outcome: Result<DnaFile, Str> = archive_in_primary()
+
+let confirmed: Result<DnaFile, Str> = confirm_backup_copy()
+
+let disabled: Result<DnaFile, Str> = archival_disabled()

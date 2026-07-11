@@ -48,6 +48,30 @@ fn archive_with_logged_fallback() returns Result<DnaFile, Str> {
     let result: Result<DnaFile, Str> = fallback()
 }
 
+/// Self-recursion: `attempt_or_retry` calls itself by its own bound
+/// name on a caught failure -- mirrors `retry_once`'s own two-attempt
+/// shape, but self-contained instead of parameter-passed. The recursive
+/// call retries into a *different* fallback filename, not the identical
+/// one that just failed -- a self-recursive closure that always retries
+/// the exact same failing operation with no changing state recurses
+/// forever, since nothing ever makes the second attempt behave any
+/// differently from the first (a real stack overflow this example
+/// caught during development). The recursive call itself resolves
+/// through `call_closure` re-inserting the closure under its own bound
+/// name before running its own body (see that function's doc comment in
+/// `codegen.rs`) -- the closure's `captured_env` snapshot, taken before
+/// this `let` finishes binding, does not contain itself on its own.
+fn archive_with_self_retry() returns Result<DnaFile, Str> {
+    let attempt_with_fallback: Fn(File) -> Result<DnaFile, Str> = fn(target: File) -> Result<DnaFile, Str> {
+        let attempt: Result<DnaFile, Str> = store target into primary
+        let saved: DnaFile = match attempt {
+            Ok(file) => file,
+            Err(reason) => attempt_with_fallback("sample_f_fallback.txt")?
+        }
+    }
+    let result: Result<DnaFile, Str> = attempt_with_fallback("sample_f.txt")
+}
+
 // First call: `primary` is empty, so `retry_once`'s first attempt
 // already succeeds -- the retry path isn't needed yet.
 let first: Result<DnaFile, Str> = archive_with_retry()
@@ -63,3 +87,14 @@ let second: Result<DnaFile, Str> = archive_with_logged_fallback()
 // demonstrates the honest limit noted on `retry_once` itself: a second
 // real failure propagates as `Err`, it isn't papered over.
 let third: Result<DnaFile, Str> = archive_with_retry()
+
+// Fourth call: `primary` is still empty of `sample_f.txt`, so
+// `attempt_with_fallback`'s first (non-recursive) attempt already
+// succeeds.
+let fourth: Result<DnaFile, Str> = archive_with_self_retry()
+
+// Fifth call: `sample_f.txt` already exists, so `attempt_with_fallback`
+// actually recurses into itself once, with a different filename -- a
+// real second attempt (not the identical one retried forever), which
+// succeeds, proving the recursion both runs for real and terminates.
+let fifth: Result<DnaFile, Str> = archive_with_self_retry()

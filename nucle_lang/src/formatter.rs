@@ -385,21 +385,38 @@ fn render_tokens(tokens: &[&Token], depth: &mut i32, generic_depth: &mut i32) ->
 
 /// Whether the `<` about to be emitted opens a generic angle-bracket
 /// list (never spaced, tracked via `generic_depth`) rather than being a
-/// comparison operator (always spaced). True in exactly two shapes:
+/// comparison operator (always spaced). True in exactly three shapes:
 /// `Pool<...>`/`Result<...>` (a built-in generic type, matched by name --
-/// unchanged from before generics existed), or `fn <name><...>` (a
-/// user-defined function's own type-parameter list, matched by
-/// *position*, not name, since a function can be called anything).
+/// unchanged from before generics existed), `fn <name><...>` (a
+/// user-defined *named* function's own type-parameter list, matched by
+/// *position*, not name, since a function can be called anything), or
+/// bare `fn<...>` (a *closure literal's* own type-parameter list --
+/// same position-based idea, just one token shorter since a closure has
+/// no name between `fn` and `<`).
 ///
 /// The position-based check matters: `prev` being *any* identifier
 /// immediately followed by `<` is NOT enough on its own -- `noisy < 0.1`
 /// also matches that shape, and is a real comparison that must keep its
-/// spaces. `prev_prev` being the keyword `fn` is what tells a function's
-/// own declaration site apart from an ordinary comparison; nothing else
-/// in this grammar puts an identifier directly after `fn`.
+/// spaces. `prev`/`prev_prev` being the keyword `fn` is what tells a
+/// function or closure's own declaration site apart from an ordinary
+/// comparison; nothing else in this grammar puts an identifier or `<`
+/// directly after `fn`.
 fn is_generic_open(prev: Option<&Token>, prev_prev: Option<&Token>) -> bool {
     let prev_is_builtin_generic = matches!(prev.map(|t| &t.kind), Some(TokenKind::Ident(name)) if name == "Pool" || name == "Result");
     if prev_is_builtin_generic {
+        return true;
+    }
+    // `name::<Illumina>(...)` -- explicit type arguments. `::` never
+    // appears anywhere else in this grammar, so seeing it immediately
+    // before `<` is unambiguous -- no `prev_prev` check needed, unlike
+    // the `fn`-lookback case below.
+    if matches!(prev.map(|t| &t.kind), Some(TokenKind::ColonColon)) {
+        return true;
+    }
+    // `fn<T>(...)` -- a closure literal's own type-parameter list, no
+    // name between `fn` and `<`.
+    let prev_is_fn = matches!(prev.map(|t| &t.kind), Some(TokenKind::Ident(kw)) if kw.eq_ignore_ascii_case("fn"));
+    if prev_is_fn {
         return true;
     }
     let prev_is_ident = matches!(prev.map(|t| &t.kind), Some(TokenKind::Ident(_)));
@@ -448,7 +465,11 @@ fn needs_space(prev: &Token, cur: &Token, generic_depth: i32, opens_generic: boo
     // before the close (`{ codec: Ternary, ... }`, `} else {`), whether
     // on one line or as a lone closing line (where there's no preceding
     // token on that line to space against anyway).
-    if matches!(cur.kind, TokenKind::RParen | TokenKind::RBracket | TokenKind::Comma | TokenKind::Colon | TokenKind::Question) {
+    if matches!(cur.kind, TokenKind::RParen | TokenKind::RBracket | TokenKind::Comma | TokenKind::Colon | TokenKind::Question | TokenKind::ColonColon) {
+        return false;
+    }
+    // No space right after `::` either -- `foo::<Illumina>`, not `foo:: <Illumina>`.
+    if matches!(prev.kind, TokenKind::ColonColon) {
         return false;
     }
     // `fn foo<T>(...)` -- no space between a just-closed generic list's
@@ -464,11 +485,15 @@ fn needs_space(prev: &Token, cur: &Token, generic_depth: i32, opens_generic: boo
     }
     // Function-call / builtin-call style: `name(` with no space, unless
     // `name` is a control keyword that takes a parenthesized/grouped
-    // expression afterward (`if`/`assert`; `for`'s `(` never directly
-    // follows the keyword itself).
+    // expression afterward (`if`/`assert`/`match`; `for`'s `(` never
+    // directly follows the keyword itself). `match`'s scrutinee is
+    // usually a bare identifier (`match attempt {`, never reaching this
+    // rule at all -- `attempt` isn't `(`), but a *nested* match's own
+    // scrutinee can be another parenthesized match expression, which
+    // does.
     if matches!(cur.kind, TokenKind::LParen) {
         if let TokenKind::Ident(name) = &prev.kind {
-            if !matches!(name.as_str(), "if" | "assert") {
+            if !matches!(name.as_str(), "if" | "assert" | "match") {
                 return false;
             }
         }
@@ -488,6 +513,7 @@ fn token_text(token: &Token) -> String {
         TokenKind::LParen => "(".to_string(),
         TokenKind::RParen => ")".to_string(),
         TokenKind::Colon => ":".to_string(),
+        TokenKind::ColonColon => "::".to_string(),
         TokenKind::Comma => ",".to_string(),
         TokenKind::Eq => "=".to_string(),
         TokenKind::Gt => ">".to_string(),

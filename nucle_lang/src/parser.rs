@@ -239,10 +239,17 @@ impl Parser {
         } else {
             Vec::new()
         };
-        self.type_params_in_scope = type_params.clone();
+        // A named `fn` can itself be declared nested inside another
+        // function's (or a closure's) body -- merge with whatever the
+        // outer scope already had rather than clobbering it, the same
+        // fix `parse_closure_expr` needs for the identical reason.
+        let outer_type_params = self.type_params_in_scope.clone();
+        let mut merged_type_params = outer_type_params.clone();
+        merged_type_params.extend(type_params.iter().cloned());
+        self.type_params_in_scope = merged_type_params;
 
         let result = self.parse_function_decl_rest(start, name, type_params, doc);
-        self.type_params_in_scope.clear();
+        self.type_params_in_scope = outer_type_params;
         result
     }
 
@@ -646,6 +653,7 @@ impl Parser {
             Ok(Expr::FunctionCall {
                 name: "consensus_vote".to_string(),
                 args: vec![Expr::Variable(source), Expr::Number(coverage as f64)],
+                explicit_type_args: Vec::new(),
             })
         } else if self.check_ident("protect") {
             // Sugar over a call to the `protect` stdlib function -- see
@@ -658,15 +666,53 @@ impl Parser {
             Ok(Expr::FunctionCall {
                 name: "protect".to_string(),
                 args: vec![Expr::Variable(data), Expr::Variable(guarantee)],
+                explicit_type_args: Vec::new(),
             })
         } else if self.check_ident("match") {
             self.parse_match_expr()
         } else if self.check_ident("fn") {
             self.parse_closure_expr()
+        } else if self.check_ident("Ok") && self.tokens.get(self.index + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
+            self.advance(); // `Ok`
+            self.advance(); // `(`
+            let inner = self.parse_expr()?;
+            self.expect(TokenKind::RParen, "')' after Ok(...)")?;
+            Ok(Expr::Ok(Box::new(inner)))
+        } else if self.check_ident("Err") && self.tokens.get(self.index + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
+            self.advance(); // `Err`
+            self.advance(); // `(`
+            let inner = self.parse_expr()?;
+            self.expect(TokenKind::RParen, "')' after Err(...)")?;
+            Ok(Expr::Err(Box::new(inner)))
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             let name = name.clone();
-            if self.tokens.get(self.index + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
+            let next_is_call = matches!(
+                self.tokens.get(self.index + 1).map(|t| &t.kind),
+                Some(TokenKind::LParen) | Some(TokenKind::ColonColon)
+            );
+            if next_is_call {
                 self.advance(); // consume ident
+                // `name::<Illumina, Nanopore>(...)` -- explicit type
+                // arguments, only needed when a generic function's type
+                // parameter can't be inferred from any argument. Reuses
+                // `Profile::parse` directly (a type argument is always a
+                // concrete profile -- the only thing a `PoolState::Var`
+                // can ever be unified against).
+                let mut explicit_type_args = Vec::new();
+                if self.check(TokenKind::ColonColon) {
+                    self.advance();
+                    self.expect(TokenKind::Lt, "'<' after '::'")?;
+                    loop {
+                        let profile_name = self.expect_ident_any("explicit type argument")?;
+                        let profile = Profile::parse(&profile_name)
+                            .ok_or_else(|| self.error_previous(format!("unknown profile '{}'", profile_name)))?;
+                        explicit_type_args.push(profile);
+                        if !self.consume_comma() {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::Gt, "'>' after explicit type arguments")?;
+                }
                 self.expect(TokenKind::LParen, "'(' after function name")?;
                 let mut args = Vec::new();
                 while !self.check(TokenKind::RParen) {
@@ -676,7 +722,7 @@ impl Parser {
                     }
                 }
                 self.expect(TokenKind::RParen, "')' after function arguments")?;
-                Ok(Expr::FunctionCall { name, args })
+                Ok(Expr::FunctionCall { name, args, explicit_type_args })
             } else {
                 self.advance(); // consume ident
                 Ok(Expr::Variable(name))
@@ -728,6 +774,42 @@ impl Parser {
     fn parse_closure_expr(&mut self) -> Result<Expr, ParseError> {
         let start = self.start_span();
         self.advance(); // `fn`
+
+        // `fn<T, U>(...)` -- optional type-parameter list, same grammar
+        // `parse_function_decl` already has. Closures can nest inside a
+        // generic function's (or another generic closure's) own body, so
+        // unlike `parse_function_decl` (safe only because a top-level
+        // `fn` never nests), this must *merge* with the outer scope
+        // rather than clobber it: a non-generic closure nested inside a
+        // generic function still needs to recognize that function's own
+        // `Pool<T>` if it references it, and the outer scope must come
+        // back exactly as it was once this closure's own signature/body
+        // is done parsing.
+        let type_params = if self.check(TokenKind::Lt) {
+            self.advance();
+            let mut names = Vec::new();
+            while !self.check(TokenKind::Gt) {
+                names.push(self.expect_ident_any("type parameter name")?);
+                if !self.consume_comma() && !self.check(TokenKind::Gt) {
+                    return Err(self.error_here("expected ',' or '>' in type parameter list"));
+                }
+            }
+            self.expect(TokenKind::Gt, "'>' after type parameter list")?;
+            names
+        } else {
+            Vec::new()
+        };
+        let outer_type_params = self.type_params_in_scope.clone();
+        let mut merged_type_params = outer_type_params.clone();
+        merged_type_params.extend(type_params.iter().cloned());
+        self.type_params_in_scope = merged_type_params;
+
+        let result = self.parse_closure_expr_rest(start, type_params);
+        self.type_params_in_scope = outer_type_params;
+        result
+    }
+
+    fn parse_closure_expr_rest(&mut self, start: (usize, usize), type_params: Vec<String>) -> Result<Expr, ParseError> {
         self.expect(TokenKind::LParen, "'(' after 'fn'")?;
         let mut params = Vec::new();
         while !self.check(TokenKind::RParen) {
@@ -754,7 +836,7 @@ impl Parser {
             body.push(self.parse_declaration()?);
         }
         self.expect(TokenKind::RBrace, "'}' to end closure body")?;
-        Ok(Expr::Closure { params, return_type, body, span: self.span_since(start) })
+        Ok(Expr::Closure { type_params, params, return_type, body, span: self.span_since(start) })
     }
 
     fn parse_match_arm(&mut self, keyword: &str) -> Result<(String, Expr), ParseError> {

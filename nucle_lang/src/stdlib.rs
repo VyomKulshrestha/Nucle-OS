@@ -104,6 +104,7 @@ mod tests {
         let call = Expr::FunctionCall {
             name: "consensus_vote".to_string(),
             args: vec![Expr::Variable("noisy".to_string()), Expr::Number(10.0)],
+            explicit_type_args: Vec::new(),
         };
         assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), crate::ast::Effect::Pure);
         assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
@@ -111,6 +112,7 @@ mod tests {
         let call = Expr::FunctionCall {
             name: "protect".to_string(),
             args: vec![Expr::Variable("data".to_string()), Expr::Variable("guarantee".to_string())],
+            explicit_type_args: Vec::new(),
         };
         assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), crate::ast::Effect::Pure);
         assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));

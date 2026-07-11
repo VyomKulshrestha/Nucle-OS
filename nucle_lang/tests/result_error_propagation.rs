@@ -182,6 +182,73 @@ fn applying_question_mark_to_a_non_result_expression_is_rejected() {
 }
 
 // ---------------------------------------------------------------------
+// `Ok(...)`/`Err(...)` constructors
+// ---------------------------------------------------------------------
+
+#[test]
+fn ok_and_err_constructors_parse_into_the_expected_expr_variants() {
+    let program = parse(
+        r#"
+        fn f() returns Result<DnaFile, Str> {
+            let x: DnaFile = (store "a.txt" into archive)?
+            let ok: Result<DnaFile, Str> = Ok(x)
+            let err: Result<DnaFile, Str> = Err("blocked")
+        }
+        "#,
+    );
+    let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
+    let Declaration::Let(ok_binding) = &func.body[1] else { panic!("expected a let") };
+    assert_eq!(ok_binding.expr, Expr::Ok(Box::new(Expr::Variable("x".to_string()))));
+    let Declaration::Let(err_binding) = &func.body[2] else { panic!("expected a let") };
+    assert_eq!(err_binding.expr, Expr::Err(Box::new(Expr::StringLiteral("blocked".to_string()))));
+}
+
+#[test]
+fn ok_constructor_rewrapping_a_bound_variable_has_no_diagnostics() {
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let saved: DnaFile = (store \"a.txt\" into archive)?\n    let confirmed: Result<DnaFile, Str> = Ok(saved)\n}}\n",
+        POOL
+    );
+    let report = check_source(&src);
+    assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
+}
+
+#[test]
+fn err_constructor_resolves_ok_type_from_the_enclosing_functions_return_type() {
+    // No `store`/`?` anywhere in the body -- `Err`'s missing `Ok` side
+    // must come purely from `f`'s own declared return type.
+    let src = format!("{}fn f() returns Result<DnaFile, Str> {{\n    let disabled: Result<DnaFile, Str> = Err(\"disabled\")\n}}\n", POOL);
+    let report = check_source(&src);
+    assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
+}
+
+#[test]
+fn err_constructor_with_no_context_at_all_is_ambiguous() {
+    // No enclosing `let` annotation and no sibling `Ok` arm to borrow a
+    // type from -- `infer_result_expr`'s generic, context-free path.
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let saved: DnaFile = (store \"a.txt\" into archive)?\n    let x: DnaFile = Err(\"nope\")?\n}}\n",
+        POOL
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-ERR-CONSTRUCTOR-AMBIGUOUS".to_string()));
+}
+
+#[test]
+fn err_constructor_payload_must_be_a_string_literal() {
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let saved: DnaFile = (store \"a.txt\" into archive)?\n    let x: Result<DnaFile, Str> = Err(saved)\n}}\n",
+        POOL
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-ERR-CONSTRUCTOR-INVALID".to_string()));
+}
+
+#[test]
+fn ok_constructor_payload_must_be_resolvable() {
+    let src = format!("{}fn f() returns Result<DnaFile, Str> {{\n    let x: Result<DnaFile, Str> = Ok(\"a.txt\")\n}}\n", POOL);
+    assert!(diagnostic_codes(&src).contains(&"E-OK-CONSTRUCTOR-INVALID".to_string()));
+}
+
+// ---------------------------------------------------------------------
 // Effects
 // ---------------------------------------------------------------------
 
@@ -244,24 +311,100 @@ fn a_caught_store_failure_does_not_abort_the_run_and_a_fallback_pool_succeeds() 
 
     // First run: `archive_in_primary()` succeeds (nothing in `primary`
     // yet), and the top-level `outcome` binding holds `Ok(...)`.
+    // `confirm_backup_copy()` (a separate top-level binding demonstrating
+    // `Ok(...)` construction) also runs every call and lands its own
+    // store into `backup`, so two files exist after this first run.
     let first = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
     assert!(first.steps.iter().any(|s| s.contains("✓ store into primary")), "steps: {:?}", first.steps);
-    assert_eq!(os.dna_stat().file_count, 1);
+    assert!(first.steps.iter().any(|s| s.contains("✓ store into backup")), "steps: {:?}", first.steps);
+    assert_eq!(os.dna_stat().file_count, 2);
 
-    // Second run against the SAME NucleOS: `sample_a.txt` already exists
-    // in `primary`, so the real VFS write now genuinely fails -- this is
-    // the actual motivating gap Step 9 closes. Before this feature, that
-    // failure would have aborted `execute_program` entirely (a hard
-    // `Result::Err` via Rust's own `?`); now it's caught inside
-    // `archive_in_primary` and surfaced as a step, and the run completes.
+    // Second run against the SAME NucleOS: `sample_a.txt`/`sample_c.txt`
+    // already exist in `primary`/`backup`, so both real VFS writes now
+    // genuinely fail -- this is the actual motivating gap Step 9 closes.
+    // Before this feature, that failure would have aborted
+    // `execute_program` entirely (a hard `Result::Err` via Rust's own
+    // `?`); now it's caught inside `archive_in_primary`/
+    // `confirm_backup_copy` and surfaced as a step, and the run completes.
     let second = execute_program(&mut os, &mut plan, &dir).expect("a caught Result::Err must not abort execute_program");
     assert!(
         second.steps.iter().any(|s| s.contains("✗ store into primary") && s.contains("already exists")),
         "expected a caught duplicate-file failure, got: {:?}",
         second.steps
     );
+    assert!(
+        second.steps.iter().any(|s| s.contains("✗ store into backup") && s.contains("already exists")),
+        "expected a caught duplicate-file failure, got: {:?}",
+        second.steps
+    );
     // Nothing new was actually written on the failed attempt.
+    assert_eq!(os.dna_stat().file_count, 2);
+}
+
+#[test]
+fn a_statement_form_store_inside_a_function_body_actually_executes() {
+    // Before this fix, `exec_function_body` only ever processed
+    // `Declaration::Let` -- a bare statement-form `store` inside a
+    // function body was silently skipped, never reaching the real VFS.
+    // Reuses `docs/examples/sample_a.txt`/`sample_b.txt` as real fixture
+    // content -- `execute_program` reads files from `dir` for real, so
+    // an inline source using a filename that doesn't exist on disk would
+    // fail for an unrelated reason (a genuine missing-file VFS error),
+    // not prove anything about this fix.
+    let dir = examples_dir();
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    store \"sample_a.txt\" into archive\n    let confirmation: Result<DnaFile, Str> = store \"sample_b.txt\" into archive\n    let saved: DnaFile = confirmation?\n}}\nlet result: Result<DnaFile, Str> = f()\n",
+        POOL
+    );
+    let mut os = nucle_vfs::syscall::NucleOS::new(100);
+    let mut plan = compile(&src).expect("must compile cleanly");
+    let result = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
+    assert!(result.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_a.txt")), "steps: {:?}", result.steps);
+    assert!(result.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_b.txt")), "steps: {:?}", result.steps);
+    assert_eq!(os.dna_stat().file_count, 2);
+}
+
+#[test]
+fn a_statement_form_store_failure_short_circuits_the_rest_of_the_function_body() {
+    let dir = examples_dir();
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    store \"sample_a.txt\" into archive\n    store \"sample_a.txt\" into archive\n    let confirmation: Result<DnaFile, Str> = store \"sample_b.txt\" into archive\n    let saved: DnaFile = confirmation?\n}}\nlet result: Result<DnaFile, Str> = f()\n",
+        POOL
+    );
+    let mut os = nucle_vfs::syscall::NucleOS::new(100);
+    let mut plan = compile(&src).expect("must compile cleanly");
+    let result = execute_program(&mut os, &mut plan, &dir).expect("a caught statement-form failure must not abort execute_program");
+    // The second (duplicate) statement-form store fails and short-
+    // circuits -- the third declaration (`sample_b.txt`) never runs.
+    assert!(result.steps.iter().any(|s| s.contains("✗ store into archive") && s.contains("already exists")), "steps: {:?}", result.steps);
+    assert!(
+        !result.steps.iter().any(|s| s.contains("sample_b.txt")),
+        "the statement-form failure should have short-circuited before sample_b.txt, steps: {:?}",
+        result.steps
+    );
     assert_eq!(os.dna_stat().file_count, 1);
+}
+
+#[test]
+fn a_file_typed_parameters_real_filename_flows_into_a_statement_form_store() {
+    // The other half of the fix: `Expr::StringLiteral` becoming a real
+    // bound `Value::Str` at the call site, and `store <ident> into
+    // <pool>` resolving that identifier through `env` instead of
+    // treating its literal text as the path.
+    let dir = examples_dir();
+    let src = format!(
+        "{}fn archive_named(name: File) returns Result<DnaFile, Str> {{\n    store name into archive\n    let confirmation: Result<DnaFile, Str> = store \"sample_b.txt\" into archive\n    let saved: DnaFile = confirmation?\n}}\nlet result: Result<DnaFile, Str> = archive_named(\"sample_a.txt\")\n",
+        POOL
+    );
+    let mut os = nucle_vfs::syscall::NucleOS::new(100);
+    let mut plan = compile(&src).expect("must compile cleanly");
+    let result = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
+    assert!(
+        result.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_a.txt")),
+        "expected the parameter's real filename ('sample_a.txt'), not the identifier 'name', to appear in the step: {:?}",
+        result.steps
+    );
+    assert_eq!(os.dna_stat().file_count, 2);
 }
 
 // ---------------------------------------------------------------------

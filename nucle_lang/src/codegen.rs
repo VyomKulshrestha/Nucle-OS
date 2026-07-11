@@ -222,19 +222,19 @@ pub fn execute_program(
             Declaration::Let(binding) if is_result_producing(&binding.expr, &funcs) => {
                 // Top-level `?` is impossible here: typeck rejects `?`
                 // outside a `Result`-returning function
-                // (`E-TRY-OUTSIDE-RESULT-FN`), so a program that passed
-                // type-checking can only reach this with a directly
-                // Result-producing expression (`StoreExpr`/`DeleteExpr`/
-                // a call to a `Result`-returning function) -- never a
-                // bare `Expr::Try`, which needs an enclosing function to
-                // even parse-check successfully at this position. Nothing
-                // here can produce `EvalOutcome::Err`, but `into_value()`
-                // degrades harmlessly if that invariant is ever violated.
+                // (`E-TRY-OUTSIDE-RESULT-FN`). But a call to a
+                // *non*-`Result`-returning function CAN still surface a
+                // raw `EvalOutcome::Err` at this point -- a statement-
+                // form `store`/`delete` failing somewhere inside that
+                // function's own body (see `exec_function_body`'s doc
+                // comment), never caught by any `Result`-returning
+                // boundary along the way. Matching the statement form's
+                // own "abort unconditionally" contract, that aborts the
+                // whole run here too, rather than being silently
+                // discarded.
                 let mut calling = HashSet::new();
                 let outcome = eval_expr(&binding.expr, &env, &funcs, &pools, os, base_dir, &mut steps, &mut calling);
-                if let Ok(value) = outcome.into_value() {
-                    env.insert(binding.name.clone(), value);
-                }
+                env.insert(binding.name.clone(), outcome.into_value()?);
             }
             _ => {}
         }
@@ -289,8 +289,20 @@ fn eval_expr(
             // passed through defensively rather than panicking.
             other => other,
         },
-        Expr::StoreExpr(op) => eval_store_expr(op, pools, os, base_dir, steps),
-        Expr::DeleteExpr(op) => eval_delete_expr(op, os, steps),
+        Expr::StoreExpr(op) => eval_store_expr(op, env, pools, os, base_dir, steps),
+        Expr::DeleteExpr(op) => eval_delete_expr(op, env, os, steps),
+        Expr::Ok(inner) => match eval_expr(inner, env, funcs, pools, os, base_dir, steps, calling) {
+            EvalOutcome::Value(v) => EvalOutcome::Value(Value::Result(Ok(Box::new(v)))),
+            err @ EvalOutcome::Err(_) => err,
+        },
+        // `Err`'s payload is restricted to a string literal by typeck
+        // (`check_err_expr`) -- no need to recurse through `eval_expr`
+        // generically, the message is right there.
+        Expr::Err(inner) => match inner.as_ref() {
+            Expr::StringLiteral(s) => EvalOutcome::Value(Value::Result(Err(s.clone()))),
+            // Unreachable for a program that passed type-checking.
+            _ => EvalOutcome::Err("internal error: Err(...)'s payload was not a string literal".to_string()),
+        },
         // Evaluates the scrutinee, then picks and evaluates the matching
         // arm in a *cloned* environment with the pattern bound -- unlike
         // `Try`, this never turns an `Err` into a short-circuit, since
@@ -340,7 +352,13 @@ fn eval_expr(
             body: body.clone(),
             captured_env: env.clone(),
         }),
-        Expr::FunctionCall { name, args } => {
+        // `explicit_type_args` is purely a typeck-time hint (which
+        // concrete profile a `PoolState::Var` unifies to) -- by the time
+        // a program executes, every argument's real `Value` already
+        // determines everything the interpreter needs, so it's ignored
+        // here entirely, same as `type_params` on a `FunctionDecl` always
+        // has been.
+        Expr::FunctionCall { name, args, .. } => {
             // Closures resolve first, same priority `typeck::TypeChecker`
             // already validated the program against (a closure-bound
             // name shadows a same-named global function) -- see
@@ -353,7 +371,7 @@ fn eval_expr(
                         err @ EvalOutcome::Err(_) => return err,
                     }
                 }
-                return call_closure(&params, &return_type, &body, &captured_env, arg_values, funcs, pools, os, base_dir, steps, calling);
+                return call_closure(name, &params, &return_type, &body, &captured_env, arg_values, funcs, pools, os, base_dir, steps, calling);
             }
             let Some(func) = funcs.get(name).cloned() else {
                 return EvalOutcome::Err(format!("internal error: undeclared function '{}' reached execution", name));
@@ -367,13 +385,20 @@ fn eval_expr(
             }
             call_user_function(&func, arg_values, funcs, pools, os, base_dir, steps, calling)
         }
+        // A real `Value::Str`, not just an inert placeholder -- this is
+        // what makes a `File`/`Str`-typed parameter's argument (a plain
+        // string literal at the call site) become a real, bound value
+        // inside the callee's `env` (`call_user_function`'s param-
+        // binding loop is already fully generic), which `resolve_file_arg`
+        // then picks up for a `store`/`delete` referencing it by name.
+        Expr::StringLiteral(s) => EvalOutcome::Value(Value::Str(s.clone())),
         // Everything else (`SimulatePool`/`SynthesizePool`/`SequencePool`/
-        // `StringLiteral`/`Number`/`BinaryOp`/`Not`) is never Result-
-        // shaped, and `is_result_producing` never routes a binding with
-        // one of these as its top-level expression into `eval_expr` at
-        // all -- this arm only matters for a nested occurrence (e.g. a
-        // function-call argument), where a placeholder is enough since
-        // nothing downstream inspects it as anything but an opaque value.
+        // `Number`/`BinaryOp`/`Not`) is never Result-shaped, and
+        // `is_result_producing` never routes a binding with one of these
+        // as its top-level expression into `eval_expr` at all -- this arm
+        // only matters for a nested occurrence (e.g. a function-call
+        // argument), where a placeholder is enough since nothing
+        // downstream inspects it as anything but an opaque value.
         _ => EvalOutcome::Value(Value::Unit),
     }
 }
@@ -385,7 +410,24 @@ fn eval_expr(
 /// ultimately need to do the identical thing to `os` -- the only
 /// difference is that a real failure here becomes a `Value::Result(Err)`
 /// instead of a hard `Result::Err` that aborts the whole run.
-fn eval_store_expr(op: &StoreOp, pools: &HashMap<String, PoolDecl>, os: &mut NucleOS, base_dir: &Path, steps: &mut Vec<String>) -> EvalOutcome {
+/// Resolves a `StoreOp`/`DeleteOp`'s `file` field through `env` first --
+/// if it names a bound `Value::Str` (e.g. a `File`-typed function
+/// parameter's real argument, or any other `Str`-typed binding), its
+/// string content is the real filename; otherwise `op.file` is used
+/// literally, exactly as it always has been (every existing example, none
+/// of which pass a filename through a parameter). This is what makes
+/// `store data into pool` -- the parser's own "file variable" syntax,
+/// accepted since it was written but never actually resolved -- do
+/// something real when `data` is a bound parameter, instead of silently
+/// treating the identifier's own text as a literal path.
+fn resolve_file_arg<'a>(file: &'a str, env: &'a HashMap<String, Value>) -> &'a str {
+    match env.get(file) {
+        Some(Value::Str(s)) => s,
+        _ => file,
+    }
+}
+
+fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<String, PoolDecl>, os: &mut NucleOS, base_dir: &Path, steps: &mut Vec<String>) -> EvalOutcome {
     let Some(pool) = pools.get(&op.pool) else {
         // Unreachable for a program that passed type-checking
         // (`E-STORE-POOL-UNDECLARED` would already have fired) --
@@ -397,7 +439,8 @@ fn eval_store_expr(op: &StoreOp, pools: &HashMap<String, PoolDecl>, os: &mut Nuc
     let redundancy = op.options.redundancy.unwrap_or(pool.redundancy);
     let coverage = op.options.coverage.unwrap_or(redundancy);
 
-    let path = resolve_source_path(base_dir, &op.file);
+    let file = resolve_file_arg(&op.file, env);
+    let path = resolve_source_path(base_dir, file);
     let data = match std::fs::read(&path) {
         Ok(data) => data,
         Err(err) => {
@@ -406,7 +449,7 @@ fn eval_store_expr(op: &StoreOp, pools: &HashMap<String, PoolDecl>, os: &mut Nuc
             return EvalOutcome::Value(Value::Result(Err(msg)));
         }
     };
-    let filename = Path::new(&op.file).file_name().and_then(|name| name.to_str()).unwrap_or(&op.file);
+    let filename = Path::new(file).file_name().and_then(|name| name.to_str()).unwrap_or(file);
 
     if op.simulate {
         os.simulate_noise = true;
@@ -444,8 +487,9 @@ fn eval_store_expr(op: &StoreOp, pools: &HashMap<String, PoolDecl>, os: &mut Nuc
 /// `delete <file> from <pool> confirm ...` in expression position --
 /// same relationship to `execute_vfs_call`'s `VfsCall::Delete` arm as
 /// `eval_store_expr` has to its `VfsCall::Store` arm.
-fn eval_delete_expr(op: &DeleteOp, os: &mut NucleOS, steps: &mut Vec<String>) -> EvalOutcome {
-    let filename = Path::new(&op.file).file_name().and_then(|name| name.to_str()).unwrap_or(&op.file);
+fn eval_delete_expr(op: &DeleteOp, env: &HashMap<String, Value>, os: &mut NucleOS, steps: &mut Vec<String>) -> EvalOutcome {
+    let file = resolve_file_arg(&op.file, env);
+    let filename = Path::new(file).file_name().and_then(|name| name.to_str()).unwrap_or(file);
     match os.dna_delete(filename) {
         Ok(result) => {
             steps.push(format!("delete from {}: removed '{}' ({} strands)", op.pool, result.filename, result.strands_removed));
@@ -520,7 +564,26 @@ fn call_user_function(
 /// already bound *before* its own literal) -- there is no cycle this
 /// could ever need to detect, unlike `call_user_function`'s
 /// `calling`/`func.name` guard.
+/// `name` is the identifier this closure was just looked up and called
+/// through (the `Expr::FunctionCall`'s own `name` field at the call
+/// site) -- re-inserted into this invocation's own `env` as a fresh
+/// self-referential `Value::Closure` before the body runs, specifically
+/// so a self-recursive call (`Err(reason) => retry()?` inside `retry`'s
+/// own body) resolves. Without this, `retry`'s `captured_env` (the
+/// snapshot `Expr::Closure` took at evaluation time, *before* its own
+/// enclosing `let` finished binding -- see that arm's doc comment) never
+/// contains "retry" itself, so a self-call would otherwise fail to
+/// resolve via either `env` or `funcs` (an "internal error: undeclared
+/// function" this interpreter should never actually produce for a
+/// program that type-checked). Re-inserting under `name` on *every*
+/// call (not just the first) is what makes arbitrarily deep recursion
+/// work, not just one level: each nested invocation re-establishes the
+/// same self-reference for its own body. Harmless when `name` is
+/// unrelated to the closure's own real identity (e.g. a `Fn(...)`-typed
+/// parameter's name, for a closure that never references it) -- it's
+/// simply never read.
 fn call_closure(
+    name: &str,
     params: &[FnParam],
     return_type: &TypeExpr,
     body: &[Declaration],
@@ -534,6 +597,10 @@ fn call_closure(
     calling: &mut HashSet<String>,
 ) -> EvalOutcome {
     let mut env = captured_env.clone();
+    env.insert(
+        name.to_string(),
+        Value::Closure { params: params.to_vec(), return_type: return_type.clone(), body: body.to_vec(), captured_env: captured_env.clone() },
+    );
     for (param, arg) in params.iter().zip(args) {
         env.insert(param.name.clone(), arg);
     }
@@ -549,18 +616,53 @@ fn call_closure(
     }
 }
 
-/// Runs `body` sequentially against `env`, executing each `Let`
-/// declaration's expression for real and returning early the moment one
-/// produces `EvalOutcome::Err` -- this early return *is* `?`'s
-/// short-circuit (see `eval_expr`'s `Expr::Try` arm, which is what turns
-/// a `Value::Result(Err(_))` into the `EvalOutcome::Err` this loop reacts
+/// `retrieve from <pool> where ...` in *statement* position inside a
+/// function body -- mirrors `execute_vfs_call`'s `VfsCall::Retrieve` arm
+/// exactly (same search + step-narration logic), reused directly since
+/// `RetrieveOp`'s `query` needs the identical rendering
+/// (`middle::query_to_mir_search`) either way. Never fails (`retrieve`
+/// has no real failure mode today -- see `Expr::RetrieveExpr`'s doc
+/// comment in ast.rs), so there's nothing to propagate.
+fn exec_retrieve_stmt(op: &RetrieveOp, os: &mut NucleOS, steps: &mut Vec<String>) {
+    let query = crate::middle::query_to_mir_search(&op.query);
+    let results = os.dna_search(&query, 10);
+    if results.is_empty() {
+        steps.push(format!("- retrieve from {} where {}: no matches", op.pool, query));
+    } else {
+        steps.push(format!("✓ retrieve from {} where {}: {} match(es)", op.pool, query, results.len()));
+        for result in results {
+            steps.push(format!("  - {}", result));
+        }
+    }
+}
+
+/// Runs `body` sequentially against `env`, executing each declaration
+/// for real and returning early the moment one produces
+/// `EvalOutcome::Err` -- this early return *is* `?`'s short-circuit (see
+/// `eval_expr`'s `Expr::Try` arm, which is what turns a
+/// `Value::Result(Err(_))` into the `EvalOutcome::Err` this loop reacts
 /// to). The last `Let`'s value is the function's implicit return,
 /// matching `typeck::TypeChecker::check_function`'s "the body's last
-/// binding is the return value" convention for both `Pool<...>` and
-/// `Result<...>` return types. Non-`Let` declarations don't appear in a
-/// function body per the grammar (a body is a sequence of statements,
-/// and every current statement form that "produces" something is a
-/// `Let`), so there's nothing else to execute here.
+/// binding is the return value" convention -- a statement-form
+/// `Declaration::Operation` never contributes to it (`last` is
+/// untouched), only `let`-bound expression-form operations do.
+///
+/// `Declaration::Operation` executing here at all is itself the fix for
+/// a real, foundational gap: before this, ANY statement-form `store`/
+/// `retrieve`/`delete` inside ANY function body was silently skipped --
+/// never executed for real, regardless of whether the function was
+/// ever called -- since this loop only ever matched `Declaration::Let`.
+/// A real failure here (`store`/`delete`) is NOT caught by an enclosing
+/// `?`/`match` the way expression-form `StoreExpr`/`DeleteExpr` is --
+/// there's no in-line syntax for that -- but it still propagates via the
+/// exact same `EvalOutcome::Err` channel `?` already uses: if it crosses
+/// a `Result`-returning function's own call boundary, `call_user_function`
+/// wraps it into that function's own `Err(...)` (a reasonable, coherent
+/// reading of "this function's contract is success-or-documented-
+/// failure"); if it never crosses one, it reaches `execute_program`'s
+/// top level, which now aborts the whole run on it -- matching the
+/// statement form's existing "abort unconditionally" contract instead of
+/// silently discarding it.
 fn exec_function_body(
     body: &[Declaration],
     env: &mut HashMap<String, Value>,
@@ -573,14 +675,39 @@ fn exec_function_body(
 ) -> EvalOutcome {
     let mut last = EvalOutcome::Value(Value::Unit);
     for decl in body {
-        if let Declaration::Let(binding) = decl {
-            match eval_expr(&binding.expr, env, funcs, pools, os, base_dir, steps, calling) {
+        match decl {
+            Declaration::Let(binding) => match eval_expr(&binding.expr, env, funcs, pools, os, base_dir, steps, calling) {
                 EvalOutcome::Err(msg) => return EvalOutcome::Err(msg),
                 EvalOutcome::Value(value) => {
                     env.insert(binding.name.clone(), value.clone());
                     last = EvalOutcome::Value(value);
                 }
+            },
+            // `eval_store_expr`/`eval_delete_expr` never return a raw
+            // `EvalOutcome::Err` themselves -- a real VFS failure comes
+            // back as `EvalOutcome::Value(Value::Result(Err(msg)))` (an
+            // ordinary, "successfully evaluated" `Result`, exactly like
+            // the expression-position form). The statement form has no
+            // `?`/`match` to unwrap it inline, so that's done here
+            // instead: a still-wrapped `Err` is what actually propagates
+            // as this loop's own short-circuit.
+            Declaration::Operation(Operation::Store(op)) => {
+                if let EvalOutcome::Value(Value::Result(Err(msg))) = eval_store_expr(op, env, pools, os, base_dir, steps) {
+                    return EvalOutcome::Err(msg);
+                }
             }
+            Declaration::Operation(Operation::Delete(op)) => {
+                if let EvalOutcome::Value(Value::Result(Err(msg))) = eval_delete_expr(op, env, os, steps) {
+                    return EvalOutcome::Err(msg);
+                }
+            }
+            Declaration::Operation(Operation::Retrieve(op)) => exec_retrieve_stmt(op, os, steps),
+            // `assert` is evaluated during type-checking (see
+            // `typeck::TypeChecker::check_assert`), not lowered to a VFS
+            // call -- it has no runtime effect for this loop to execute,
+            // the same reason `middle::lower_program` skips it too.
+            Declaration::Operation(Operation::Assert(_)) => {}
+            _ => {}
         }
     }
     last

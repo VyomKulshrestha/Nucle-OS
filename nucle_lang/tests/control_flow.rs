@@ -31,7 +31,7 @@ fn if_true_branch_is_taken_and_desugared_away() {
         })
         .expect("expected a 'recovered' binding to survive desugaring");
     match &recovered.expr {
-        nucle_lang::Expr::FunctionCall { name, args } if name == "consensus_vote" => {
+        nucle_lang::Expr::FunctionCall { name, args, .. } if name == "consensus_vote" => {
             assert_eq!(args[1], nucle_lang::Expr::Number(10.0));
         }
         other => panic!("expected consensus_vote call, got {:?}", other),
@@ -62,7 +62,7 @@ fn if_false_branch_falls_through_to_else() {
         })
         .expect("expected a 'recovered' binding to survive desugaring");
     match &recovered.expr {
-        nucle_lang::Expr::FunctionCall { name, args } if name == "consensus_vote" => {
+        nucle_lang::Expr::FunctionCall { name, args, .. } if name == "consensus_vote" => {
             assert_eq!(args[1], nucle_lang::Expr::Number(2.0));
         }
         other => panic!("expected consensus_vote call, got {:?}", other),

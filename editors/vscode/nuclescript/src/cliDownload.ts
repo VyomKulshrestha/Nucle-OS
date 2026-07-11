@@ -15,11 +15,13 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // Pinned to the newest NucleOS release known to publish nucle-cli
 // binaries for every platform (.github/workflows/release.yml). Bump this
 // when a newer `v*` release ships with an updated nucle-cli -- e.g.
-// v0.1.4 exists specifically because v0.1.3's nucle-cli predates
-// closures (`Fn(...)`/anonymous `fn(...) {...}` literals) entirely, so a
-// fresh install downloading it would fail to parse any .nsl file using
-// the new syntax.
-const CLI_RELEASE_TAG = "v0.1.4";
+// v0.1.5 exists specifically because v0.1.4's nucle-cli predates Step
+// 13's gap-closing pass (Ok/Err constructors, explicit ::<Illumina>()
+// type arguments, generic/self-recursive closures, real statement-form
+// execution and real File/Str-typed parameter values) entirely, so a
+// fresh install downloading it would fail to parse -- or silently
+// mis-execute -- any .nsl file using the new syntax.
+const CLI_RELEASE_TAG = "v0.1.5";
 
 /** The release asset name published for this platform, or `undefined` if
  * none exists (arm64 Linux/Windows) -- caller falls back to asking the

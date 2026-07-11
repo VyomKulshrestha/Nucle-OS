@@ -60,6 +60,11 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable,
         // -- `?` is purely a control-flow/unwrap operator, not an operation
         // in its own right, so this forwards to the inner expression.
         Expr::Try(inner) => expr_effect(inner, funcs, closures, resolving),
+        // Constructing a Result is inert on its own -- same reasoning as
+        // `Try`'s forwarding arm; only what's already inside could have
+        // an effect.
+        Expr::Ok(inner) => expr_effect(inner, funcs, closures, resolving),
+        Expr::Err(inner) => expr_effect(inner, funcs, closures, resolving),
         // The expression-position and statement-position forms of these
         // operations share the identical `StoreOp`/`RetrieveOp`/`DeleteOp`
         // payload, so they get the identical effect via the same
@@ -104,6 +109,8 @@ pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, closur
         }
         Expr::Not(inner) => expr_has_required_confirmation(inner, funcs, closures, resolving),
         Expr::Try(inner) => expr_has_required_confirmation(inner, funcs, closures, resolving),
+        Expr::Ok(inner) => expr_has_required_confirmation(inner, funcs, closures, resolving),
+        Expr::Err(inner) => expr_has_required_confirmation(inner, funcs, closures, resolving),
         // Store's "confirmed" is always true today (see decl_effect_info's
         // Operation::Store arm below) -- store never hard-blocks on
         // confirmation the way Delete/Synthesize/Sequence do, it only
@@ -423,7 +430,7 @@ mod tests {
     fn function_call_inherits_destructive_effect_from_body() {
         let mut funcs = FunctionTable::new();
         funcs.insert("wipe".into(), destructive_delete_fn("wipe", true));
-        let call = Expr::FunctionCall { name: "wipe".into(), args: vec![] };
+        let call = Expr::FunctionCall { name: "wipe".into(), args: vec![], explicit_type_args: vec![] };
         assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), Effect::Destructive);
     }
 
@@ -431,7 +438,7 @@ mod tests {
     fn unconfirmed_destructive_call_is_not_confirmed_at_call_site() {
         let mut funcs = FunctionTable::new();
         funcs.insert("wipe".into(), destructive_delete_fn("wipe", false));
-        let call = Expr::FunctionCall { name: "wipe".into(), args: vec![] };
+        let call = Expr::FunctionCall { name: "wipe".into(), args: vec![], explicit_type_args: vec![] };
         assert!(!expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
 
@@ -439,7 +446,7 @@ mod tests {
     fn confirmed_destructive_call_is_confirmed_at_call_site() {
         let mut funcs = FunctionTable::new();
         funcs.insert("wipe".into(), destructive_delete_fn("wipe", true));
-        let call = Expr::FunctionCall { name: "wipe".into(), args: vec![] };
+        let call = Expr::FunctionCall { name: "wipe".into(), args: vec![], explicit_type_args: vec![] };
         assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
 
@@ -450,7 +457,7 @@ mod tests {
             "noop".into(),
             FunctionDecl { name: "noop".into(), type_params: vec![], params: vec![], return_type: TypeExpr::Void, body: vec![], span: Span::default(), doc: None },
         );
-        let call = Expr::FunctionCall { name: "noop".into(), args: vec![] };
+        let call = Expr::FunctionCall { name: "noop".into(), args: vec![], explicit_type_args: vec![] };
         assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), Effect::Pure);
         assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
@@ -458,7 +465,7 @@ mod tests {
     #[test]
     fn undeclared_function_call_does_not_panic() {
         let funcs = FunctionTable::new();
-        let call = Expr::FunctionCall { name: "missing".into(), args: vec![] };
+        let call = Expr::FunctionCall { name: "missing".into(), args: vec![], explicit_type_args: vec![] };
         assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), Effect::Pure);
         assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));
     }
@@ -476,14 +483,14 @@ mod tests {
                 body: vec![Declaration::Let(LetDecl {
                     name: "x".into(),
                     annotation: TypeExpr::Void,
-                    expr: Expr::FunctionCall { name: "loop_fn".into(), args: vec![] },
+                    expr: Expr::FunctionCall { name: "loop_fn".into(), args: vec![], explicit_type_args: vec![] },
                     span: Span::default(),
                 })],
                 span: Span::default(),
                 doc: None,
             },
         );
-        let call = Expr::FunctionCall { name: "loop_fn".into(), args: vec![] };
+        let call = Expr::FunctionCall { name: "loop_fn".into(), args: vec![], explicit_type_args: vec![] };
         // Must terminate (no stack overflow) and must not report Pure/confirmed.
         assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()), Effect::Destructive);
         assert!(!expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &mut ResolvingSet::new()));

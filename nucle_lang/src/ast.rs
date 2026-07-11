@@ -325,7 +325,19 @@ pub enum Expr {
     /// still accepts `consensus_vote(...)`'s and `protect ... for ...`'s
     /// friendly surface syntax, desugaring both to this variant at parse
     /// time (see `parser::parse_primary_expr`).
-    FunctionCall { name: String, args: Vec<Expr> },
+    FunctionCall {
+        name: String,
+        args: Vec<Expr>,
+        /// `name::<Illumina, Nanopore>(...)` -- explicit type arguments,
+        /// only needed when a generic function's type parameter can't be
+        /// inferred from any argument (empty for every non-turbofish
+        /// call, which is every call that existed before this field was
+        /// added). Zipped against the callee's own `type_params` at the
+        /// call site (`typeck::TypeChecker::infer_expr`'s `FunctionCall`
+        /// arm) to seed the same unification `substitution` an inferred
+        /// argument would otherwise populate.
+        explicit_type_args: Vec<Profile>,
+    },
     Variable(String),
     StringLiteral(String),
     /// A bare number literal in expression position, e.g. the `5.0` in
@@ -376,8 +388,7 @@ pub enum Expr {
         err_body: Box<Expr>,
     },
     /// `fn(params) -> ReturnType { body }` in expression position -- an
-    /// anonymous closure literal, never a top-level `Declaration`. Unlike
-    /// `FunctionDecl`, always non-generic (no `type_params`) and has no
+    /// anonymous closure literal, never a top-level `Declaration`. Has no
     /// `name` -- it's identified only by whatever `let`/parameter binds
     /// it, exactly like any other value. Capture is real and lexical:
     /// `typeck::TypeChecker::check_closure_expr` type-checks `body`
@@ -389,11 +400,33 @@ pub enum Expr {
     /// observe). `codegen::eval_expr`'s `Expr::Closure` arm is the runtime
     /// counterpart: capture there is just one `env.clone()`.
     Closure {
+        /// `fn<T, U>(...)` -- mirrors `FunctionDecl::type_params` exactly
+        /// (empty for every non-generic closure). Resolved the same way:
+        /// call-site unification against a `Pool<T>`-typed argument's
+        /// real concrete state, never a runtime representation.
+        type_params: Vec<String>,
         params: Vec<FnParam>,
         return_type: TypeExpr,
         body: Vec<Declaration>,
         span: Span,
     },
+    /// `Ok(<expr>)` -- constructs a successful `Result`. `<expr>`'s own
+    /// type becomes the `Ok` side; the `Err` side defaults to `Str` (the
+    /// only error type anywhere in the language) unless external context
+    /// says otherwise. See `typeck::TypeChecker::infer_value_type` for
+    /// what `<expr>` can be, and `codegen::eval_expr`'s `Expr::Ok` arm
+    /// for the runtime counterpart.
+    Ok(Box<Expr>),
+    /// `Err(<string-literal>)` -- constructs a failed `Result`. The
+    /// payload is restricted to a string literal: it's the only way to
+    /// author a *new* `Str` value (an already-bound `Str`, e.g. a
+    /// `match`-captured `Err(reason)` pattern variable, was deliberately
+    /// never registered in any typeck scope map -- see `Expr::Match`'s
+    /// doc comment). The `Ok` side has no sensible default and must come
+    /// from context (an enclosing `let`'s annotation, a sibling `match`
+    /// arm, or the enclosing function/closure's declared return type) --
+    /// `E-ERR-CONSTRUCTOR-AMBIGUOUS` if none is available.
+    Err(Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

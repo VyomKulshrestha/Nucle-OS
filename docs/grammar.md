@@ -323,9 +323,45 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   produced and propagated, never branched on from within the same
   program; building on it (retrying a different pool, logging why) needed
   a second, independent function call from the caller.
+- **`Ok(<expr>)`/`Err(<string literal>)` (Step 13) construct a `Result`
+  directly**, rather than only ever receiving one from `store`/`delete`/a
+  `Result`-returning call. `Ok(...)`'s payload is any expression already
+  resolvable to a concrete type -- a bound variable of any shape, `?`, a
+  `Result`-shaped expression, or a `Pool`-shaped one; its missing `Err`
+  side defaults to `Str` (the only error type anywhere in the language).
+  `Err(...)`'s payload is restricted to a string literal -- the only way
+  to author a *new* `Str` value -- and its missing `Ok` side has no
+  default, coming instead from the enclosing `let`'s annotation, a
+  sibling `Ok` match arm's already-resolved type, or the enclosing
+  function/closure's declared return type; a bare `Err(...)` with none of
+  those reports `E-ERR-CONSTRUCTOR-AMBIGUOUS`:
+  ```nsl
+  fn archival_disabled() returns Result<DnaFile, Str> {
+      let disabled: Result<DnaFile, Str> = Err("archival is temporarily disabled by policy")
+  }
+  ```
+- **A statement-form `store`/`retrieve`/`delete` inside a function body
+  now actually executes (Step 13)**, not just at the top level. Before
+  this fix, a bare `store "x.txt" into pool` declaration (no `let`, not
+  producing the function's return value) inside any function body was
+  silently skipped by the interpreter -- present in the source, type-
+  checked, but never touching the real VFS. A statement-form failure
+  aborts the enclosing function unconditionally (same all-or-nothing
+  contract the top-level statement form always had), which a caller
+  catches via the ordinary `?`/`match` machinery if that function itself
+  returns `Result<_, _>`.
+- **A `File`/`Str`-typed parameter now carries its real argument value
+  at runtime (Step 13)**, rather than being an inert, type-checked-only
+  label. `store <identifier> into <pool>`'s "file variable" syntax (an
+  identifier instead of a string literal) resolves that identifier
+  through the callee's own bound parameters, so a function like
+  `fn archive_named(name: File) returns Result<DnaFile, Str> { store
+  name into archive ... }` called as `archive_named("genome.fasta")`
+  really does store `genome.fasta`, not a file literally named `name`.
 
 See [docs/errors.md](errors.md) for the six new `E-TRY-*`/`E-BINDING-
-RESULT-*`/`E-RETURN-TYPE-*` codes, and
+RESULT-*`/`E-RETURN-TYPE-*` codes plus `E-OK-CONSTRUCTOR-INVALID`/
+`E-ERR-CONSTRUCTOR-INVALID`/`E-ERR-CONSTRUCTOR-AMBIGUOUS`, and
 [`docs/examples/result_fallback_store.nsl`](examples/result_fallback_store.nsl)
 for a complete, runnable example.
 
@@ -369,9 +405,25 @@ and `recover_from(noisy_nanopore)` above both type-check as
 - **Scope is deliberately narrow**: a type parameter is usable only as
   the state slot inside `Pool<T>` (parameters, the return type, and
   `let` annotations inside the body) — not on `Strand`/`Sequence`/
-  `Result`/anything else. There's no explicit type-argument syntax
-  (`foo::<Illumina>()`); a type parameter that no argument binds is a
-  real error (`E-TYPE-PARAM-UNRESOLVED`), not silently left generic.
+  `Result`/anything else. A type parameter that no argument binds is a
+  real error (`E-TYPE-PARAM-UNRESOLVED`), not silently left generic —
+  unless it's resolved explicitly (see below).
+- **Explicit type-argument syntax, `name::<Illumina>(...)` (Step 13)**,
+  for the one shape inference alone can't resolve: a type parameter that
+  appears *only* inside a `Fn(...)`-typed parameter's own signature,
+  never as a directly `Pool<P>`-shaped argument. An explicit argument
+  that later disagrees with what an ordinary argument would infer
+  reports the same `E-TYPE-PARAM-CONFLICT` a conflicting pair of ordinary
+  arguments already does; the wrong number of explicit arguments reports
+  `E-TYPE-PARAM-ARITY`:
+  ```nsl
+  fn recover_generically<P>(source: Pool<Illumina, 0.35%>, recover_fn: Fn(Pool<P, 0.35%>) -> Pool<Recovered>) returns Pool<Recovered> {
+      let recovered: Pool<Recovered> = recover_fn(source)
+  }
+  let recovered: Pool<Recovered> = recover_generically::<Illumina>(noisy_illumina, fn<P>(source: Pool<P, 0.35%>) -> Pool<Recovered> {
+      let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+  })
+  ```
 - **No trait-bound-style constraints exist**, because nothing in the
   type system needs one — every operation a `Pool<T>`-typed value can be
   used for already works identically across all three profiles (effect
@@ -388,9 +440,12 @@ and `recover_from(noisy_nanopore)` above both type-check as
   (see [docs/stdlib.md](stdlib.md)) — a documented gap, not a silent one.
 
 See [docs/errors.md](errors.md) for `E-TYPE-PARAM-CONFLICT`/`E-TYPE-PARAM-
-UNRESOLVED`, and
+UNRESOLVED`/`E-TYPE-PARAM-ARITY`, and
 [`docs/examples/generic_pool_recovery.nsl`](examples/generic_pool_recovery.nsl)
-for a complete, runnable example.
+(a generic closure nested inside a generic function) and
+[`docs/examples/explicit_type_args_and_file_param.nsl`](examples/explicit_type_args_and_file_param.nsl)
+(the explicit-type-argument-required case) for complete, runnable
+examples.
 
 ---
 
@@ -427,24 +482,32 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   function call or any other expression. If both arms happen to still be
   `Result`-shaped (neither used `?`), the match's own value is itself a
   still-wrapped `Result` a caller can `?`/re-match later.
-- **No `Ok(...)`/`Err(...)` *constructor* syntax.** This feature is about
-  destructuring an existing `Result`, not building new ones -- a
-  function still only ever produces a `Result` the way it already did
-  before `match` existed (an unwrapped `?`-tail auto-wraps at the call
-  boundary, or a still-wrapped `store`/`delete`/`Result`-returning call
-  flows through as-is). An arm's body is therefore one of exactly four
-  shapes: the pattern's own bound name (`Ok(file) => file`), `?` applied
-  to a fallible expression (checked against the *enclosing function's*
-  return type, exactly like `?` anywhere else), a still-wrapped
-  `Result`-shaped expression, or a `Pool<...>`-shaped expression.
-- **No composability with `?`, nested `match`, or function-call
-  arguments.** A `match`'s scrutinee must be one of the shapes the
-  checker already recognizes as `Result`-shaped (a variable bound to one,
-  a `store`/`delete` expression, or a call to a `Result`-returning
-  function) -- `match (match a {...}) {...}` and `(match a {...})?`
-  aren't supported. The core case (`match` directly over a `let`-bound
-  `Result`) is what actually closes Step 9's gap; composability is a
-  real but narrow follow-on gap, named here rather than silently broken.
+- **`Ok(...)`/`Err(...)` *constructor* syntax (Step 13)** -- see "Result /
+  Error Propagation" above for the full semantics. An arm's body is
+  therefore one of exactly five shapes: the pattern's own bound name
+  (`Ok(file) => file`), `Ok(<pattern>)`/`Err(<pattern>)` re-wrapping the
+  arm's own bound value (`Ok(file) => Ok(file)`, paired with
+  `Err(reason) => Err(reason)`), `?` applied to a fallible expression
+  (checked against the *enclosing function's* return type, exactly like
+  `?` anywhere else), a still-wrapped `Result`-shaped expression, or a
+  `Pool<...>`-shaped expression.
+- **Composability with `?` and nested `match` (Step 13)**: a `match`'s
+  scrutinee can now itself be another `match` expression
+  (`match (match a {...}) {...}`), and `?` now applies directly to a
+  `match` expression's own result (`(match a {...})?`), not just to a
+  plain `Result` binding -- both fall out of one change, `infer_result_
+  expr` recognizing a `match` expression as potentially `Result`-shaped,
+  which every existing caller (`check_try`, `check_match`'s own
+  scrutinee check, `check_match_arm`) benefits from automatically:
+  ```nsl
+  let saved: DnaFile = match (match attempt {
+      Ok(file) => Ok(file),
+      Err(reason) => store "fallback.txt" into secondary
+  }) {
+      Ok(file) => file,
+      Err(reason) => (store "last_resort.txt" into secondary)?
+  }
+  ```
 - **Arm bodies are a single expression, not a block** -- matching the
   language's existing convention that there's no bare-block-as-expression
   anywhere (`?` is the model: it wraps exactly one inner expression). An
@@ -507,22 +570,51 @@ fn archive_with_retry() returns Result<DnaFile, Str> {
   whether `name` is a top-level `fn` or a local closure/`Fn(...)`-typed
   parameter, the call site looks identical; typeck/the runtime both
   resolve closures *before* falling back to the global function table.
-- **No generic closures** (`fn<T>(...)`) — a closure's signature is
-  always fixed and concrete.
-- **No self-recursion.** A closure literal has no name to reference
-  inside its own body — it can call an *earlier*-defined closure/
-  function but never itself, and two distinct closures can never be
-  mutually recursive either (each only ever sees what was already bound
-  *before* its own literal). There is no cycle here to guard against.
-- **A real, honest limitation: `nucle plan`/`nucle explain` can't see
-  through an indirect call.** Both resolve a callee by static name; a
-  closure held in a variable has no name to look up, so a closure call
-  is invisible to them — only `nucle run`'s real execution reflects it.
-  The same applies to effect analysis for a `Fn(...)`-typed
-  *parameter*'s call specifically (its real body isn't knowable until
-  runtime, so it's optimistically treated as `Pure`) — but a *`let`-
-  bound* closure's real effect *is* resolved correctly at its call site,
-  since its actual body is right there in the source.
+- **Generic closures, `fn<T>(...)` (Step 13)** — a closure literal can
+  declare its own type-parameter list, exactly mirroring a named
+  function's `fn name<T>(...)`. Since a fresh type-parameter name is only
+  recognized inside a closure literal's *own* declared `<...>` list (not
+  invented from thin air), a generic closure is only expressible nested
+  inside an already-generic enclosing function/closure that shares the
+  same type-parameter name — the closure's own call-site unification
+  (`check_closure_call_args`) works exactly like a named generic
+  function's:
+  ```nsl
+  fn recover_via_closure<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {
+      let recover: Fn(Pool<P, 0.35%>) -> Pool<Recovered> = fn<P>(inner: Pool<P, 0.35%>) -> Pool<Recovered> {
+          let recovered: Pool<Recovered> = consensus_vote(inner, coverage: 10x)
+      }
+      let recovered: Pool<Recovered> = recover(source)
+  }
+  ```
+- **Self-recursion (Step 13).** A `let`-bound closure can now call itself
+  by its own bound name — resolved at runtime by `call_closure`
+  re-inserting the closure under the name it was just invoked through
+  before running its own body, since the closure's own `captured_env`
+  snapshot (taken *before* its enclosing `let` finishes binding) never
+  contains itself on its own. **Mutual recursion between two
+  independently-`let`-bound closures is still impossible** — `let` is
+  single-assignment and forward-reference-only capture (B must exist
+  before A can capture it, and A must exist before B can capture it
+  back), and there's no forward-declaration syntax to break that cycle.
+  A self-recursive closure that always retries the exact same failing
+  operation with no changing state recurses forever, exactly like a
+  self-recursive named function with no base case would — the recursive
+  call needs to do something different each time (retry a different
+  target, in the example below) to actually terminate.
+- **`nucle plan`/`nucle explain` narration through a `let`-bound
+  closure's own call (Step 13)** — the narrator now walks into a
+  `let`-bound closure's real body the same way it already walks a named
+  function's, checked with the same priority `effects.rs`'s own Step 12
+  fix established (closures before named functions). **A real, honest
+  limitation remains**: a closure received as a `Fn(...)`-typed
+  *parameter*, or an inline closure literal passed directly as a call
+  argument, is still unnarratable — neither's real body is known at that
+  call site, only at runtime. The same applies to effect analysis for a
+  `Fn(...)`-typed *parameter*'s call specifically (its real body isn't
+  knowable until runtime, so it's optimistically treated as `Pure`) — but
+  a *`let`-bound* closure's real effect *is* resolved correctly at its
+  call site, since its actual body is right there in the source.
 
 See [docs/errors.md](errors.md) for `E-CLOSURE-RETURN-TYPE-MISMATCH`, and
 [`docs/examples/closure_retry.nsl`](examples/closure_retry.nsl) for a

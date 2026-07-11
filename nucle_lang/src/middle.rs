@@ -204,7 +204,7 @@ fn infer_binding(
         // branch the same way `typeck::TypeChecker::infer_consensus_vote`
         // does, even though arity/effects for it flow through the same
         // shared `FunctionTable` machinery as any other call.
-        Expr::FunctionCall { name, args } if name == "consensus_vote" => {
+        Expr::FunctionCall { name, args, .. } if name == "consensus_vote" => {
             let source = match args.first() {
                 Some(Expr::Variable(name)) => name,
                 _ => return None,
@@ -235,7 +235,9 @@ fn infer_binding(
         | Expr::RetrieveExpr(_)
         | Expr::DeleteExpr(_)
         | Expr::Match { .. }
-        | Expr::Closure { .. } => None,
+        | Expr::Closure { .. }
+        | Expr::Ok(_)
+        | Expr::Err(_) => None,
     }
 }
 
@@ -285,7 +287,7 @@ fn recommended_redundancy(profile: Profile, coverage: usize) -> usize {
     }
 }
 
-fn query_to_mir_search(query: &[QueryPredicate]) -> String {
+pub(crate) fn query_to_mir_search(query: &[QueryPredicate]) -> String {
     if query.is_empty() {
         return String::new();
     }

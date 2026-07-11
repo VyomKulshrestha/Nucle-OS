@@ -1,0 +1,335 @@
+>// Step 10/9: explicit type-argument syntax (item 3) and real function-
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// parameter values (item 4), demonstrated together.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>
+>pool illumina_archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                              ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>pool vault: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^ source.nuclescript variable.other.nuclescript
+#          ^^ source.nuclescript
+#            ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                   ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 2x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// `P` appears only inside `recover_fn`'s own `Fn(...)`-typed parameter,
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// never as a directly `Pool<P>`-shaped argument -- the named-function
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// argument-checking loop only unifies a type parameter from a
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// `Pool<...>`-shaped argument (see `infer_expr`'s `FunctionCall` arm),
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// not from inside a `Fn(...)`-typed one, so inference has nothing to
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// resolve `P` from at this call site. Omitting `::<Illumina>()` below
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// reports `E-TYPE-PARAM-UNRESOLVED`.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn recover_generically<P>(source: Pool<Illumina, 0.35%>, recover_fn: Fn(Pool<P, 0.35%>) -> Pool<Recovered>) returns Pool<Recovered> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                       ^ source.nuclescript variable.other.nuclescript
+#                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                ^^ source.nuclescript
+#                                  ^^^^ source.nuclescript storage.type.nuclescript
+#                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                       ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                               ^^ source.nuclescript
+#                                                 ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                       ^^ source.nuclescript
+#                                                         ^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                   ^^ source.nuclescript
+#                                                                     ^^ source.nuclescript storage.type.nuclescript
+#                                                                       ^ source.nuclescript
+#                                                                        ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                             ^ source.nuclescript variable.other.nuclescript
+#                                                                              ^^ source.nuclescript
+#                                                                                ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                                                                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                      ^^ source.nuclescript
+#                                                                                        ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                                                                                          ^ source.nuclescript
+#                                                                                           ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                                                                                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                          ^^ source.nuclescript
+#                                                                                                            ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                                                                   ^ source.nuclescript
+#                                                                                                                    ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                                                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                                         ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                                                                                                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                                                   ^^^ source.nuclescript
+>    let recovered: Pool<Recovered> = recover_fn(source)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                        ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                      ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// A `File`-typed parameter carries a real runtime value: `name`'s
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// bound filename flows through `env` into the statement-form `store`
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// below (no `let`, so it never contributes to this function's own
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// return value) -- if it fails, the whole function aborts via the
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// statement form's own unconditional-abort contract (Step 9); if it
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// succeeds, execution falls through to the expression-form `store`
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// that actually produces this function's `Result`. Proves parameters
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// carry real values, not just type-checked labels.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archive_named_file_twice(name: File) returns Result<DnaFile, Str> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                           ^ source.nuclescript
+#                            ^^^^ source.nuclescript variable.other.nuclescript
+#                                ^^ source.nuclescript
+#                                  ^^^^ source.nuclescript storage.type.nuclescript
+#                                      ^^ source.nuclescript
+#                                        ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                       ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                              ^^ source.nuclescript
+#                                                                ^^^ source.nuclescript storage.type.nuclescript
+#                                                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                    ^^^ source.nuclescript
+>    store name into vault
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript keyword.control.nuclescript
+#         ^ source.nuclescript
+#          ^^^^ source.nuclescript variable.other.nuclescript
+#              ^ source.nuclescript
+#               ^^^^ source.nuclescript keyword.control.nuclescript
+#                   ^ source.nuclescript
+#                    ^^^^^ source.nuclescript variable.other.nuclescript
+>    let confirmation: Result<DnaFile, Str> = store "sample_h.txt" into vault
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                    ^^ source.nuclescript
+#                      ^^^^^^ source.nuclescript storage.type.nuclescript
+#                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                             ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                    ^^ source.nuclescript
+#                                      ^^^ source.nuclescript storage.type.nuclescript
+#                                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                          ^ source.nuclescript
+#                                           ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                            ^ source.nuclescript
+#                                             ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                  ^ source.nuclescript
+#                                                   ^ source.nuclescript string.quoted.double.nuclescript
+#                                                    ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                 ^ source.nuclescript
+#                                                                  ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                      ^ source.nuclescript
+#                                                                       ^^^^^ source.nuclescript variable.other.nuclescript
+>    let saved: DnaFile = confirmation?
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                      ^ source.nuclescript
+#                       ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                     ^ source.nuclescript keyword.operator.try.nuclescript
+>}
+#^^ source.nuclescript
+>
+>let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^^ source.nuclescript
+#                    ^^^^ source.nuclescript storage.type.nuclescript
+#                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                         ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                 ^^ source.nuclescript
+#                                   ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                    ^ source.nuclescript
+#                                                     ^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                     ^ source.nuclescript
+#                                                                      ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                           ^ source.nuclescript
+#                                                                            ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>
+>// The closure literal must re-declare its own `<P>` (matching
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// `recover_generically`'s own type-parameter name) for its structural
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// `Fn(...)` type to compare equal against the parameter's declared
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// signature -- see `check_fn_typed_arg`'s own doc comment for why this
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// comparison is by declared name, not by call-site unification.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let recovered: Pool<Recovered> = recover_generically::<Illumina>(noisy_illumina, fn<P>(source: Pool<P, 0.35%>) -> Pool<Recovered> {
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                              ^ source.nuclescript
+#                               ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                ^ source.nuclescript
+#                                 ^^^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                    ^^ source.nuclescript
+#                                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                       ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                ^ source.nuclescript
+#                                                                 ^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                               ^^ source.nuclescript
+#                                                                                 ^^ source.nuclescript keyword.control.nuclescript
+#                                                                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                    ^ source.nuclescript variable.other.nuclescript
+#                                                                                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                      ^ source.nuclescript
+#                                                                                       ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                                             ^^ source.nuclescript
+#                                                                                               ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                    ^ source.nuclescript variable.other.nuclescript
+#                                                                                                     ^^ source.nuclescript
+#                                                                                                       ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                                                                                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                             ^^ source.nuclescript
+#                                                                                                               ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                                                                                                                 ^ source.nuclescript
+#                                                                                                                  ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                                       ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                                                                                                                ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                                                 ^^^ source.nuclescript
+>        let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+#^^^^^^^^ source.nuclescript
+#        ^^^ source.nuclescript keyword.control.nuclescript
+#           ^ source.nuclescript
+#            ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^^^ source.nuclescript storage.type.nuclescript
+#                           ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                            ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                      ^ source.nuclescript
+#                                       ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                        ^ source.nuclescript
+#                                         ^^^^^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                       ^ source.nuclescript
+#                                                        ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                              ^^ source.nuclescript
+#                                                                ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                        ^^ source.nuclescript
+#                                                                          ^^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                                             ^^ source.nuclescript
+>})
+#^^^ source.nuclescript
+>
+>let confirmed: Result<DnaFile, Str> = archive_named_file_twice("sample_g.txt")
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                      ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                             ^^ source.nuclescript
+#                               ^^^ source.nuclescript storage.type.nuclescript
+#                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                              ^ source.nuclescript
+#                                                               ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                            ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                             ^^ source.nuclescript
+>

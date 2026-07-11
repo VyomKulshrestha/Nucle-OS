@@ -538,8 +538,14 @@ This is the one place NucleScript's execution model stopped being "compile
 a static plan, then replay it as-is": a `Result`-returning function's body
 now actually executes, statement by statement, when called — everything
 else in the language (including `if`/`for` above) still resolves entirely
-at compile time. See the ["Result / Error Propagation"](docs/grammar.md)
-section of the grammar reference for the full semantics and
+at compile time. A bare statement-form `store`/`retrieve`/`delete` inside
+a function body executes for real too (not just at the top level), and a
+`File`/`Str`-typed parameter carries its real argument value at runtime —
+`Ok(<expr>)`/`Err("...")` construct a `Result` directly, and compose with
+`match`/`?` (nested `match`, `?` applied straight to a `match`
+expression, `Ok`/`Err` as match-arm bodies). See the ["Result / Error
+Propagation"](docs/grammar.md) section of the grammar reference for the
+full semantics and
 [docs/examples/result_fallback_store.nsl](docs/examples/result_fallback_store.nsl)
 for a complete, runnable example.
 
@@ -564,10 +570,14 @@ let recovered_b: Pool<Recovered> = recover_from(noisy_nanopore)
 `recover_from` is type-checked once, treating `P` as an opaque
 placeholder; each call site unifies `P` against its own argument's real
 profile — no runtime representation, no per-instantiation re-checking of
-the body. See the ["Generics"](docs/grammar.md) section of the grammar
-reference for the full semantics and
-[docs/examples/generic_pool_recovery.nsl](docs/examples/generic_pool_recovery.nsl)
-for a complete, runnable example.
+the body. An explicit `name::<Illumina>(...)` type argument resolves the
+one case inference alone can't: a type parameter that appears only inside
+a `Fn(...)`-typed parameter's own signature, never as a directly
+`Pool<P>`-shaped argument. See the ["Generics"](docs/grammar.md) section
+of the grammar reference for the full semantics and
+[docs/examples/generic_pool_recovery.nsl](docs/examples/generic_pool_recovery.nsl)/
+[docs/examples/explicit_type_args_and_file_param.nsl](docs/examples/explicit_type_args_and_file_param.nsl)
+for complete, runnable examples.
 
 A caught `Result` can now be branched on directly with `match`, instead
 of needing a second, independent function call from the caller:
@@ -589,9 +599,10 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
 variants, so `match` needs no exhaustiveness algorithm or general
 pattern-matching engine — just a fixed `Ok`-then-`Err` two-arm form. See
 the ["Pattern Matching"](docs/grammar.md) section of the grammar
-reference for the full semantics (including the deliberate scope limits:
-no `Ok`/`Err` constructor syntax, no composability with `?`/nested
-`match`) and [docs/examples/match_result_fallback.nsl](docs/examples/match_result_fallback.nsl)
+reference for the full semantics (including the deliberate scope limits
+still standing: no reorderable/duplicate-detected arms, no general
+exhaustiveness engine — both need user-defined enums, which don't exist)
+and [docs/examples/match_result_fallback.nsl](docs/examples/match_result_fallback.nsl)
 for a complete, runnable example.
 
 Functions can now be anonymous, bound to a variable, and passed as
@@ -610,10 +621,15 @@ fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>) returns Result<DnaFile, 
 Capture is by snapshot, and that's simply correct here, not a design
 compromise: every `let` binding in NucleScript is single-assignment, so
 there's no "later mutation" a by-value/by-reference distinction could
-ever observe. See the ["Closures"](docs/grammar.md) section of the
-grammar reference for the full semantics (including the honest limits:
-no generic closures, no self-recursion, and `nucle plan`/`nucle explain`
-can't see through an indirect call) and
+ever observe. Closures can now be generic (`fn<T>(...)`, when nested
+inside an already-generic enclosing scope) and self-recursive (a
+`let`-bound closure can call itself by its own bound name), and `nucle
+plan`/`nucle explain` now narrate through a `let`-bound closure's own
+call. See the ["Closures"](docs/grammar.md) section of the grammar
+reference for the full semantics (including the honest limits still
+standing: no mutual recursion between two independently-`let`-bound
+closures, and neither narration nor effect analysis sees through a
+`Fn(...)`-typed *parameter*'s call) and
 [docs/examples/closure_retry.nsl](docs/examples/closure_retry.nsl) for a
 complete, runnable example.
 
@@ -672,10 +688,11 @@ Current NucleScript result summary:
 | `docs/examples/effect_confirmations.nsl` | - | - | - | - | - | - | - | Effect confirmation and planning |
 | `docs/examples/preset_imports.nsl` | - | - | - | - | - | - | - | Built-in preset import validation |
 | `docs/examples/control_flow.nsl` | 31 B | 2 | 4 | 6 | 3012 nt | 502 nt | 3.00× | Compile-time `if`/`for` desugaring, then stored via VFS |
-| `docs/examples/result_fallback_store.nsl` | 31 B | 2 | 3 | 5 | 2356 nt | 471 nt | 2.50× | `Result<T, E>`/`?`: a real VFS failure caught inside a function instead of aborting the run |
-| `docs/examples/generic_pool_recovery.nsl` | - | - | - | - | - | - | - | Generics: one `fn recover_from<P>(...)` called with both `Pool<Illumina>` and `Pool<Nanopore>` |
-| `docs/examples/match_result_fallback.nsl` | 31 B ×2 | 4 | 4 | 8 | 3400 nt | 425 nt | 2.00× | Pattern matching: `match`'s `Ok` arm stores directly, its `Err` arm's fallback store lands on the second call |
-| `docs/examples/closure_retry.nsl` | 31 B ×2 | 4 | 4 | 8 | 3400 nt | 425 nt | 2.00× | Closures: a higher-order `retry_once` genuinely calls its closure argument twice on a caught failure; a captured-binding closure's fallback lands |
+| `docs/examples/result_fallback_store.nsl` | 31 B + 30 B | 4 | 5 | 9 | 4056 nt | 451 nt | 2.25× | `Result<T, E>`/`?`: a real VFS failure caught inside a function instead of aborting the run; `Ok(...)`/`Err(...)` constructors (Step 13) |
+| `docs/examples/generic_pool_recovery.nsl` | - | - | - | - | - | - | - | Generics: `fn recover_from<P>(...)` called with both `Pool<Illumina>` and `Pool<Nanopore>`, an explicit `::<Illumina>()` type argument (Step 13), and a generic closure nested inside a generic function (Step 13) |
+| `docs/examples/match_result_fallback.nsl` | 31 B ×2 + 30 B ×2 | 8 | 8 | 16 | 6800 nt | 425 nt | 2.00× | Pattern matching: `match`'s `Ok` arm stores directly, its `Err` arm's fallback store lands on the second call; nested `match` and `?` on a `match` expression (Step 13) |
+| `docs/examples/closure_retry.nsl` | 31 B ×2 + 30 B + 39 B | 8 | 8 | 16 | 6800 nt | 425 nt | 2.00× | Closures: a higher-order `retry_once` genuinely calls its closure argument twice on a caught failure; a captured-binding closure's fallback lands; a self-recursive closure retries into a different fallback target and terminates (Step 13) |
+| `docs/examples/explicit_type_args_and_file_param.nsl` | 30 B ×2 | 4 | 4 | 8 | 3400 nt | 425 nt | 2.00× | Step 13: `recover_generically::<Illumina>(...)` resolves a type parameter inference alone can't, and a `File`-typed parameter's real filename flows into a statement-form `store` |
 
 Compiler diagnostics are surfaced before execution. For example,
 `docs/examples/critical_redundancy_warning.nsl` warns when critical data uses
@@ -913,11 +930,11 @@ nucle agent "pool status"
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 174 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list), pattern matching over `Result<T, E>` (parsing fixed-order `match`/`Ok`/`Err`/`=>`, arm type-unification diagnostics, conservative effect-joining across both arms, real end-to-end execution of both the `Ok` and `Err` arms, formatter idempotence), closures/higher-order functions (real lexical capture, a genuinely higher-order call retrying twice on a caught failure, effect analysis correctly resolving a called closure's real body, the existing arity/type-mismatch/undeclared-function paths proven unaffected) |
+| `nucle_lang` | 202 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list), pattern matching over `Result<T, E>` (parsing fixed-order `match`/`Ok`/`Err`/`=>`, arm type-unification diagnostics, conservative effect-joining across both arms, real end-to-end execution of both the `Ok` and `Err` arms, formatter idempotence), closures/higher-order functions (real lexical capture, a genuinely higher-order call retrying twice on a caught failure, effect analysis correctly resolving a called closure's real body, the existing arity/type-mismatch/undeclared-function paths proven unaffected), and Step 13's gap-closing pass over Steps 9–12 (`Ok(...)`/`Err(...)` constructors and composability with nested `match`/`?`, explicit `::<Illumina>()` type arguments, real statement-form execution and real `File`/`Str`-typed parameter values inside function bodies, generic closures, a self-recursive closure actually terminating for real against a live VFS, and `nucle plan`/`nucle explain` narration reaching into a `let`-bound closure's own body) |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **450 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **478 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

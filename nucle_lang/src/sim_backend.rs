@@ -121,9 +121,15 @@ pub fn compile_simulation(program: Program, type_report: TypeReport) -> Simulati
             _ => None,
         })
         .collect();
+    // Top-level closures, built incrementally as declarations are
+    // walked in order -- see `narrate_result_expr`'s own doc comment.
+    let mut closures: HashMap<String, Vec<Declaration>> = HashMap::new();
     for declaration in &program.declarations {
         if let Declaration::Let(binding) = declaration {
-            narrate_result_expr(&binding.expr, &pools, &funcs, &mut steps, &mut HashSet::new());
+            if let Expr::Closure { body, .. } = &binding.expr {
+                closures.insert(binding.name.clone(), body.clone());
+            }
+            narrate_result_expr(&binding.expr, &pools, &funcs, &mut closures, &mut steps, &mut HashSet::new());
         }
     }
 
@@ -143,15 +149,31 @@ pub fn compile_simulation(program: Program, type_report: TypeReport) -> Simulati
 /// `calling` is a cycle guard mirroring `effects::ResolvingSet`'s pattern
 /// -- a function that (mutually) recurses into itself is described once
 /// per distinct name, not unrolled forever.
+/// `closures` is a `let`-bound closure's name mapped to its own body,
+/// built up *incrementally* by both call sites of this function (the
+/// top-level loop in `compile_simulation`, and the per-called-function-
+/// body loop in the `FunctionCall` arm below) as they walk declarations
+/// in order -- so a call to a closure defined *earlier in the same
+/// scope chain* narrates into its real body, mirroring the priority
+/// `effects.rs`'s own `closures` fix already established (checked
+/// before `funcs`). A closure received as a `Fn(...)`-typed *parameter*
+/// is still unnarratable: its real body isn't known at this call site
+/// either, only at runtime -- the same limit `effects.rs`'s fix
+/// accepted for the identical reason.
 fn narrate_result_expr(
     expr: &Expr,
     pools: &HashMap<String, PoolDecl>,
     funcs: &FunctionTable,
+    closures: &mut HashMap<String, Vec<Declaration>>,
     steps: &mut Vec<SimulationStep>,
     calling: &mut HashSet<String>,
 ) {
     match expr {
-        Expr::Try(inner) => narrate_result_expr(inner, pools, funcs, steps, calling),
+        Expr::Try(inner) => narrate_result_expr(inner, pools, funcs, closures, steps, calling),
+        // Constructing a Result is inert on its own -- only what's
+        // already inside could produce a step to narrate.
+        Expr::Ok(inner) => narrate_result_expr(inner, pools, funcs, closures, steps, calling),
+        Expr::Err(inner) => narrate_result_expr(inner, pools, funcs, closures, steps, calling),
         Expr::StoreExpr(op) => {
             if let Some(pool) = pools.get(&op.pool) {
                 let redundancy = op.options.redundancy.unwrap_or(pool.redundancy);
@@ -174,16 +196,35 @@ fn narrate_result_expr(
         // all three (scrutinee and both arms) unconditionally: describing
         // everything that could possibly run, not guessing which will.
         Expr::Match { scrutinee, ok_body, err_body, .. } => {
-            narrate_result_expr(scrutinee, pools, funcs, steps, calling);
-            narrate_result_expr(ok_body, pools, funcs, steps, calling);
-            narrate_result_expr(err_body, pools, funcs, steps, calling);
+            narrate_result_expr(scrutinee, pools, funcs, closures, steps, calling);
+            narrate_result_expr(ok_body, pools, funcs, closures, steps, calling);
+            narrate_result_expr(err_body, pools, funcs, closures, steps, calling);
+        }
+        // Closures resolve first, mirroring `effects.rs`'s own priority
+        // -- see this function's own doc comment.
+        Expr::FunctionCall { name, .. } if closures.contains_key(name) => {
+            if calling.insert(name.clone()) {
+                let body = closures[name].clone();
+                for decl in &body {
+                    if let Declaration::Let(binding) = decl {
+                        if let Expr::Closure { body: closure_body, .. } = &binding.expr {
+                            closures.insert(binding.name.clone(), closure_body.clone());
+                        }
+                        narrate_result_expr(&binding.expr, pools, funcs, closures, steps, calling);
+                    }
+                }
+                calling.remove(name);
+            }
         }
         Expr::FunctionCall { name, .. } => {
             if let Some(func) = funcs.get(name) {
                 if calling.insert(name.clone()) {
                     for decl in &func.body {
                         if let Declaration::Let(binding) = decl {
-                            narrate_result_expr(&binding.expr, pools, funcs, steps, calling);
+                            if let Expr::Closure { body: closure_body, .. } = &binding.expr {
+                                closures.insert(binding.name.clone(), closure_body.clone());
+                            }
+                            narrate_result_expr(&binding.expr, pools, funcs, closures, steps, calling);
                         }
                     }
                     calling.remove(name);

@@ -127,6 +127,107 @@ let y: Void = archive_illumina_only(noisy_nanopore)
 }
 
 // ---------------------------------------------------------------------
+// Explicit type-argument syntax: `name::<Illumina>(...)`
+// ---------------------------------------------------------------------
+
+const GENERIC_FN_WITH_UNRESOLVABLE_PARAM: &str = "
+fn recover_generically<P>(source: Pool<Illumina, 0.35%>, recover_fn: Fn(Pool<P, 0.35%>) -> Pool<Recovered>) returns Pool<Recovered> {
+    let recovered: Pool<Recovered> = recover_fn(source)
+}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+";
+
+#[test]
+fn explicit_type_argument_parses_into_the_function_calls_own_field() {
+    let program = parse(&format!(
+        "{POOLS}
+fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {{
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+let recovered_a: Pool<Recovered> = recover_from::<Illumina>(noisy_illumina)
+"
+    ));
+    let Declaration::Let(last) = program.declarations.last().unwrap() else { panic!("expected a let") };
+    let Expr::FunctionCall { explicit_type_args, .. } = &last.expr else { panic!("expected a function call, got {:?}", last.expr) };
+    assert_eq!(explicit_type_args, &vec![Profile::Illumina]);
+}
+
+#[test]
+fn every_pre_existing_function_call_has_an_empty_explicit_type_args_list() {
+    // The backward-compatibility guarantee this field's addition relies
+    // on: an ordinary call with no `::<...>` at all parses to an empty
+    // list, not `None`/some other sentinel.
+    let program = parse("fn f() returns Void {\n    let x: Void = totally_bogus_fn()\n}\n");
+    let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
+    let Declaration::Let(binding) = &func.body[0] else { panic!("expected a let") };
+    let Expr::FunctionCall { explicit_type_args, .. } = &binding.expr else { panic!("expected a function call") };
+    assert!(explicit_type_args.is_empty());
+}
+
+#[test]
+fn explicit_type_argument_resolves_a_type_param_inference_alone_could_not() {
+    // `P` appears only inside `recover_fn`'s own `Fn(...)`-typed
+    // parameter, never as a directly `Pool<P>`-shaped argument -- the
+    // named-function argument-checking loop only unifies a type
+    // parameter from a `Pool<...>`-shaped argument, so inference alone
+    // has nothing to resolve `P` from at this call site.
+    let src = format!(
+        "{POOLS}{GENERIC_FN_WITH_UNRESOLVABLE_PARAM}
+let recovered: Pool<Recovered> = recover_generically::<Illumina>(noisy_illumina, fn<P>(source: Pool<P, 0.35%>) -> Pool<Recovered> {{
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}})
+"
+    );
+    let report = check_source(&src);
+    assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
+}
+
+#[test]
+fn omitting_the_explicit_type_argument_when_inference_cannot_resolve_it_is_rejected() {
+    let src = format!(
+        "{POOLS}{GENERIC_FN_WITH_UNRESOLVABLE_PARAM}
+let recovered: Pool<Recovered> = recover_generically(noisy_illumina, fn<P>(source: Pool<P, 0.35%>) -> Pool<Recovered> {{
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}})
+"
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-TYPE-PARAM-UNRESOLVED".to_string()));
+}
+
+#[test]
+fn explicit_type_argument_conflicting_with_an_inferred_one_is_rejected() {
+    let src = format!(
+        "{POOLS}
+fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {{
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+let recovered: Pool<Recovered> = recover_from::<Nanopore>(noisy_illumina)
+"
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-TYPE-PARAM-CONFLICT".to_string()));
+}
+
+#[test]
+fn wrong_number_of_explicit_type_arguments_is_rejected() {
+    let src = format!(
+        "{POOLS}
+fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {{
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+let recovered: Pool<Recovered> = recover_from::<Illumina, Nanopore>(noisy_illumina)
+"
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-TYPE-PARAM-ARITY".to_string()));
+}
+
+// ---------------------------------------------------------------------
 // Formatter
 // ---------------------------------------------------------------------
 
@@ -145,6 +246,24 @@ fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {{
         "got:\n{}",
         formatted
     );
+    let twice = format_source(&formatted).unwrap_or_else(|e| panic!("failed to re-format its own output: {}", e));
+    assert_eq!(formatted, twice, "formatting is not idempotent");
+}
+
+#[test]
+fn explicit_type_argument_formats_with_no_space_before_or_inside_angle_brackets() {
+    let src = format!(
+        "{POOLS}
+fn recover_from<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {{
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+let recovered: Pool<Recovered> = recover_from::<Illumina>(noisy_illumina)
+"
+    );
+    let formatted = format_source(&src).unwrap_or_else(|e| panic!("failed to format: {}", e));
+    assert!(formatted.contains("recover_from::<Illumina>(noisy_illumina)"), "got:\n{}", formatted);
     let twice = format_source(&formatted).unwrap_or_else(|e| panic!("failed to re-format its own output: {}", e));
     assert_eq!(formatted, twice, "formatting is not idempotent");
 }

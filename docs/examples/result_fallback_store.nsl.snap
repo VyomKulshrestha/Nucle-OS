@@ -175,6 +175,117 @@
 >}
 #^^ source.nuclescript
 >
+>/// Demonstrates constructing `Ok(...)` directly as a function's tail --
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// not just receiving one from `store`/`?`. `saved` is a plain bound
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// `DnaFile` (via `?`), and `Ok(saved)` re-wraps it into a fresh
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// `Result`, independent of whatever `store` itself returned.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn confirm_backup_copy() returns Result<DnaFile, Str> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                      ^^^ source.nuclescript
+#                         ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                ^ source.nuclescript
+#                                 ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                        ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                               ^^ source.nuclescript
+#                                                 ^^^ source.nuclescript storage.type.nuclescript
+#                                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                     ^^^ source.nuclescript
+>    let saved: DnaFile = (store "sample_c.txt" into backup)?
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                      ^ source.nuclescript
+#                       ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                        ^^ source.nuclescript
+#                          ^^^^^ source.nuclescript keyword.control.nuclescript
+#                               ^ source.nuclescript
+#                                ^ source.nuclescript string.quoted.double.nuclescript
+#                                 ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                             ^ source.nuclescript string.quoted.double.nuclescript
+#                                              ^ source.nuclescript
+#                                               ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                   ^ source.nuclescript
+#                                                    ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                          ^ source.nuclescript
+#                                                           ^ source.nuclescript keyword.operator.try.nuclescript
+>    let confirmed: Result<DnaFile, Str> = Ok(saved)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^^^ source.nuclescript storage.type.nuclescript
+#                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                          ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                 ^^ source.nuclescript
+#                                   ^^^ source.nuclescript storage.type.nuclescript
+#                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^ source.nuclescript entity.name.function.nuclescript
+#                                            ^ source.nuclescript
+#                                             ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                  ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// A `Result`-returning function whose only declaration is a bare
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// `Err(...)` tail -- proves `Err`'s missing `Ok` type resolves from the
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// enclosing function's own declared return type, with no `store`/`?`
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// anywhere in the body at all.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archival_disabled() returns Result<DnaFile, Str> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                    ^^^ source.nuclescript
+#                       ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                      ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                             ^^ source.nuclescript
+#                                               ^^^ source.nuclescript storage.type.nuclescript
+#                                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                   ^^^ source.nuclescript
+>    let disabled: Result<DnaFile, Str> = Err("archival is temporarily disabled by policy")
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                ^^ source.nuclescript
+#                  ^^^^^^ source.nuclescript storage.type.nuclescript
+#                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                         ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                ^^ source.nuclescript
+#                                  ^^^ source.nuclescript storage.type.nuclescript
+#                                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                      ^ source.nuclescript
+#                                       ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                        ^ source.nuclescript
+#                                         ^^^ source.nuclescript entity.name.function.nuclescript
+#                                            ^ source.nuclescript
+#                                             ^ source.nuclescript string.quoted.double.nuclescript
+#                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                        ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                         ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
 >// Kept wrapped (no `?`) since this is top-level, not inside a
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >// `Result`-returning function -- `?` here would be
@@ -198,5 +309,39 @@
 #                                  ^ source.nuclescript keyword.operator.assignment.nuclescript
 #                                   ^ source.nuclescript
 #                                    ^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                      ^^^ source.nuclescript
+>
+>let confirmed: Result<DnaFile, Str> = confirm_backup_copy()
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                      ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                             ^^ source.nuclescript
+#                               ^^^ source.nuclescript storage.type.nuclescript
+#                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                         ^^^ source.nuclescript
+>
+>let disabled: Result<DnaFile, Str> = archival_disabled()
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^ source.nuclescript storage.type.nuclescript
+#                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                     ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                            ^^ source.nuclescript
+#                              ^^^ source.nuclescript storage.type.nuclescript
+#                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
 #                                                      ^^^ source.nuclescript
 >

@@ -12,7 +12,7 @@ fn call(name: &str, args: Vec<Expr>) -> Declaration {
     Declaration::Let(LetDecl {
         name: "result".into(),
         annotation: TypeExpr::Void,
-        expr: Expr::FunctionCall { name: name.into(), args },
+        expr: Expr::FunctionCall { name: name.into(), args, explicit_type_args: Vec::new() },
         span: Span::default(),
     })
 }
@@ -131,6 +131,7 @@ fn consensus_vote_keyword_syntax_desugars_to_a_function_call() {
         Expr::FunctionCall {
             name: "consensus_vote".into(),
             args: vec![Expr::Variable("noisy".into()), Expr::Number(10.0)],
+            explicit_type_args: Vec::new(),
         }
     );
 }

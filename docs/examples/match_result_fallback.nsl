@@ -33,6 +33,48 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
     }
 }
 
+/// Composability: `?` applied directly to a `match` expression's own
+/// result (not just a plain `Result` binding), with `Ok`/`Err` used as
+/// match-arm bodies instead of a bare unwrapped value or a `store`/`?`
+/// expression. Called twice below: the first call's `store` succeeds,
+/// so the `Ok` arm's `Ok(file)` re-wrap runs; the second's fails (same
+/// global-filename reasoning as `archive_with_fallback` above), so the
+/// `Err` arm's `Err(reason)` runs and the outer `?` propagates it.
+fn archive_with_labeled_outcome() returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_c.txt" into primary
+    let saved: DnaFile = (match attempt {
+            Ok(file) => Ok(file),
+            Err(reason) => Err(reason)
+    })?
+}
+
+/// Nested `match`: the outer `match`'s scrutinee is itself another
+/// `match`'s own result, not a plain `Result` binding -- proves a
+/// `match` expression composes with another `match` in scrutinee
+/// position, not just with `?`/a bound variable. `sample_d.txt` is a
+/// fresh name, so the inner match's `Ok` arm always runs here; the
+/// inner match's own `Err` arm (a fallback store into `secondary`) and
+/// the outer match's own `Err` arm (a further fallback into `primary`)
+/// both still need to type-check even though this call never takes
+/// them -- proven by `archive_with_fallback`/`archive_with_labeled_
+/// outcome` above already exercising an `Err` arm for real.
+fn archive_with_nested_check() returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_d.txt" into primary
+    let saved: DnaFile = match (match attempt {
+            Ok(file) => Ok(file),
+            Err(reason) => store "sample_e.txt" into secondary
+    }) {
+        Ok(file) => file,
+        Err(reason) => (store "sample_a.txt" into primary)?
+    }
+}
+
 let first: Result<DnaFile, Str> = archive_with_fallback()
 
 let second: Result<DnaFile, Str> = archive_with_fallback()
+
+let third: Result<DnaFile, Str> = archive_with_labeled_outcome()
+
+let fourth: Result<DnaFile, Str> = archive_with_labeled_outcome()
+
+let fifth: Result<DnaFile, Str> = archive_with_nested_check()

@@ -8,6 +8,33 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.8]
+
+- **Closed the deliberate gaps left by `Result<T, E>`/`?`, generics,
+  pattern matching, and closures.** `Ok(...)`/`Err(...)` now construct a
+  `Result` directly and compose with `match`/`?` (nested `match`, `?`
+  applied straight to a `match` expression, `Ok`/`Err` as match-arm
+  bodies); a generic call can spell out an explicit `name::<Illumina>()`
+  type argument for the one case inference alone can't resolve; a
+  statement-form `store`/`retrieve`/`delete` inside a function body, and
+  a `File`/`Str`-typed parameter's real argument value, now genuinely
+  reach `nucle run` instead of being silently inert; closures can be
+  generic (`fn<T>(...)`) and self-recursive (calling themselves by their
+  own bound name); and `nucle plan`/`nucle explain` now narrate through a
+  `let`-bound closure's own body. Highlighting, live diagnostics, hover,
+  formatting, and `nucle doc` all understand the new syntax — see the
+  updated README and the extended
+  [`result_fallback_store.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/result_fallback_store.nsl)/
+  [`generic_pool_recovery.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/generic_pool_recovery.nsl)/
+  [`match_result_fallback.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/match_result_fallback.nsl)/
+  [`closure_retry.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/closure_retry.nsl),
+  plus the new
+  [`explicit_type_args_and_file_param.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/explicit_type_args_and_file_param.nsl),
+  in the main repo.
+- Bumped the downloaded `nucle-lsp`/`nucle-cli` binaries to the release
+  that actually understands the new syntax, same reason as every prior
+  language-feature bump.
+
 ## [0.1.7]
 
 - **NucleScript now supports closures / higher-order functions.**

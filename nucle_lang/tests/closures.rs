@@ -9,7 +9,7 @@
 use nucle_lang::ast::*;
 use nucle_lang::lexer::Lexer;
 use nucle_lang::parser::Parser;
-use nucle_lang::{check_source, compile, execute_program, format_source};
+use nucle_lang::{check_source, compile, compile_for_simulation, execute_program, format_source, SimulationStep};
 use std::path::Path;
 
 fn parse(src: &str) -> Program {
@@ -126,6 +126,190 @@ fn a_genuinely_undeclared_call_still_reports_the_existing_code() {
 }
 
 // ---------------------------------------------------------------------
+// Generic closures: `fn<T>(...)`
+// ---------------------------------------------------------------------
+
+const GENERIC_POOLS: &str = "\
+pool illumina_archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+";
+
+#[test]
+fn generic_closure_literal_parses_its_own_type_params() {
+    let program = parse(
+        r#"
+        fn f<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {
+            let recover: Fn(Pool<P, 0.35%>) -> Pool<Recovered> = fn<P>(inner: Pool<P, 0.35%>) -> Pool<Recovered> {
+                let recovered: Pool<Recovered> = consensus_vote(inner, coverage: 10x)
+            }
+            let recovered: Pool<Recovered> = recover(source)
+        }
+        "#,
+    );
+    let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
+    let Declaration::Let(binding) = &func.body[0] else { panic!("expected a let") };
+    let Expr::Closure { type_params, .. } = &binding.expr else { panic!("expected a Closure expression, got {:?}", binding.expr) };
+    assert_eq!(type_params, &vec!["P".to_string()]);
+}
+
+#[test]
+fn a_non_generic_closure_literal_has_an_empty_type_params_list() {
+    let program = parse("fn f() returns Void {\n    let g: Fn() -> Void = fn() -> Void {\n    }\n}\n");
+    let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
+    let Declaration::Let(binding) = &func.body[0] else { panic!("expected a let") };
+    let Expr::Closure { type_params, .. } = &binding.expr else { panic!("expected a Closure expression") };
+    assert!(type_params.is_empty());
+}
+
+#[test]
+fn a_generic_closure_nested_in_a_generic_function_type_checks_and_calls_correctly() {
+    let src = format!(
+        "{GENERIC_POOLS}
+fn recover_via_closure<P>(source: Pool<P, 0.35%>) returns Pool<Recovered> {{
+    let recover: Fn(Pool<P, 0.35%>) -> Pool<Recovered> = fn<P>(inner: Pool<P, 0.35%>) -> Pool<Recovered> {{
+        let recovered: Pool<Recovered> = consensus_vote(inner, coverage: 10x)
+    }}
+    let recovered: Pool<Recovered> = recover(source)
+}}
+
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+let recovered: Pool<Recovered> = recover_via_closure(noisy_illumina)
+"
+    );
+    let report = check_source(&src);
+    assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
+}
+
+#[test]
+fn a_generic_closures_type_param_unresolved_from_any_argument_is_rejected() {
+    // `T` is declared on the closure but never referenced by any of its
+    // own parameter types (`source` is concretely `Pool<Illumina>`), so
+    // no argument can ever seed it.
+    let src = format!(
+        "{GENERIC_POOLS}
+let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
+let g: Fn(Pool<Illumina, 0.35%>) -> Pool<Recovered> = fn<T>(source: Pool<Illumina, 0.35%>) -> Pool<Recovered> {{
+    let recovered: Pool<Recovered> = consensus_vote(source, coverage: 10x)
+}}
+let recovered: Pool<Recovered> = g(noisy_illumina)
+"
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-TYPE-PARAM-UNRESOLVED".to_string()));
+}
+
+// ---------------------------------------------------------------------
+// Closure self-recursion
+// ---------------------------------------------------------------------
+
+// The recursive call retries into a *different* fallback filename
+// (`sample_b.txt`), not the identical one that just failed -- a
+// self-recursive closure that always retries the exact same failing
+// operation with no changing state recurses forever (a real stack
+// overflow this was caught by while developing the fix below). Uses
+// `sample_a.txt`/`sample_b.txt` (real fixtures under `docs/examples/`,
+// since `a_self_recursive_closure_actually_recurses_and_terminates_for_
+// real` below executes for real against `examples_dir()`).
+const SELF_RECURSIVE_CLOSURE_FN: &str = "\
+fn f() returns Result<DnaFile, Str> {
+    let attempt_with_fallback: Fn(File) -> Result<DnaFile, Str> = fn(target: File) -> Result<DnaFile, Str> {
+        let attempt: Result<DnaFile, Str> = store target into archive
+        let saved: DnaFile = match attempt {
+            Ok(file) => file,
+            Err(reason) => attempt_with_fallback(\"sample_b.txt\")?
+        }
+    }
+    let result: Result<DnaFile, Str> = attempt_with_fallback(\"sample_a.txt\")
+}
+";
+
+#[test]
+fn a_self_recursive_closure_has_no_diagnostics() {
+    let src = format!("{}{}", POOL, SELF_RECURSIVE_CLOSURE_FN);
+    let report = check_source(&src);
+    assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
+}
+
+#[test]
+fn a_self_recursive_closure_actually_recurses_and_terminates_for_real() {
+    // A real bug found while writing this test: `call_closure` always
+    // started a self-recursive call's own `env` fresh from
+    // `captured_env`, which never contains the closure's own name (the
+    // snapshot is taken *before* its enclosing `let` finishes binding --
+    // see that arm's doc comment) -- so a self-call actually resolved to
+    // "internal error: undeclared function", silently swallowed into a
+    // `Value::Result(Err(...))` with no VFS step to show for it. Fixed
+    // by having `call_closure` re-insert itself under the name it was
+    // just called through before running its own body (see its own doc
+    // comment) -- this test only passes with that fix in place.
+    let dir = examples_dir();
+    let src = format!("{}{}\nlet result: Result<DnaFile, Str> = f()\n", POOL, SELF_RECURSIVE_CLOSURE_FN);
+    let mut os = nucle_vfs::syscall::NucleOS::new(100);
+    let mut plan = compile(&src).expect("must compile cleanly");
+
+    // First call: `archive` is empty, so the first attempt (`sample_a.txt`)
+    // already succeeds -- the self-recursive branch isn't taken yet.
+    let first = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
+    assert!(first.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_a.txt")), "steps: {:?}", first.steps);
+    assert_eq!(os.dna_stat().file_count, 1);
+
+    // Second call against the same NucleOS: `sample_a.txt` already
+    // exists, so the first attempt fails and the closure calls itself
+    // by its own bound name with the fallback filename -- a real,
+    // distinct second attempt (not the identical one retried forever),
+    // which succeeds for real.
+    let second = execute_program(&mut os, &mut plan, &dir).expect("a caught, self-recursive Result::Err must not abort execute_program");
+    assert!(
+        second.steps.iter().any(|s| s.contains("✗ store into archive") && s.contains("sample_a.txt") && s.contains("already exists")),
+        "steps: {:?}",
+        second.steps
+    );
+    assert!(
+        second.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_b.txt")),
+        "expected the self-recursive call's own fallback attempt to succeed, steps: {:?}",
+        second.steps
+    );
+    assert_eq!(os.dna_stat().file_count, 2);
+}
+
+// ---------------------------------------------------------------------
+// `nucle plan`/`nucle explain` narration through a `let`-bound closure
+// ---------------------------------------------------------------------
+
+#[test]
+fn plan_narration_reaches_into_a_let_bound_closures_own_body() {
+    let src = format!(
+        "{}fn archive_with_logged_fallback() returns Result<DnaFile, Str> {{\n    let primary_attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let fallback: Fn() -> Result<DnaFile, Str> = fn() -> Result<DnaFile, Str> {{\n        let saved: DnaFile = match primary_attempt {{\n            Ok(file) => file,\n            Err(reason) => (store \"b.txt\" into archive)?\n        }}\n    }}\n    let result: Result<DnaFile, Str> = fallback()\n}}\nlet second: Result<DnaFile, Str> = archive_with_logged_fallback()\n",
+        POOL
+    );
+    let plan = compile_for_simulation(&src).expect("must compile cleanly");
+    assert!(
+        plan.steps.iter().any(|s| matches!(s, SimulationStep::Store { file, .. } if file == "b.txt")),
+        "expected the let-bound closure's own fallback store to be narrated, got: {:?}",
+        plan.steps
+    );
+}
+
+#[test]
+fn plan_narration_does_not_reach_into_a_fn_typed_parameters_real_closure_body() {
+    // The accepted limit this fix doesn't (and can't, without effect-
+    // annotated function types) close: a closure received as a
+    // `Fn(...)`-typed *parameter* -- here, `retry_once`'s own
+    // `attempt_fn` -- is still unnarratable, since its real body isn't
+    // known at this call site, only at runtime. Neither `retry_once`'s
+    // own internal `attempt_fn()` calls nor the inline closure literal
+    // passed as its argument are ever reachable from this walk.
+    let src = format!(
+        "{}fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>) returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = attempt_fn()\n    let saved: DnaFile = match attempt {{\n        Ok(file) => file,\n        Err(reason) => attempt_fn()?\n    }}\n}}\nfn archive_with_retry() returns Result<DnaFile, Str> {{\n    let result: Result<DnaFile, Str> = retry_once(fn() -> Result<DnaFile, Str> {{\n        let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    }})\n}}\nlet first: Result<DnaFile, Str> = archive_with_retry()\n",
+        POOL
+    );
+    let plan = compile_for_simulation(&src).expect("must compile cleanly");
+    assert!(
+        !plan.steps.iter().any(|s| matches!(s, SimulationStep::Store { .. })),
+        "an inline closure literal passed as a Fn(...)-typed argument should not be narrated, got: {:?}",
+        plan.steps
+    );
+}
+
+// ---------------------------------------------------------------------
 // Effects
 // ---------------------------------------------------------------------
 
@@ -193,9 +377,24 @@ fn the_higher_order_call_retries_and_the_captured_binding_fallback_lands() {
     assert!(result.steps.iter().any(|s| s.contains("✓ store into secondary")), "steps: {:?}", result.steps);
     // `third` (archive_with_retry again): `retry_once` genuinely calls
     // the closure a *second* time -- both attempts fail identically.
+    // `fifth` (archive_with_self_retry again): the self-recursive
+    // closure's own retry into `primary` fails identically too, adding
+    // one more failure on top of the three above.
     let primary_failures = result.steps.iter().filter(|s| s.contains("✗ store into primary")).count();
-    assert_eq!(primary_failures, 3, "expected 3 failed primary stores (second's own + retry_once's two), got: {:?}", result.steps);
-    assert_eq!(os.dna_stat().file_count, 2);
+    assert_eq!(
+        primary_failures,
+        4,
+        "expected 4 failed primary stores (second's own, retry_once's two, and the self-recursive retry's own first attempt), got: {:?}",
+        result.steps
+    );
+    // `fourth` (archive_with_self_retry): the self-recursive closure's
+    // own first attempt succeeds once, landing `sample_f.txt`.
+    assert!(result.steps.iter().any(|s| s.contains("✓ store into primary") && s.contains("sample_f.txt")), "steps: {:?}", result.steps);
+    // `fifth` (archive_with_self_retry again): the first attempt fails
+    // (`sample_f.txt` already exists), so the closure genuinely calls
+    // itself with a different fallback filename, which succeeds.
+    assert!(result.steps.iter().any(|s| s.contains("✓ store into primary") && s.contains("sample_f_fallback.txt")), "steps: {:?}", result.steps);
+    assert_eq!(os.dna_stat().file_count, 4);
 }
 
 // ---------------------------------------------------------------------

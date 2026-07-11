@@ -44,7 +44,18 @@ NucleScript, the declarative DNA-storage operations language for
   literal with real lexical capture; `Fn(...) -> T` is its type, usable
   as a `let` annotation or a function parameter's type (genuinely
   higher-order functions). Highlighting, diagnostics, hover, and
-  formatting all understand `Fn(...)` and closure literals.
+  formatting all understand `Fn(...)` and closure literals — including
+  generic closures (`fn<T>(...)`) and a closure calling itself by its own
+  bound name.
+- **`Ok(...)`/`Err(...)` constructors, explicit `::<Illumina>()` type
+  arguments, and real parameter values** — `Result` values can now be
+  built directly (`Ok(saved)`, `Err("reason")`), composed with nested
+  `match`/`?`, and a generic call can spell out its type argument
+  explicitly when inference alone can't resolve it. A statement-form
+  `store`/`retrieve`/`delete` inside a function body, and a `File`/`Str`-
+  typed parameter's real argument value, now genuinely reach `nucle run`
+  — not just type-check. Highlighting, diagnostics, hover, formatting,
+  and `nucle doc` all understand the new syntax.
 
 Not yet included: autocomplete, rename/refactoring, and semantic-token
 highlighting (syntax highlighting already covers most of that).
@@ -85,11 +96,14 @@ vote → encode/protect/store/verify pipeline, catching a real store
 failure with `Result<T, E>`/`?` instead of aborting the run, one function
 generic over three different pool profiles, branching on a caught
 `Result` directly with `match`, a genuinely higher-order function with
-real closure capture) live in
+real closure capture, a self-recursive closure, and an explicit
+`::<Illumina>()` type argument paired with a real `File`-typed parameter
+value) live in
 [`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
 in the main repo — start with `store.nsl`, then `hero.nsl`, then
 `result_fallback_store.nsl`, then `generic_pool_recovery.nsl`, then
-`match_result_fallback.nsl`, then `closure_retry.nsl`.
+`match_result_fallback.nsl`, then `closure_retry.nsl`, then
+`explicit_type_args_and_file_param.nsl`.
 
 **Using the official packages:** imports like `from "nuclescript/presets"`
 (`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,

@@ -2,7 +2,7 @@
   "name": "nuclescript",
   "displayName": "NucleScript",
   "description": "Syntax highlighting and language server support for NucleScript (.nsl), the declarative DNA-storage operations language for NucleOS.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "nuclescript",
   "license": "MIT",
   "icon": "resources/icon.png",
