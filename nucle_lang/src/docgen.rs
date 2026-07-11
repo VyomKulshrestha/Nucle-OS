@@ -35,6 +35,26 @@ pub fn generate_docs(program: &Program) -> String {
         _ => None,
     });
 
+    render_section(&mut out, "Enums", program, &funcs, |decl| match decl {
+        Declaration::Enum(d) => Some(DocEntry {
+            name: &d.name,
+            doc: d.doc.as_deref(),
+            signature: format!(
+                "enum {} {{ {} }}",
+                d.name,
+                d.variants
+                    .iter()
+                    .map(|v| match &v.payload {
+                        Some(ty) => format!("{}({})", v.name, render_type(ty)),
+                        None => v.name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }),
+        _ => None,
+    });
+
     render_section(&mut out, "Strands", program, &funcs, |decl| match decl {
         Declaration::Strand(d) => {
             Some(DocEntry { name: &d.name, doc: d.doc.as_deref(), signature: format!("strand {}: Strand = \"{}\"", d.name, d.sequence) })
@@ -137,6 +157,7 @@ pub(crate) fn render_type(ty: &TypeExpr) -> String {
             params.iter().map(render_type).collect::<Vec<_>>().join(", "),
             render_type(ret)
         ),
+        TypeExpr::Enum(name) => name.clone(),
     }
 }
 

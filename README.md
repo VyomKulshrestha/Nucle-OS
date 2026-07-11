@@ -45,12 +45,12 @@ $ nucle run docs/examples/hero.nsl
 ║ Total strands:       8               ║
 ║ Data strands:        4               ║
 ║ Parity strands:      4               ║
-║ Nucleotides:       879               ║
-║ Avg strand len:    110 nt            ║
+║ Nucleotides:      3204               ║
+║ Avg strand len:    400 nt            ║
 ║ Redundancy:      2.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   patient_records_2026.csv (ID: archive-35ce, 109 B, 4d+4p strands, 2.0×)
+║   patient_records_2026.csv (ID: archive-7098, 109 B, 4d+4p strands, 2.0×)
 ╚══════════════════════════════════════╝
 
 --- Recovery Manifest: patient_records_2026.csv ---
@@ -181,29 +181,33 @@ $ nucle bench
 ╠══════════════════════════════════════════════════════════════════╣
 ║ Codec                │  bits/nt │   GC % │ Hpol │ Bio │  R/T ║
 ╟──────────────────────┼──────────┼────────┼──────┼─────┼──────╢
-║ ternary-rotating     │    1.209 │  40.7% │    2 │  ~  │  ✓   ║
-║ ternary-overlap      │    0.660 │  40.4% │    2 │  ~  │  ✓   ║
-║ yin-yang             │    1.855 │  43.2% │    4 │  ~  │  ✓   ║
-║ dna-fountain (raw)   │    0.824 │  26.0% │   29 │  ✗  │  ✓   ║
+║ ternary-rotating-cipher │    1.099 │  48.6% │    1 │  ✗  │  ✓   ║
+║ ternary-rotating-cipher │    0.628 │  48.9% │    2 │  ✗  │  ✓   ║
+║ yin-yang             │    1.798 │  37.8% │    4 │  ✗  │  ✓   ║
+║ dna-fountain         │    0.824 │  26.0% │   29 │  ✗  │  ✓   ║
 ╚══════════════════════════════════════════════════════════════════╝
+  Best density:    yin-yang (1.798 bits/nt)
+  Fastest encode:  yin-yang (55 μs)
 
-  Bio: ✓ = passes all constraints, ~ = passes on production-size inputs,
-       ✗ = fails (requires screening)
+  Bio = all strands pass biological constraints (GC 40–60%, homopolymer ≤ 3)
   R/T = encode → decode roundtrip produces identical data
 ```
 
-> **Yin-Yang leads in density at 1.855 bits/nt** — nearly 2× the ternary codec. The
+> **Yin-Yang leads in density at 1.798 bits/nt** — nearly 2× the ternary codec. The
 > Yang rule maps each bit to an AT/GC partition, guaranteeing ~50% GC on balanced data.
 > The Yin rule uses the previous nucleotide as context to reduce homopolymer formation.
 > See [docs/references.md](docs/references.md) for the full algorithm (Ping et al. 2022).
 >
-> **Why ~ for ternary and yin-yang?** On the small benchmark input (89 bytes), a few
-> strands fall just outside the GC 40–60% window. On production-size files (≥1 KB),
-> both codecs converge into the valid range. The `~` indicates "passes on real data."
+> The two `ternary-rotating-cipher` rows are the same codec run in its two configurations
+> (no overlap, and default overlap) — same name, different density/GC/homopolymer profile.
 >
-> **Why ✗ for fountain?** The raw fountain codec uses a 2-bit mapping without constraint
-> awareness. With screening enabled (the default), invalid strands are rejected and
-> regenerated — the rateless property guarantees sufficient valid output.
+> **Why does every codec show `✗` for Bio here?** The overall GC%/homopolymer columns above
+> look fine, but `Bio` also checks two things those columns don't show: *local* GC content in
+> a sliding window, and palindromic runs long enough to form a hairpin. On this small 89-byte
+> benchmark input, at least one strand from every codec trips one of those two additional
+> checks. On production-size files (≥1 KB) this is far less likely, since a single bad local
+> window has much less influence on the whole strand set — see
+> `docs/examples/fixtures/`-backed results below for real files that do pass.
 
 ### Full-Pipeline Benchmark
 
@@ -221,10 +225,10 @@ $ nucle benchmark --profile pristine -r 4
 ╠══════════════════════════════════════════════════════════════════════════════════════════════════╣
 ║ File               │ Size(B) │ Strands │ Error Rate │ Recover │ Cost(USD) │    GC% │  HpolV ║
 ╟────────────────────┼─────────┼─────────┼────────────┼─────────┼───────────┼────────┼────────╢
-║ small_text.txt     │      96 │       8 │      0.00% │    PASS │ $  0.0062 │  41.7% │      0 ║
-║ archive.bin        │     327 │      18 │      0.00% │    PASS │ $  0.0216 │  38.1% │      0 ║
-║ sample.fasta       │     176 │      12 │      0.00% │    PASS │ $  0.0123 │  34.7% │      0 ║
-║ image.png          │     294 │      16 │      0.00% │    PASS │ $  0.0185 │  39.0% │      0 ║
+║ small_text.txt     │      96 │       8 │      0.00% │    PASS │ $  0.0065 │  47.5% │      0 ║
+║ archive.bin        │     327 │      18 │      0.00% │    PASS │ $  0.0227 │  46.2% │      0 ║
+║ sample.fasta       │     176 │      12 │      0.00% │    PASS │ $  0.0130 │  45.3% │      0 ║
+║ image.png          │     294 │      16 │      0.00% │    PASS │ $  0.0194 │  47.0% │      0 ║
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
 ```
 
@@ -240,10 +244,10 @@ them — and it's now wired into the real `dna_read` path (`nucle_ecc::consensus
 ```
 $ nucle benchmark -p illumina -r 4
 
-║ small_text.txt     │      96 │       8 │      0.36% │    PASS │ $  0.0616 │  41.7% │      0 ║
-║ archive.bin        │     327 │      18 │      0.36% │    PASS │ $  0.2156 │  38.1% │      0 ║
-║ sample.fasta       │     176 │      12 │      0.36% │    PASS │ $  0.1232 │  34.7% │      0 ║
-║ image.png          │     294 │      16 │      0.35% │    PASS │ $  0.1848 │  39.0% │      0 ║
+║ small_text.txt     │      96 │       8 │      0.32% │    PASS │ $  0.0648 │  47.5% │      0 ║
+║ archive.bin        │     327 │      18 │      0.32% │    PASS │ $  0.2268 │  46.2% │      0 ║
+║ sample.fasta       │     176 │      12 │      0.30% │    PASS │ $  0.1296 │  45.3% │      0 ║
+║ image.png          │     294 │      16 │      0.31% │    PASS │ $  0.1944 │  47.0% │      0 ║
 ```
 
 This fixes Illumina. Nanopore is still broken, and we chased why three
@@ -335,7 +339,7 @@ detail.
 
 ```
 $ nucle encode README.md -o readme.dna
-✓ Encoded README.md → readme.dna (254 strands)
+✓ Encoded README.md → readme.dna (2277 strands)
 
 $ nucle simulate README.md -p illumina
 ╔══════════════════════════════════════╗
@@ -343,17 +347,17 @@ $ nucle simulate README.md -p illumina
 ╠══════════════════════════════════════╣
 ║ Profile:                    illumina ║
 ║ Coverage:                          1×║
-║ Input:                   254 strands ║
-║ Output:                  254 strands ║
-║ Error rate:                  0.35%   ║
-║ Surviving:                   95.7%   ║
+║ Input:                  2277 strands ║
+║ Output:                 2277 strands ║
+║ Error rate:                  0.37%   ║
+║ Surviving:                   96.3%   ║
 ╚══════════════════════════════════════╝
 
-$ nucle decode readme.dna -o recovered.txt -s 6328
-✓ Decoded readme.dna → recovered.txt (6328 bytes)
+$ nucle decode readme.dna -o recovered.txt -s 56915
+✓ Decoded readme.dna → recovered.txt (56915 bytes)
 ```
 
-**6,328 bytes → 254 DNA strands × 193 nt avg = 49,022 nucleotides. Illumina noise: 0.35% error rate, 4.3% strand loss — 100% data recovery.**
+**56,915 bytes → 2,277 DNA strands × 162 nt avg = 368,874 nucleotides. Illumina noise: 0.37% error rate, 3.7% strand loss — 100% data recovery.**
 
 ### Realistic Sequencing: 10× Coverage with Consensus
 
@@ -366,10 +370,10 @@ $ nucle simulate README.md -p illumina -c 10
 ╠══════════════════════════════════════╣
 ║ Profile:                    illumina ║
 ║ Coverage:                         10×║
-║ Input:                   401 strands ║
-║ Output:                 4010 strands ║
-║ Error rate:                  0.37%   ║
-║ Surviving:                   95.8%   ║
+║ Input:                  2277 strands ║
+║ Output:                22770 strands ║
+║ Error rate:                  0.36%   ║
+║ Surviving:                   96.1%   ║
 ╚══════════════════════════════════════╝
 ```
 
@@ -379,22 +383,22 @@ $ nucle simulate README.md -p illumina -c 10
 
 ```
 $ nucle store README.md -r 4
-✓ Stored 'README.md' (6328 bytes → 254 data + 4 parity = 258 strands,
+✓ Stored 'README.md' (56915 bytes → 2277 data + 40 parity = 2317 strands,
   1.02× redundancy, primer=P0000)
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
 ╠══════════════════════════════════════╣
 ║ Files:               1               ║
-║ Total strands:     258               ║
-║ Data strands:      254               ║
-║ Parity strands:      4               ║
-║ Nucleotides:     49746               ║
-║ Avg strand len:    193 nt            ║
+║ Total strands:    2317               ║
+║ Data strands:     2277               ║
+║ Parity strands:     40               ║
+║ Nucleotides:    487474               ║
+║ Avg strand len:    210 nt            ║
 ║ Redundancy:      1.02×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   README.md (6328 B, 254d+4p strands)║
+║   README.md (56915 B, 2277d+40p strands)║
 ╚══════════════════════════════════════╝
 ```
 
@@ -437,8 +441,8 @@ $ nucle run docs/examples/store.nsl
 ║ Total strands:       6               ║
 ║ Data strands:        2               ║
 ║ Parity strands:      4               ║
-║ Nucleotides:       828               ║
-║ Avg strand len:    138 nt            ║
+║ Nucleotides:      3156               ║
+║ Avg strand len:    526 nt            ║
 ║ Redundancy:      3.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
@@ -595,15 +599,45 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
 }
 ```
 
-`Result` is the only sum type in the language, closed to exactly two
-variants, so `match` needs no exhaustiveness algorithm or general
-pattern-matching engine — just a fixed `Ok`-then-`Err` two-arm form. See
-the ["Pattern Matching"](docs/grammar.md) section of the grammar
-reference for the full semantics (including the deliberate scope limits
-still standing: no reorderable/duplicate-detected arms, no general
-exhaustiveness engine — both need user-defined enums, which don't exist)
-and [docs/examples/match_result_fallback.nsl](docs/examples/match_result_fallback.nsl)
-for a complete, runnable example.
+`Result` used to be the only sum type in the language, closed to exactly
+two variants with a fixed `Ok`-then-`Err` arm order. NucleScript now also
+has real user-defined enums, and `match` is one general engine that
+handles both:
+
+```nuclescript
+enum RecoveryPlan {
+    Retry,
+    Fallback,
+    GiveUp(Str),
+}
+
+let plan: RecoveryPlan = RecoveryPlan::Fallback
+
+fn archive_with_plan(plan: RecoveryPlan) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+    let saved: DnaFile = match attempt {
+        Ok(file) => file,
+        Err(reason) => match plan {
+            Retry => (store "sample_a.txt" into primary)?,
+            _ => (store "sample_b.txt" into secondary)?,
+        }
+    }
+}
+```
+
+Arm order is now free (checked by variant name, not position), and
+exhaustiveness is enforced — every declared variant needs an arm, or a
+trailing wildcard `_` covers the rest. `Result`'s own `Ok`/`Err`
+construction syntax and runtime representation stay untouched and
+distinct from a user `enum`'s — the unification lives entirely at the
+matching layer, not construction or storage. See the
+["Enums"/"Pattern Matching"](docs/grammar.md) sections of the grammar
+reference for the full semantics (including the one still-real
+limitation: `Err(...)`'s payload must always be a literal string, even
+inside a user-enum match arm) and
+[docs/examples/match_result_fallback.nsl](docs/examples/match_result_fallback.nsl)/
+[docs/examples/recovery_plan.nsl](docs/examples/recovery_plan.nsl) for
+complete, runnable examples.
 
 Functions can now be anonymous, bound to a variable, and passed as
 arguments — real closures, with real lexical capture:
@@ -681,18 +715,19 @@ Current NucleScript result summary:
 
 | Program | Payload | Data strands | Parity strands | Total strands | Nucleotides | Avg strand | Redundancy | Result |
 |---------|--------:|-------------:|---------------:|--------------:|------------:|-----------:|-----------:|--------|
-| `docs/examples/store.nsl` | 31 B | 2 | 4 | 6 | 828 nt | 138 nt | 3.00× | Stored via VFS |
-| `docs/examples/pipeline_backup.nsl` | 31 B | 2 | 4 | 6 | 828 nt | 138 nt | 3.00× | Exact roundtrip |
+| `docs/examples/store.nsl` | 31 B | 2 | 4 | 6 | 3156 nt | 526 nt | 3.00× | Stored via VFS |
+| `docs/examples/pipeline_backup.nsl` | 31 B | 2 | 4 | 6 | 3156 nt | 526 nt | 3.00× | Exact roundtrip |
 | `docs/examples/sequence_literals.nsl` | — | — | — | — | — | — | — | Compile-time DNA validation |
 | `docs/examples/probabilistic_recovery.nsl` | - | - | - | - | - | - | - | Compile-time error-budget propagation |
 | `docs/examples/effect_confirmations.nsl` | - | - | - | - | - | - | - | Effect confirmation and planning |
 | `docs/examples/preset_imports.nsl` | - | - | - | - | - | - | - | Built-in preset import validation |
-| `docs/examples/control_flow.nsl` | 31 B | 2 | 4 | 6 | 3012 nt | 502 nt | 3.00× | Compile-time `if`/`for` desugaring, then stored via VFS |
-| `docs/examples/result_fallback_store.nsl` | 31 B + 30 B | 4 | 5 | 9 | 4056 nt | 451 nt | 2.25× | `Result<T, E>`/`?`: a real VFS failure caught inside a function instead of aborting the run; `Ok(...)`/`Err(...)` constructors (Step 13) |
-| `docs/examples/generic_pool_recovery.nsl` | - | - | - | - | - | - | - | Generics: `fn recover_from<P>(...)` called with both `Pool<Illumina>` and `Pool<Nanopore>`, an explicit `::<Illumina>()` type argument (Step 13), and a generic closure nested inside a generic function (Step 13) |
-| `docs/examples/match_result_fallback.nsl` | 31 B ×2 + 30 B ×2 | 8 | 8 | 16 | 6800 nt | 425 nt | 2.00× | Pattern matching: `match`'s `Ok` arm stores directly, its `Err` arm's fallback store lands on the second call; nested `match` and `?` on a `match` expression (Step 13) |
-| `docs/examples/closure_retry.nsl` | 31 B ×2 + 30 B + 39 B | 8 | 8 | 16 | 6800 nt | 425 nt | 2.00× | Closures: a higher-order `retry_once` genuinely calls its closure argument twice on a caught failure; a captured-binding closure's fallback lands; a self-recursive closure retries into a different fallback target and terminates (Step 13) |
-| `docs/examples/explicit_type_args_and_file_param.nsl` | 30 B ×2 | 4 | 4 | 8 | 3400 nt | 425 nt | 2.00× | Step 13: `recover_generically::<Illumina>(...)` resolves a type parameter inference alone can't, and a `File`-typed parameter's real filename flows into a statement-form `store` |
+| `docs/examples/control_flow.nsl` | 31 B | 2 | 4 | 6 | 3156 nt | 526 nt | 3.00× | Compile-time `if`/`for` desugaring, then stored via VFS |
+| `docs/examples/result_fallback_store.nsl` | 31 B + 30 B | 4 | 5 | 9 | 4248 nt | 472 nt | 2.25× | `Result<T, E>`/`?`: a real VFS failure caught inside a function instead of aborting the run; `Ok(...)`/`Err(...)` constructors |
+| `docs/examples/generic_pool_recovery.nsl` | - | - | - | - | - | - | - | Generics: `fn recover_from<P>(...)` called with both `Pool<Illumina>` and `Pool<Nanopore>`, an explicit `::<Illumina>()` type argument, and a generic closure nested inside a generic function |
+| `docs/examples/match_result_fallback.nsl` | 31 B ×2 + 30 B ×2 | 8 | 8 | 16 | 7120 nt | 445 nt | 2.00× | Pattern matching: `match`'s `Ok` arm stores directly, its `Err` arm's fallback store lands on the second call; nested `match` and `?` on a `match` expression |
+| `docs/examples/closure_retry.nsl` | 31 B ×2 + 30 B + 39 B | 8 | 8 | 16 | 7120 nt | 445 nt | 2.00× | Closures: a higher-order `retry_once` genuinely calls its closure argument twice on a caught failure; a captured-binding closure's fallback lands; a self-recursive closure retries into a different fallback target and terminates |
+| `docs/examples/explicit_type_args_and_file_param.nsl` | 30 B ×2 | 4 | 4 | 8 | 3560 nt | 445 nt | 2.00× | `recover_generically::<Illumina>(...)` resolves a type parameter inference alone can't, and a `File`-typed parameter's real filename flows into a statement-form `store` |
+| `docs/examples/recovery_plan.nsl` | 31 B ×2 | 4 | 4 | 8 | 3560 nt | 445 nt | 2.00× | A user-defined `enum RecoveryPlan`, a nested match (a user-enum match inside a `Result` match's `Err` arm), and exhaustiveness via a trailing wildcard `_` |
 
 Compiler diagnostics are surfaced before execution. For example,
 `docs/examples/critical_redundancy_warning.nsl` warns when critical data uses
@@ -924,17 +959,17 @@ nucle agent "pool status"
 
 | Crate | Tests | What's Tested |
 |-------|------:|---------------|
-| `nucle_codec` | 60 (+3 doctests) | Nucleotide types, constraints, ternary codec, fountain codec, yin-yang codec, byte↔4-base packing roundtrip, benchmarks incl. GC distribution and homopolymer violation counts |
+| `nucle_codec` | 62 (+3 doctests) | Nucleotide types, constraints, ternary codec (incl. a regression test proving the fixed strand-index header roundtrips past its old 81-strand capacity, and a test confirming encoding fails loudly instead of silently corrupting once truly past the new, much larger capacity), fountain codec, yin-yang codec, byte↔4-base packing roundtrip, benchmarks incl. GC distribution and homopolymer violation counts |
 | `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
 | `nucle_ecc` | 39 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 202 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list), pattern matching over `Result<T, E>` (parsing fixed-order `match`/`Ok`/`Err`/`=>`, arm type-unification diagnostics, conservative effect-joining across both arms, real end-to-end execution of both the `Ok` and `Err` arms, formatter idempotence), closures/higher-order functions (real lexical capture, a genuinely higher-order call retrying twice on a caught failure, effect analysis correctly resolving a called closure's real body, the existing arity/type-mismatch/undeclared-function paths proven unaffected), and Step 13's gap-closing pass over Steps 9–12 (`Ok(...)`/`Err(...)` constructors and composability with nested `match`/`?`, explicit `::<Illumina>()` type arguments, real statement-form execution and real `File`/`Str`-typed parameter values inside function bodies, generic closures, a self-recursive closure actually terminating for real against a live VFS, and `nucle plan`/`nucle explain` narration reaching into a `let`-bound closure's own body) |
+| `nucle_lang` | 230 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list), closures/higher-order functions (real lexical capture, a genuinely higher-order call retrying twice on a caught failure, effect analysis correctly resolving a called closure's real body, the existing arity/type-mismatch/undeclared-function paths proven unaffected), a gap-closing pass over earlier `Result`/generics/pattern-matching/closures work (`Ok(...)`/`Err(...)` constructors and composability with nested `match`/`?`, explicit `::<Illumina>()` type arguments, real statement-form execution and real `File`/`Str`-typed parameter values inside function bodies, generic closures, a self-recursive closure actually terminating for real against a live VFS, and `nucle plan`/`nucle explain` narration reaching into a `let`-bound closure's own body), and user-defined `enum`s + a general N-arm pattern-matching/exhaustiveness engine (one diagnostic code per new `E-ENUM-*`/`E-MATCH-*` failure mode, free arm order, a real user-flagged nested-match limitation fixed, `Result`/`Ok`/`Err` re-run unmodified through `result_backward_compat.rs`'s golden-file suite proving zero behavior change from the unification) |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **478 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **508 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

@@ -32,12 +32,12 @@ NucleScript diagnostics:
 ║ Total strands:       6               ║
 ║ Data strands:        2               ║
 ║ Parity strands:      4               ║
-║ Nucleotides:      3012               ║
-║ Avg strand len:    502 nt            ║
+║ Nucleotides:      3156               ║
+║ Avg strand len:    526 nt            ║
 ║ Redundancy:      3.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-05d0, 31 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -57,12 +57,12 @@ NucleScript diagnostics:
 ║ Total strands:       6               ║
 ║ Data strands:        2               ║
 ║ Parity strands:      4               ║
-║ Nucleotides:      3012               ║
-║ Avg strand len:    502 nt            ║
+║ Nucleotides:      3156               ║
+║ Avg strand len:    526 nt            ║
 ║ Redundancy:      3.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-05d0, 31 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -86,7 +86,7 @@ execution failed: file 'old_archive.bin' not found
 ║ Redundancy:      2.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   patient_records_2026.csv (ID: archive-7f2a, 109 B, 4d+4p strands, 2.0×)
+║   patient_records_2026.csv (ID: archive-1320, 109 B, 4d+4p strands, 2.0×)
 ╚══════════════════════════════════════╝
 
 --- Recovery Manifest: patient_records_2026.csv ---
@@ -114,12 +114,12 @@ NucleScript diagnostics:
 ║ Total strands:       6               ║
 ║ Data strands:        2               ║
 ║ Parity strands:      4               ║
-║ Nucleotides:      3012               ║
-║ Avg strand len:    502 nt            ║
+║ Nucleotides:      3156               ║
+║ Avg strand len:    526 nt            ║
 ║ Redundancy:      3.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-05d0, 31 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -140,13 +140,13 @@ NucleScript diagnostics:
 ║ Total strands:      12               ║
 ║ Data strands:        4               ║
 ║ Parity strands:      8               ║
-║ Nucleotides:      6024               ║
-║ Avg strand len:    502 nt            ║
+║ Nucleotides:      6312               ║
+║ Avg strand len:    526 nt            ║
 ║ Redundancy:      3.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_b.txt (ID: archive-0eff, 31 B, 2d+4p strands, 3.0×)
-║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-05d0, 31 B, 2d+4p strands, 3.0×)
+║   sample_b.txt (ID: archive-c69b, 31 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -162,15 +162,15 @@ NucleScript diagnostics:
 ║         NucleOS Pool Status          ║
 ╠══════════════════════════════════════╣
 ║ Files:               1               ║
-║ Total strands:       8               ║
+║ Total strands:      10               ║
 ║ Data strands:        2               ║
-║ Parity strands:      6               ║
-║ Nucleotides:      4312               ║
-║ Avg strand len:    539 nt            ║
-║ Redundancy:      4.00×              ║
+║ Parity strands:      8               ║
+║ Nucleotides:      5915               ║
+║ Avg strand len:    592 nt            ║
+║ Redundancy:      5.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-94cc, 31 B, 2d+8p strands, 5.0×)
+║   sample_a.txt (ID: archive-70e9, 31 B, 2d+8p strands, 5.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -186,12 +186,12 @@ NucleScript diagnostics:
 ║ Total strands:       6               ║
 ║ Data strands:        2               ║
 ║ Parity strands:      4               ║
-║ Nucleotides:      3012               ║
-║ Avg strand len:    502 nt            ║
+║ Nucleotides:      3156               ║
+║ Avg strand len:    526 nt            ║
 ║ Redundancy:      3.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-05d0, 31 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 --- Recovery Manifest: sample_a.txt ---
@@ -255,12 +255,12 @@ NucleScript diagnostics:
 ║ Total strands:       6               ║
 ║ Data strands:        2               ║
 ║ Parity strands:      4               ║
-║ Nucleotides:      3012               ║
-║ Avg strand len:    502 nt            ║
+║ Nucleotides:      3156               ║
+║ Avg strand len:    526 nt            ║
 ║ Redundancy:      3.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-05d0, 31 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -290,15 +290,15 @@ NucleScript diagnostics:
 ║         NucleOS Pool Status          ║
 ╠══════════════════════════════════════╣
 ║ Files:               1               ║
-║ Total strands:      60               ║
-║ Data strands:       20               ║
-║ Parity strands:     40               ║
-║ Nucleotides:     30112               ║
-║ Avg strand len:    502 nt            ║
-║ Redundancy:      3.00×              ║
+║ Total strands:      58               ║
+║ Data strands:       19               ║
+║ Parity strands:     39               ║
+║ Nucleotides:     30657               ║
+║ Avg strand len:    529 nt            ║
+║ Redundancy:      3.05×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-25b0, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-9080, 31 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -316,12 +316,12 @@ NucleScript diagnostics:
 ║ Total strands:       6               ║
 ║ Data strands:        2               ║
 ║ Parity strands:      4               ║
-║ Nucleotides:      3012               ║
-║ Avg strand len:    502 nt            ║
+║ Nucleotides:      3156               ║
+║ Avg strand len:    526 nt            ║
 ║ Redundancy:      3.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-3c9e, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-05d0, 31 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -491,7 +491,7 @@ NucleScript diagnostics:
 ║ Redundancy:      4.00×              ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-9cc6, 31 B, 1d+3p strands, 4.0×)
+║   sample_a.txt (ID: archive-7104, 31 B, 1d+3p strands, 4.0×)
 ╚══════════════════════════════════════╝
 
 

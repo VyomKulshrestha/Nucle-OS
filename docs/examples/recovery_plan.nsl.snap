@@ -1,0 +1,370 @@
+>// User-defined enums + a general pattern-matching/exhaustiveness
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// engine. Result<T, E>/Ok/Err run through this same general engine as
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// a built-in 2-variant enum -- not a parallel system -- so a match's
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// scrutinee can be either Result-shaped or a real user-declared `enum`,
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// checked for exhaustiveness (every variant needs an arm, or a trailing
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// wildcard `_` covers the rest) either way.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>
+>enum RecoveryPlan {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                 ^^^ source.nuclescript
+>    Retry,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+>    Fallback,
+#^^^^ source.nuclescript
+#    ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+>    GiveUp(Str),
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript entity.name.function.nuclescript
+#          ^ source.nuclescript
+#           ^^^ source.nuclescript storage.type.nuclescript
+#              ^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>pool primary: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 2x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>pool secondary: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#              ^^ source.nuclescript
+#                ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                       ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 2x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// A nested match: the outer match destructures the Result `store`
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// produces (the built-in pseudo-enum); its `Err` arm's own body is a
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// second match over `plan`, a real user-declared enum. A trailing
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// wildcard covers `GiveUp` (and any future variant) without needing its
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// own reason payload here -- exhaustiveness via `_`, not a named arm for
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// every single variant.
+#^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archive_with_plan(plan: RecoveryPlan) returns Result<DnaFile, Str> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript variable.other.nuclescript
+#                         ^^ source.nuclescript
+#                           ^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                       ^^ source.nuclescript
+#                                         ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                ^ source.nuclescript
+#                                                 ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                        ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                               ^^ source.nuclescript
+#                                                                 ^^^ source.nuclescript storage.type.nuclescript
+#                                                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                     ^^^ source.nuclescript
+>    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                        ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                               ^^ source.nuclescript
+#                                 ^^^ source.nuclescript storage.type.nuclescript
+#                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                             ^ source.nuclescript
+#                                              ^ source.nuclescript string.quoted.double.nuclescript
+#                                               ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                           ^ source.nuclescript string.quoted.double.nuclescript
+#                                                            ^ source.nuclescript
+#                                                             ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                 ^ source.nuclescript
+#                                                                  ^^^^^^^ source.nuclescript variable.other.nuclescript
+>    let saved: DnaFile = match attempt {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                      ^ source.nuclescript
+#                       ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^^ source.nuclescript keyword.control.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                      ^^^ source.nuclescript
+>        Ok(file) => file,
+#^^^^^^^^ source.nuclescript
+#        ^^ source.nuclescript entity.name.function.nuclescript
+#          ^ source.nuclescript
+#           ^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                   ^ source.nuclescript
+#                    ^^^^ source.nuclescript variable.other.nuclescript
+#                        ^^ source.nuclescript
+>        Err(reason) => match plan {
+#^^^^^^^^ source.nuclescript
+#        ^^^ source.nuclescript entity.name.function.nuclescript
+#           ^ source.nuclescript
+#            ^^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^^ source.nuclescript
+#                    ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                      ^ source.nuclescript
+#                       ^^^^^ source.nuclescript keyword.control.nuclescript
+#                            ^ source.nuclescript
+#                             ^^^^ source.nuclescript variable.other.nuclescript
+#                                 ^^^ source.nuclescript
+>            Retry => (store "sample_a.txt" into primary)?,
+#^^^^^^^^^^^^ source.nuclescript
+#            ^^^^^ source.nuclescript variable.other.nuclescript
+#                 ^ source.nuclescript
+#                  ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                    ^^ source.nuclescript
+#                      ^^^^^ source.nuclescript keyword.control.nuclescript
+#                           ^ source.nuclescript
+#                            ^ source.nuclescript string.quoted.double.nuclescript
+#                             ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                         ^ source.nuclescript string.quoted.double.nuclescript
+#                                          ^ source.nuclescript
+#                                           ^^^^ source.nuclescript keyword.control.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                       ^ source.nuclescript
+#                                                        ^ source.nuclescript keyword.operator.try.nuclescript
+#                                                         ^^ source.nuclescript
+>            _ => (store "sample_b.txt" into secondary)?,
+#^^^^^^^^^^^^^^ source.nuclescript
+#              ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                ^^ source.nuclescript
+#                  ^^^^^ source.nuclescript keyword.control.nuclescript
+#                       ^ source.nuclescript
+#                        ^ source.nuclescript string.quoted.double.nuclescript
+#                         ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                     ^ source.nuclescript string.quoted.double.nuclescript
+#                                      ^ source.nuclescript
+#                                       ^^^^ source.nuclescript keyword.control.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                     ^ source.nuclescript
+#                                                      ^ source.nuclescript keyword.operator.try.nuclescript
+#                                                       ^^ source.nuclescript
+>        }
+#^^^^^^^^^^ source.nuclescript
+>    }
+#^^^^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>enum LogLevel {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^^ source.nuclescript
+>    Info(Str),
+#^^^^ source.nuclescript
+#    ^^^^ source.nuclescript entity.name.function.nuclescript
+#        ^ source.nuclescript
+#         ^^^ source.nuclescript storage.type.nuclescript
+#            ^^^ source.nuclescript
+>    Warning(Str),
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#           ^ source.nuclescript
+#            ^^^ source.nuclescript storage.type.nuclescript
+#               ^^^ source.nuclescript
+>    Error(Str),
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript entity.name.function.nuclescript
+#         ^ source.nuclescript
+#          ^^^ source.nuclescript storage.type.nuclescript
+#             ^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// Every variant carries the same `Str` payload type, so each arm can
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// just be that payload's own bound name directly -- a clean
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// demonstration of payload binding/extraction on its own, independent of
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// the Result-composability shown above.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn log_message(level: LogLevel) returns Str {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#              ^ source.nuclescript
+#               ^^^^^ source.nuclescript variable.other.nuclescript
+#                    ^^ source.nuclescript
+#                      ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                              ^^ source.nuclescript
+#                                ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^^^ source.nuclescript storage.type.nuclescript
+#                                           ^^^ source.nuclescript
+>    let label: Str = match level {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^ source.nuclescript storage.type.nuclescript
+#                  ^ source.nuclescript
+#                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^^ source.nuclescript keyword.control.nuclescript
+#                          ^ source.nuclescript
+#                           ^^^^^ source.nuclescript variable.other.nuclescript
+#                                ^^^ source.nuclescript
+>        Info(msg) => msg,
+#^^^^^^^^ source.nuclescript
+#        ^^^^ source.nuclescript entity.name.function.nuclescript
+#            ^ source.nuclescript
+#             ^^^ source.nuclescript variable.other.nuclescript
+#                ^^ source.nuclescript
+#                  ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^ source.nuclescript variable.other.nuclescript
+#                        ^^ source.nuclescript
+>        Warning(msg) => msg,
+#^^^^^^^^ source.nuclescript
+#        ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#               ^ source.nuclescript
+#                ^^^ source.nuclescript variable.other.nuclescript
+#                   ^^ source.nuclescript
+#                     ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                       ^ source.nuclescript
+#                        ^^^ source.nuclescript variable.other.nuclescript
+#                           ^^ source.nuclescript
+>        Error(msg) => msg,
+#^^^^^^^^ source.nuclescript
+#        ^^^^^ source.nuclescript entity.name.function.nuclescript
+#             ^ source.nuclescript
+#              ^^^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                     ^ source.nuclescript
+#                      ^^^ source.nuclescript variable.other.nuclescript
+#                         ^^ source.nuclescript
+>    }
+#^^^^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>// First call: `primary` is empty, so the outer `Ok` arm runs directly --
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// `plan` is never even inspected.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let first: Result<DnaFile, Str> = archive_with_plan(RecoveryPlan::Fallback)
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^ source.nuclescript storage.type.nuclescript
+#                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                  ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                         ^^ source.nuclescript
+#                           ^^^ source.nuclescript storage.type.nuclescript
+#                              ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                               ^ source.nuclescript
+#                                ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                   ^ source.nuclescript
+#                                                    ^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                                  ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                          ^^ source.nuclescript
+>
+>// Second call: `sample_a.txt` already exists, so the outer attempt fails
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// and the nested match over `plan` actually runs -- `Fallback` isn't a
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// named arm, so it's caught by the trailing wildcard `_`, landing
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// `sample_b.txt` into `secondary` for real.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let second: Result<DnaFile, Str> = archive_with_plan(RecoveryPlan::Fallback)
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^ source.nuclescript variable.other.nuclescript
+#          ^^ source.nuclescript
+#            ^^^^^^ source.nuclescript storage.type.nuclescript
+#                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                   ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                          ^^ source.nuclescript
+#                            ^^^ source.nuclescript storage.type.nuclescript
+#                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                ^ source.nuclescript
+#                                 ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                    ^ source.nuclescript
+#                                                     ^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                 ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                                   ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                           ^^ source.nuclescript
+>

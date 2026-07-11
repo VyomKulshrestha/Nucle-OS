@@ -243,17 +243,22 @@ pub fn execute_program(
     Ok(ExecutionReport { type_report: plan.type_report.clone(), steps, pool_status: os.dna_stat() })
 }
 
-/// Whether a `let` binding's expression needs the new interpreter
+/// Whether a `let` binding's expression needs the real interpreter
 /// (`eval_expr`) rather than being left alone exactly as before -- true
-/// only for the handful of shapes Step 9 actually introduces. Everything
-/// else (`Pool<...>`-shaped bindings, `SimulatePool`/`SynthesizePool`/
-/// `SequencePool`, calls to non-`Result`-returning functions) is
-/// untouched by this function and untouched by `execute_program`'s new
-/// per-declaration loop -- exactly as before, since none of those ever
-/// produced a `VfsCall`/needed runtime action either.
+/// only for the handful of shapes that actually need real runtime
+/// evaluation (Steps 9-14). Everything else (`Pool<...>`-shaped
+/// bindings, `SimulatePool`/`SynthesizePool`/`SequencePool`, calls to
+/// non-`Result`-returning functions) is untouched by this function and
+/// untouched by `execute_program`'s per-declaration loop -- exactly as
+/// before, since none of those ever produced a `VfsCall`/needed runtime
+/// action either. `Expr::EnumConstruct` (Step 14) needs this too, or a
+/// top-level `let plan: RecoveryPlan = RecoveryPlan::Retry` would
+/// silently never populate `env` -- function-body-local `let`s are
+/// unaffected either way (`exec_function_body` calls `eval_expr`
+/// unconditionally for every one, regardless of this function).
 fn is_result_producing(expr: &Expr, funcs: &FunctionTable) -> bool {
     match expr {
-        Expr::StoreExpr(_) | Expr::DeleteExpr(_) | Expr::Try(_) | Expr::Match { .. } => true,
+        Expr::StoreExpr(_) | Expr::DeleteExpr(_) | Expr::Try(_) | Expr::Match { .. } | Expr::EnumConstruct { .. } => true,
         // A closure literal's own scrutinee is always `Result`-shaped in
         // the sense that it always needs real evaluation: capture is a
         // real `env.clone()` at the exact point of the literal, which
@@ -303,30 +308,42 @@ fn eval_expr(
             // Unreachable for a program that passed type-checking.
             _ => EvalOutcome::Err("internal error: Err(...)'s payload was not a string literal".to_string()),
         },
-        // Evaluates the scrutinee, then picks and evaluates the matching
-        // arm in a *cloned* environment with the pattern bound -- unlike
-        // `Try`, this never turns an `Err` into a short-circuit, since
-        // both arms are ordinary (not propagating) code paths. `env`
-        // itself is never mutated, so the pattern binding can't leak into
-        // the surrounding function's own bindings once the arm returns.
-        Expr::Match { scrutinee, ok_pattern, ok_body, err_pattern, err_body } => {
-            match eval_expr(scrutinee, env, funcs, pools, os, base_dir, steps, calling) {
-                EvalOutcome::Value(Value::Result(Ok(v))) => {
-                    let mut arm_env = env.clone();
-                    arm_env.insert(ok_pattern.clone(), *v);
-                    eval_expr(ok_body, &arm_env, funcs, pools, os, base_dir, steps, calling)
-                }
-                EvalOutcome::Value(Value::Result(Err(msg))) => {
-                    let mut arm_env = env.clone();
-                    arm_env.insert(err_pattern.clone(), Value::Str(msg));
-                    eval_expr(err_body, &arm_env, funcs, pools, os, base_dir, steps, calling)
-                }
-                // Unreachable for a program that passed type-checking
-                // (`check_match` guarantees the scrutinee is Result-shaped)
-                // -- passed through defensively rather than panicking.
-                other => other,
+        // Evaluates the scrutinee, then dispatches by variant name to
+        // whichever arm matches (or the wildcard, if present) via
+        // `run_match_arm` -- uniformly for `Value::Result(Ok/Err)` and a
+        // user `Value::EnumInstance` (Step 14). Unlike `Try`, this never
+        // turns an `Err` into a short-circuit, since every arm is an
+        // ordinary (not propagating) code path. `env` itself is never
+        // mutated, so a pattern binding can't leak into the surrounding
+        // function's own bindings once the arm returns.
+        Expr::Match { scrutinee, arms } => match eval_expr(scrutinee, env, funcs, pools, os, base_dir, steps, calling) {
+            EvalOutcome::Value(Value::Result(Ok(v))) => run_match_arm(arms, "Ok", Some(*v), env, funcs, pools, os, base_dir, steps, calling),
+            EvalOutcome::Value(Value::Result(Err(msg))) => run_match_arm(arms, "Err", Some(Value::Str(msg)), env, funcs, pools, os, base_dir, steps, calling),
+            EvalOutcome::Value(Value::EnumInstance { variant, payload, .. }) => {
+                run_match_arm(arms, &variant, payload.map(|b| *b), env, funcs, pools, os, base_dir, steps, calling)
             }
-        }
+            // Unreachable for a program that passed type-checking
+            // (`check_match` guarantees the scrutinee is Result- or
+            // enum-shaped) -- passed through defensively rather than
+            // panicking.
+            other => other,
+        },
+        // Constructs a user enum instance -- mirrors `Expr::Ok`'s own
+        // construction exactly: the payload (if any) is evaluated for
+        // real, since it may itself be fallible (e.g. `MyEnum::Fallback(
+        // some_function_call())`), propagating any `Err` short-circuit
+        // through `?` if so.
+        Expr::EnumConstruct { enum_name, variant, payload } => match payload {
+            Some(inner) => match eval_expr(inner, env, funcs, pools, os, base_dir, steps, calling) {
+                EvalOutcome::Value(v) => EvalOutcome::Value(Value::EnumInstance {
+                    enum_name: enum_name.clone(),
+                    variant: variant.clone(),
+                    payload: Some(Box::new(v)),
+                }),
+                err @ EvalOutcome::Err(_) => err,
+            },
+            None => EvalOutcome::Value(Value::EnumInstance { enum_name: enum_name.clone(), variant: variant.clone(), payload: None }),
+        },
         // Never Result-shaped (see the type's own doc comment in
         // ast.rs) -- nothing meaningful to produce.
         Expr::RetrieveExpr(_) => EvalOutcome::Value(Value::Unit),
@@ -401,6 +418,46 @@ fn eval_expr(
         // downstream inspects it as anything but an opaque value.
         _ => EvalOutcome::Value(Value::Unit),
     }
+}
+
+/// Finds the arm matching `variant` (falling back to a wildcard arm --
+/// `check_match`'s exhaustiveness check guarantees one of the two
+/// exists), binds `payload` into a *cloned* `env` under that arm's own
+/// `binding` (if both are present), and evaluates the arm's body there.
+/// Shared by `eval_expr`'s `Expr::Match` arm for both `Value::Result`
+/// (`variant` is `"Ok"`/`"Err"`) and a user `Value::EnumInstance` (Step
+/// 14) -- a direct, mechanical generalization of the old two-branch
+/// code: for any existing 2-arm Result match, this produces bit-for-bit
+/// the same outcome the old hardcoded `Ok`/`Err` branches did.
+fn run_match_arm(
+    arms: &[MatchArm],
+    variant: &str,
+    payload: Option<Value>,
+    env: &HashMap<String, Value>,
+    funcs: &FunctionTable,
+    pools: &HashMap<String, PoolDecl>,
+    os: &mut NucleOS,
+    base_dir: &Path,
+    steps: &mut Vec<String>,
+    calling: &mut HashSet<String>,
+) -> EvalOutcome {
+    let arm = arms
+        .iter()
+        .find(|a| a.variant.as_deref() == Some(variant))
+        .or_else(|| arms.iter().find(|a| a.variant.is_none()));
+    let Some(arm) = arm else {
+        // Unreachable post-typecheck (`check_match`'s exhaustiveness
+        // check guarantees a matching arm or wildcard exists) -- a
+        // runtime error string rather than a panic, matching this
+        // codebase's existing "defensive, not a panic" convention for
+        // post-typecheck invariants.
+        return EvalOutcome::Err(format!("internal error: no match arm for variant '{}' reached execution", variant));
+    };
+    let mut arm_env = env.clone();
+    if let (Some(binding), Some(value)) = (&arm.binding, payload) {
+        arm_env.insert(binding.clone(), value);
+    }
+    eval_expr(&arm.body, &arm_env, funcs, pools, os, base_dir, steps, calling)
 }
 
 /// `store <file> into <pool> { ... }` in expression position. Mirrors

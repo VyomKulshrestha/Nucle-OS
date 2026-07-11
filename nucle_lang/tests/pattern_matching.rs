@@ -41,14 +41,17 @@ fn match_expr_parses_into_the_expected_shape() {
     );
     let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
     let Declaration::Let(second) = &func.body[1] else { panic!("expected a let") };
-    let Expr::Match { scrutinee, ok_pattern, ok_body, err_pattern, err_body } = &second.expr else {
+    let Expr::Match { scrutinee, arms } = &second.expr else {
         panic!("expected a Match expression, got {:?}", second.expr);
     };
     assert_eq!(**scrutinee, Expr::Variable("attempt".to_string()));
-    assert_eq!(ok_pattern, "file");
-    assert_eq!(**ok_body, Expr::Variable("file".to_string()));
-    assert_eq!(err_pattern, "reason");
-    assert_eq!(**err_body, Expr::Variable("file".to_string()));
+    assert_eq!(arms.len(), 2);
+    assert_eq!(arms[0].variant, Some("Ok".to_string()));
+    assert_eq!(arms[0].binding, Some("file".to_string()));
+    assert_eq!(*arms[0].body, Expr::Variable("file".to_string()));
+    assert_eq!(arms[1].variant, Some("Err".to_string()));
+    assert_eq!(arms[1].binding, Some("reason".to_string()));
+    assert_eq!(*arms[1].body, Expr::Variable("file".to_string()));
 }
 
 #[test]
@@ -67,25 +70,19 @@ fn match_accepts_an_optional_trailing_comma() {
 }
 
 #[test]
-fn match_requires_ok_before_err() {
-    // Arm order is fixed (`Ok` then `Err`) -- `Result` is a closed
-    // two-variant type with no general/reorderable arm machinery (see
-    // `Expr::Match`'s doc comment in ast.rs). Swapping the order is a
-    // parse error, not a semantic one.
-    let tokens = Lexer::new(
-        r#"
-        fn f() returns Result<DnaFile, Str> {
-            let attempt: Result<DnaFile, Str> = store "a.txt" into archive
-            let saved: DnaFile = match attempt {
-                Err(reason) => reason,
-                Ok(file) => file
-            }
-        }
-        "#,
-    )
-    .tokenize()
-    .unwrap();
-    assert!(Parser::new(tokens).parse_program().is_err());
+fn arm_order_is_free_not_fixed_ok_then_err() {
+    // Step 14: the general N-arm matching engine checks exhaustiveness by
+    // variant *name*, not by position -- unlike the old fixed-two-arm
+    // form, `Err` may now come before `Ok` (matching a general enum's
+    // variants being name-checked, not position-checked). This is a
+    // deliberate, confirmed behavior change from the original Step 11
+    // design (see `Expr::Match`'s doc comment in ast.rs).
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let saved: DnaFile = match attempt {{\n        Err(reason) => (store \"b.txt\" into archive)?,\n        Ok(file) => file\n    }}\n}}\n",
+        POOL
+    );
+    let report = check_source(&src);
+    assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
 }
 
 // ---------------------------------------------------------------------
@@ -108,7 +105,7 @@ fn matching_a_non_result_expression_is_rejected() {
         "{}fn f() returns Void {{\n    let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina\n    let x: Void = match noisy {{\n        Ok(a) => a,\n        Err(b) => b\n    }}\n}}\n",
         POOL
     );
-    assert!(diagnostic_codes(&src).contains(&"E-MATCH-NOT-RESULT".to_string()));
+    assert!(diagnostic_codes(&src).contains(&"E-MATCH-UNRECOGNIZED-SCRUTINEE".to_string()));
 }
 
 #[test]

@@ -260,7 +260,7 @@
 #                               ^ source.nuclescript keyword.operator.assignment.nuclescript
 #                                ^ source.nuclescript
 #                                 ^^^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
-#                                                    ^^ source.nuclescript
+#                                                    ^^ source.nuclescript keyword.operator.scope.nuclescript
 #                                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
 #                                                       ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
 #                                                               ^ source.nuclescript keyword.operator.comparison.nuclescript

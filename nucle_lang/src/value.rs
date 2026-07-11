@@ -52,6 +52,18 @@ pub enum Value {
         body: Vec<Declaration>,
         captured_env: HashMap<String, Value>,
     },
+    /// A user-declared `enum`'s runtime instance (Step 14). Deliberately
+    /// NOT how `Result` itself is represented (see `Value::Result` above)
+    /// -- keeping them separate means the large amount of existing
+    /// runtime code that already matches `Value::Result(Ok(_)/Err(_))`
+    /// directly needs zero changes; only the general `Expr::Match`
+    /// evaluator (`codegen::eval_expr`) needs to look at both shapes
+    /// uniformly, extracting `(variant name, payload)` from either.
+    EnumInstance {
+        enum_name: String,
+        variant: String,
+        payload: Option<Box<Value>>,
+    },
 }
 
 /// What evaluating one `Expr` produces: an ordinary value, or a signal to

@@ -118,6 +118,7 @@ fn zero_span(decl: &mut nucle_lang::Declaration) {
                 Assert(o) => o.span = zero,
             }
         }
+        Enum(d) => d.span = zero,
     }
 }
 

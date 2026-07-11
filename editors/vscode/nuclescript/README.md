@@ -40,6 +40,15 @@ NucleScript, the declarative DNA-storage operations language for
   second, independent function call from the caller. Highlighting,
   diagnostics, hover, and formatting all understand `match`/`Ok`/`Err`/
   `=>`.
+- **User-defined `enum`s and general pattern matching** — `enum Name {
+  Variant, Variant(Type) }` declares a real sum type;
+  `EnumName::Variant(payload)` constructs one; `match` now handles both a
+  user `enum` and the built-in `Result` pseudo-enum through one general
+  engine, with free arm order and enforced exhaustiveness (every declared
+  variant needs an arm, or a trailing wildcard `_` covers the rest).
+  Highlighting (`enum` as a keyword, `::` for enum-variant construction),
+  diagnostics, hover, formatting, and `nucle doc` all understand the new
+  syntax.
 - **Closures** — `fn(params) -> T { body }` is an anonymous closure
   literal with real lexical capture; `Fn(...) -> T` is its type, usable
   as a `let` annotation or a function parameter's type (genuinely
@@ -96,14 +105,15 @@ vote → encode/protect/store/verify pipeline, catching a real store
 failure with `Result<T, E>`/`?` instead of aborting the run, one function
 generic over three different pool profiles, branching on a caught
 `Result` directly with `match`, a genuinely higher-order function with
-real closure capture, a self-recursive closure, and an explicit
+real closure capture, a self-recursive closure, an explicit
 `::<Illumina>()` type argument paired with a real `File`-typed parameter
-value) live in
+value, and a user-defined `enum` matched via a nested `match` with
+exhaustiveness enforced by a trailing wildcard) live in
 [`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
 in the main repo — start with `store.nsl`, then `hero.nsl`, then
 `result_fallback_store.nsl`, then `generic_pool_recovery.nsl`, then
 `match_result_fallback.nsl`, then `closure_retry.nsl`, then
-`explicit_type_args_and_file_param.nsl`.
+`explicit_type_args_and_file_param.nsl`, then `recovery_plan.nsl`.
 
 **Using the official packages:** imports like `from "nuclescript/presets"`
 (`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,

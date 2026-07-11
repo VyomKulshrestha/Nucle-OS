@@ -11,6 +11,7 @@ Program             ::= ( Declaration | ',' )*
 
 Declaration         ::= ImportDecl
                       | PoolDecl
+                      | EnumDecl
                       | StrandDecl
                       | SequenceDecl
                       | LetDecl
@@ -33,6 +34,15 @@ PoolProperty        ::= 'codec' ':' CodecLiteral
 
 CodecLiteral        ::= 'YinYang' | 'yin-yang' | 'Ternary' | 'ternary-rotating' | 'ternary-rotating-cipher' | 'Fountain' | 'dna-fountain'
 ProfileLiteral      ::= 'Illumina' | 'Nanopore' | 'oxfordnanopore' | 'oxford-nanopore' | 'Twist' | 'twistbioscience' | 'twist-bioscience'
+
+// A user-defined sum type -- at most one payload per variant
+// (never a tuple of several), mirroring 'Ok(T)'/'Err(E)''s own shape.
+// 'Result' is reserved: 'enum Result { ... }' is E-ENUM-RESERVED-NAME,
+// since Result is a built-in, privileged type, not an instance of this
+// general mechanism. See "Enums" below.
+EnumDecl            ::= 'enum' Identifier '{' EnumVariantList '}'
+EnumVariantList     ::= EnumVariant ( ',' EnumVariant )* ','?
+EnumVariant         ::= Identifier ( '(' TypeExpr ')' )?
 
 StrandDecl          ::= 'strand' Identifier ':' 'Strand' '=' StringLiteral
 SequenceDecl        ::= 'seq' Identifier ':' 'Sequence' '=' StringLiteral
@@ -58,6 +68,7 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       | 'Result' '<' TypeExpr ',' TypeExpr '>'
                       | 'Str'
                       | 'Fn' '(' ( TypeExpr ( ',' TypeExpr )* )? ')' ( '->' | 'returns' ) TypeExpr
+                      | Identifier
                       // 'Result<T, E>' and generic 'Pool<T>' (via PoolState's
                       // 'Var' case below) are the only two generic
                       // mechanisms NucleScript has -- no general
@@ -68,9 +79,15 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       // string arithmetic or any other place 'Str' is
                       // expected. 'Fn(...)' is a closure/function's own
                       // type -- always non-generic, usable as a 'let'
-                      // annotation or a function parameter's type. See
-                      // "Result / Error Propagation", "Generics", and
-                      // "Closures" below.
+                      // annotation or a function parameter's type. The
+                      // bare 'Identifier' case is presumed to
+                      // name a user 'enum' -- the parser accepts any
+                      // identifier here unconditionally, and typeck
+                      // resolves/validates it against the declared 'enum'
+                      // table, reporting an ordinary unresolved-name
+                      // failure if it isn't one. See "Result / Error
+                      // Propagation", "Generics", "Closures", and "Enums"
+                      // below.
 PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'Amplified' | 'Recovered' | Identifier
                       // the bare Identifier case is only ever a name
                       // already declared in the enclosing FunctionDecl's
@@ -123,6 +140,7 @@ Expr                ::= 'simulate' Identifier 'under' ProfileLiteral
                       | Expr '?'
                       | MatchExpr
                       | ClosureExpr
+                      | EnumConstructExpr
 ExprList            ::= Expr ( ',' Expr )* ','?
                       // The boolean/comparison operators above bind exactly
                       // as in `Condition`: '||' loosest, then '&&', then
@@ -135,8 +153,8 @@ ExprList            ::= Expr ( ',' Expr )* ','?
                       // "Result / Error Propagation" below.
                       //
                       // 'StoreOp'/'RetrieveOp'/'DeleteOp' appearing here
-                      // (as opposed to only under 'Operation' below) is
-                      // Step 9's one new capability: the exact same
+                      // (as opposed to only under 'Operation' below) reuses
+                      // the exact same
                       // grammar 'store'/'retrieve'/'delete' already have
                       // as *statements*, now also usable in *expression*
                       // position (e.g. the right-hand side of a 'let') --
@@ -146,12 +164,26 @@ ExprList            ::= Expr ( ',' Expr )* ','?
                       // ever produces this expression form after 'let x =',
                       // never at the top of a declaration.
 
-MatchExpr           ::= 'match' Expr '{' 'Ok' '(' Identifier ')' '=>' Expr ','
-                                        'Err' '(' Identifier ')' '=>' Expr ','? '}'
-                      // Destructures a Result<T, E>-shaped Expr. Arm order
-                      // is fixed ('Ok' then 'Err') -- Result is a closed,
-                      // two-variant type with no general/reorderable arm
-                      // machinery. See "Pattern Matching" below.
+// Destructures either a Result<T, E>-shaped Expr (Ok/Err are always its
+// two variants) or a user 'enum'-shaped Expr, through one general N-arm
+// engine -- arm order is free (checked by variant name, not
+// position), and exhaustiveness requires either one arm per declared
+// variant or a trailing '_' wildcard covering the rest. See "Pattern
+// Matching" below.
+MatchExpr           ::= 'match' Expr '{' MatchArmList '}'
+MatchArmList        ::= MatchArm ( ',' MatchArm )* ','?
+MatchArm            ::= MatchPattern '=>' Expr
+MatchPattern        ::= Identifier ( '(' Identifier ')' )?
+                      | '_'
+                      // 'Identifier' names a variant ('Ok'/'Err' for a
+                      // Result scrutinee, or one of a user enum's declared
+                      // variant names) with an optional payload binding;
+                      // '_' is the wildcard, valid only as the last arm.
+
+// Constructs a user enum value directly -- 'EnumName::Variant' for a unit
+// variant, 'EnumName::Variant(payload)' for a payload-carrying one. See
+// "Enums" below.
+EnumConstructExpr   ::= Identifier '::' Identifier ( '(' Expr ')' )?
 
 ClosureExpr         ::= 'fn' '(' FnParamList? ')' ( '->' | 'returns' ) TypeExpr '{' Declaration* '}'
                       // An anonymous function literal -- same params/
@@ -225,7 +257,7 @@ SizeBytesLiteral    ::= [0-9]+ ( 'mb' | 'MB' | 'kb' | 'KB' )
 
 ## Control Flow (`if` / `for`)
 
-Before Step 9 (`Result<T, E>`/`?`, below), NucleScript had no runtime at
+Before `Result<T, E>`/`?` (below) existed, NucleScript had no runtime at
 all: a program compiled to a static plan (a fixed list of pool schemas,
 probabilistic bindings, and store/retrieve/delete calls) which was then
 executed as-is. `if` and `for` predate that feature and still fit this
@@ -267,7 +299,7 @@ for target in [archive] {
 ## Result / Error Propagation (`Result<T, E>` / `?`)
 
 Unlike `if`/`for` above, this genuinely is runtime behavior -- the first
-in this language. Before Step 9, every `store`/`retrieve`/`delete`
+in this language. Before `Result<T, E>`/`?` existed, every `store`/`retrieve`/`delete`
 either succeeded or aborted the entire program; there was no way for a
 NucleScript program to observe, inspect, or recover from an operation
 failure. `store`/`delete` (not `retrieve` -- see below) can now also
@@ -318,12 +350,12 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   after a `?` still requires confirmation, since effect analysis is
   static and never models which declarations actually execute at
   runtime.
-- **`match` (Step 11) now lets a caught `Err` be inspected directly** --
-  see "Pattern Matching" below. Before that, a caught `Err` could only be
+- **`match` lets a caught `Err` be inspected directly** --
+  see "Pattern Matching" below. Before that existed, a caught `Err` could only be
   produced and propagated, never branched on from within the same
   program; building on it (retrying a different pool, logging why) needed
   a second, independent function call from the caller.
-- **`Ok(<expr>)`/`Err(<string literal>)` (Step 13) construct a `Result`
+- **`Ok(<expr>)`/`Err(<string literal>)` construct a `Result`
   directly**, rather than only ever receiving one from `store`/`delete`/a
   `Result`-returning call. `Ok(...)`'s payload is any expression already
   resolvable to a concrete type -- a bound variable of any shape, `?`, a
@@ -341,7 +373,7 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   }
   ```
 - **A statement-form `store`/`retrieve`/`delete` inside a function body
-  now actually executes (Step 13)**, not just at the top level. Before
+  now actually executes**, not just at the top level. Before
   this fix, a bare `store "x.txt" into pool` declaration (no `let`, not
   producing the function's return value) inside any function body was
   silently skipped by the interpreter -- present in the source, type-
@@ -351,7 +383,7 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   catches via the ordinary `?`/`match` machinery if that function itself
   returns `Result<_, _>`.
 - **A `File`/`Str`-typed parameter now carries its real argument value
-  at runtime (Step 13)**, rather than being an inert, type-checked-only
+  at runtime**, rather than being an inert, type-checked-only
   label. `store <identifier> into <pool>`'s "file variable" syntax (an
   identifier instead of a string literal) resolves that identifier
   through the callee's own bound parameters, so a function like
@@ -408,7 +440,7 @@ and `recover_from(noisy_nanopore)` above both type-check as
   `Result`/anything else. A type parameter that no argument binds is a
   real error (`E-TYPE-PARAM-UNRESOLVED`), not silently left generic —
   unless it's resolved explicitly (see below).
-- **Explicit type-argument syntax, `name::<Illumina>(...)` (Step 13)**,
+- **Explicit type-argument syntax, `name::<Illumina>(...)`**,
   for the one shape inference alone can't resolve: a type parameter that
   appears *only* inside a `Fn(...)`-typed parameter's own signature,
   never as a directly `Pool<P>`-shaped argument. An explicit argument
@@ -449,13 +481,64 @@ examples.
 
 ---
 
-## Pattern Matching (`match` / `Ok` / `Err`)
+## Enums (`enum` declarations)
 
-The gap Step 9 itself named as "not implemented": a caught `Err` could
+NucleScript's only sum type used to be `Result<T, E>`, closed to exactly
+two built-in variants, so `match` never needed a general exhaustiveness
+algorithm. `enum` adds a real user-defined sum type, and `match` is one
+general engine that handles both `Result` (as a built-in, privileged
+2-variant pseudo-enum) and a real user `enum` uniformly:
+
+```nsl
+enum RecoveryPlan {
+    Retry,
+    Fallback,
+    GiveUp(Str),
+}
+
+let plan: RecoveryPlan = RecoveryPlan::Fallback
+```
+
+- **At most one payload per variant** (`Variant` or `Variant(Type)`,
+  never a tuple of several) -- mirroring `Ok(T)`/`Err(E)`'s own existing
+  shape. Tuple/struct variants don't exist.
+- **`Result` is a reserved name** -- `enum Result { ... }` is
+  `E-ENUM-RESERVED-NAME`, since `Result` stays a distinct, privileged
+  built-in (see "Deliberate non-unification," below), not an instance of
+  this general mechanism.
+- **`EnumName::Variant`/`EnumName::Variant(payload)` construct a value.**
+  The `::` token is the same one turbofish uses
+  (`name::<Illumina>(...)`); the two are unambiguous by one token of
+  lookahead — turbofish's `::` is always followed by `<`, a variant
+  reference's `::` is always followed by an identifier. A payload's
+  presence/absence and type must match the variant's own declaration
+  exactly (`E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH` otherwise).
+- **Deliberate non-unification with `Result`/`Ok`/`Err`**: `enum` is a
+  parallel mechanism, not `Result`'s generalization. `Ok(...)`/`Err(...)`
+  keep their own dedicated, unprefixed construction syntax and
+  `Value::Result`'s own runtime representation, untouched — `Err`'s
+  string-literal-only payload restriction doesn't generalize to a real
+  `enum`'s variants, and every existing `.nsl` file's bare `Ok(x)`/
+  `Err("msg")` needed to keep working with zero parser changes. The
+  unification the user-facing behavior actually gets is entirely at the
+  **matching** layer (below) — construction and runtime storage for
+  `Result` and a user `enum` stay genuinely distinct.
+
+See [docs/errors.md](errors.md) for `E-ENUM-DUPLICATE`/
+`E-ENUM-RESERVED-NAME`/`E-ENUM-EMPTY`/`E-ENUM-VARIANT-DUPLICATE`/
+`E-ENUM-CONSTRUCT-UNKNOWN-ENUM`/`E-ENUM-CONSTRUCT-UNKNOWN-VARIANT`/
+`E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH`.
+
+---
+
+## Pattern Matching (`match` / `Ok` / `Err` / user enums)
+
+Before `match` existed, a caught `Err` could
 only be inspected by a second, independent function call from the
 caller, never branched on from within the same function. `match`
-destructures a `Result<T, E>`-shaped expression directly, binding each
-arm's payload to a name visible only within that arm:
+destructures a `Result<T, E>`-shaped expression, or a real
+user-`enum`-shaped one, binding each arm's payload to a name visible only
+within that arm:
 
 ```nsl
 pool primary: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }
@@ -470,42 +553,70 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
 }
 ```
 
-- **`Result` is the only sum type in the language, and it's closed to
-  exactly two variants** -- so `match` needs no general pattern-matching
-  engine or exhaustiveness algorithm, just a fixed two-arm form. Arm
-  order is fixed (`Ok` always first, `Err` always second, with an
-  optional trailing comma) -- reordering them is a parse error, not a
-  semantic one. A real multi-arm/reorderable `match` only becomes worth
-  building once user-defined enums exist (still deferred).
-- **Both arms must unify to one type**, which becomes the whole `match`
-  expression's type -- usable directly as a `let`'s RHS, exactly like a
-  function call or any other expression. If both arms happen to still be
-  `Result`-shaped (neither used `?`), the match's own value is itself a
-  still-wrapped `Result` a caller can `?`/re-match later.
-- **`Ok(...)`/`Err(...)` *constructor* syntax (Step 13)** -- see "Result /
-  Error Propagation" above for the full semantics. An arm's body is
-  therefore one of exactly five shapes: the pattern's own bound name
-  (`Ok(file) => file`), `Ok(<pattern>)`/`Err(<pattern>)` re-wrapping the
-  arm's own bound value (`Ok(file) => Ok(file)`, paired with
-  `Err(reason) => Err(reason)`), `?` applied to a fallible expression
-  (checked against the *enclosing function's* return type, exactly like
-  `?` anywhere else), a still-wrapped `Result`-shaped expression, or a
+- **One general engine handles both scrutinee kinds** --
+  `check_match` resolves what's being matched to either the built-in
+  `Result` pseudo-enum (its declared variants are always exactly `Ok(T)`/
+  `Err(E)`) or a real, looked-up `EnumDecl`, then runs the same
+  exhaustiveness/dispatch logic either way. A scrutinee that resolves to
+  neither (e.g. a bare `Pool<...>` binding) is
+  `E-MATCH-UNRECOGNIZED-SCRUTINEE` (renamed from the earlier
+  `E-MATCH-NOT-RESULT`, since "not `Result`" is no longer the whole
+  story).
+- **Arm order is free, checked by variant name, not position** -- a
+  deliberate behavior change from an earlier version of the language,
+  when `Ok` had to come
+  first and `Err` second. `match r { Err(e) => ..., Ok(v) => ... }` is
+  now exactly as valid as the reverse.
+- **Exhaustiveness**: every declared variant needs exactly one matching
+  arm, or a trailing wildcard `_` (which must be last) covers whatever
+  isn't named — `E-MATCH-NON-EXHAUSTIVE`/`E-MATCH-ARM-AFTER-WILDCARD`/
+  `E-MATCH-DUPLICATE-ARM`/`E-MATCH-UNKNOWN-VARIANT` cover the ways this
+  can go wrong. For a 2-variant `Result` match this is unchanged from
+  before (both `Ok` and `Err` still need covering, one way or another);
+  for a 3+-variant user `enum` it's the first place NucleScript actually
+  enforces exhaustiveness.
+- **Every present arm must unify to one type**, which becomes the whole
+  `match` expression's type -- usable directly as a `let`'s RHS, exactly
+  like a function call or any other expression
+  (`E-MATCH-ARM-TYPE-MISMATCH` otherwise). If every arm of a `Result`
+  match happens to still be `Result`-shaped (none used `?`), the match's
+  own value is itself a still-wrapped `Result` a caller can `?`/re-match
+  later.
+- **An arm's body is one of a fixed, closed set of shapes** (never a bare
+  literal, the same restriction `Ok(...)`'s own payload has --
+  `E-MATCH-ARM-UNTYPABLE` otherwise): the pattern's own bound name
+  (`Ok(file) => file`, or `Info(msg) => msg` for a user enum whose
+  variant shares its payload type); `Ok(<pattern>)`/`Err(<pattern>)`
+  re-wrapping the arm's own bound value (using the scrutinee's *declared*
+  variant list for the missing side's type -- no dependency on a
+  sibling arm's own resolved value); the general
+  `EnumName::Variant(<pattern>)` re-wrap for a user enum; `?` applied to
+  a fallible expression (checked against the *enclosing function's*
+  return type); **a nested `match`** --
+  accepted whatever `check_match` itself resolves the inner match to,
+  Result-shaped, enum-shaped, Pool-shaped, or already bare/unwrapped, not
+  just Result-shaped as originally built; a still-wrapped
+  `Result`-shaped expression; an enum-shaped expression; or a
   `Pool<...>`-shaped expression.
-- **Composability with `?` and nested `match` (Step 13)**: a `match`'s
-  scrutinee can now itself be another `match` expression
-  (`match (match a {...}) {...}`), and `?` now applies directly to a
-  `match` expression's own result (`(match a {...})?`), not just to a
-  plain `Result` binding -- both fall out of one change, `infer_result_
-  expr` recognizing a `match` expression as potentially `Result`-shaped,
-  which every existing caller (`check_try`, `check_match`'s own
-  scrutinee check, `check_match_arm`) benefits from automatically:
+- **Composability with `?` and nested `match`**: a `match`'s scrutinee
+  can itself be another `match` expression (`match (match a {...}) {...}`
+  ), and `?` applies directly to a `match` expression's own result
+  (`(match a {...})?`) -- both fall out of `infer_result_expr`/
+  `infer_scrutinee_kind` recognizing a nested `match` as potentially
+  Result-/enum-shaped, benefiting every caller (`check_try`, `check_
+  match`'s own scrutinee check, `check_match_arm_general`) automatically:
   ```nsl
-  let saved: DnaFile = match (match attempt {
-      Ok(file) => Ok(file),
-      Err(reason) => store "fallback.txt" into secondary
-  }) {
-      Ok(file) => file,
-      Err(reason) => (store "last_resort.txt" into secondary)?
+  enum RecoveryPlan { Retry, Fallback, GiveUp(Str) }
+
+  fn archive_with_plan(plan: RecoveryPlan) returns Result<DnaFile, Str> {
+      let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+      let saved: DnaFile = match attempt {
+          Ok(file) => file,
+          Err(reason) => match plan {
+              Retry => (store "sample_a.txt" into primary)?,
+              _ => (store "sample_b.txt" into secondary)?,
+          }
+      }
   }
   ```
 - **Arm bodies are a single expression, not a block** -- matching the
@@ -514,16 +625,29 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   arm that needs a fallback operation writes it directly as its one
   expression, as `(store ... into ...)?` does above; it doesn't get its
   own local `let` sequence the way a function body does.
-- **Effect analysis joins the scrutinee and both arms unconditionally**,
+- **A genuine, narrower limitation remains**: `Err(...)`'s payload must
+  always be a literal string, even inside a user-enum match arm -- a
+  bound `Str` variable (a user enum's own payload, or an outer match
+  arm's own binding) can never be re-wrapped into a fresh `Err(...)`,
+  since the only mechanism for resolving `Err`'s missing `Ok` side is the
+  `Ok`/`Err` sibling-arm trick within the *same* `Result` match, which
+  doesn't apply to a user-enum match at all. Writing around this means
+  producing the `Err` through a real, self-contained fallible expression
+  (e.g. `(store ... into ...)?`) rather than hand-crafting the message.
+- **Effect analysis joins the scrutinee and every arm unconditionally**,
   the same conservative "every declaration in this join counts" rule
-  `if`/`?` already follow -- a `Destructive` operation in only the `Err`
-  arm still requires confirmation, since this analysis has never modeled
+  `if`/`?` already follow -- a `Destructive` operation in only one arm
+  still requires confirmation, since this analysis has never modeled
   "this branch might not run."
 
-See [docs/errors.md](errors.md) for `E-MATCH-NOT-RESULT`/`E-MATCH-ARM-
-TYPE-MISMATCH`/`E-MATCH-ARM-UNTYPABLE`, and
-[`docs/examples/match_result_fallback.nsl`](examples/match_result_fallback.nsl)
-for a complete, runnable example.
+See [docs/errors.md](errors.md) for `E-MATCH-UNRECOGNIZED-SCRUTINEE`/
+`E-MATCH-UNKNOWN-VARIANT`/`E-MATCH-NON-EXHAUSTIVE`/`E-MATCH-DUPLICATE-
+ARM`/`E-MATCH-ARM-AFTER-WILDCARD`/`E-MATCH-ARM-TYPE-MISMATCH`/
+`E-MATCH-ARM-UNTYPABLE`, and
+[`docs/examples/match_result_fallback.nsl`](examples/match_result_fallback.nsl)/
+[`docs/examples/recovery_plan.nsl`](examples/recovery_plan.nsl) for
+complete, runnable examples (the latter exercising a user `enum`, a
+nested match, and exhaustiveness via a trailing wildcard).
 
 ---
 
@@ -570,7 +694,7 @@ fn archive_with_retry() returns Result<DnaFile, Str> {
   whether `name` is a top-level `fn` or a local closure/`Fn(...)`-typed
   parameter, the call site looks identical; typeck/the runtime both
   resolve closures *before* falling back to the global function table.
-- **Generic closures, `fn<T>(...)` (Step 13)** — a closure literal can
+- **Generic closures, `fn<T>(...)`** — a closure literal can
   declare its own type-parameter list, exactly mirroring a named
   function's `fn name<T>(...)`. Since a fresh type-parameter name is only
   recognized inside a closure literal's *own* declared `<...>` list (not
@@ -587,7 +711,7 @@ fn archive_with_retry() returns Result<DnaFile, Str> {
       let recovered: Pool<Recovered> = recover(source)
   }
   ```
-- **Self-recursion (Step 13).** A `let`-bound closure can now call itself
+- **Self-recursion.** A `let`-bound closure can now call itself
   by its own bound name — resolved at runtime by `call_closure`
   re-inserting the closure under the name it was just invoked through
   before running its own body, since the closure's own `captured_env`
@@ -603,10 +727,10 @@ fn archive_with_retry() returns Result<DnaFile, Str> {
   call needs to do something different each time (retry a different
   target, in the example below) to actually terminate.
 - **`nucle plan`/`nucle explain` narration through a `let`-bound
-  closure's own call (Step 13)** — the narrator now walks into a
+  closure's own call** — the narrator now walks into a
   `let`-bound closure's real body the same way it already walks a named
-  function's, checked with the same priority `effects.rs`'s own Step 12
-  fix established (closures before named functions). **A real, honest
+  function's, checked with the same priority effect analysis
+  established (closures before named functions). **A real, honest
   limitation remains**: a closure received as a `Fn(...)`-typed
   *parameter*, or an inline closure literal passed directly as a call
   argument, is still unnarratable — neither's real body is known at that

@@ -137,13 +137,17 @@ pub fn lower_program(program: &Program) -> MirProgram {
             // test` specifically executes it (`test_runner::run_tests`
             // builds and lowers a dedicated virtual program per test), not
             // as a side effect of lowering the whole file for `nucle run`.
+            // `enum` declarations have no VFS-lowerable content of their
+            // own (Step 14) -- same reasoning as `Strand`/`Sequence`
+            // below.
             Declaration::Import(_)
             | Declaration::Strand(_)
             | Declaration::Sequence(_)
             | Declaration::Function(_)
             | Declaration::If(_)
             | Declaration::For(_)
-            | Declaration::Test(_) => {}
+            | Declaration::Test(_)
+            | Declaration::Enum(_) => {}
         }
     }
 
@@ -237,7 +241,8 @@ fn infer_binding(
         | Expr::Match { .. }
         | Expr::Closure { .. }
         | Expr::Ok(_)
-        | Expr::Err(_) => None,
+        | Expr::Err(_)
+        | Expr::EnumConstruct { .. } => None,
     }
 }
 

@@ -26,6 +26,26 @@
 use crate::base::{DnaCodec, DnaError, DnaStrand, Nucleotide, StrandCollection};
 use serde::{Serialize, Deserialize};
 
+/// Width, in trits, of the per-strand index header prepended to every
+/// encoded segment so `decode` can reassemble strands in the right order
+/// regardless of what order they're retrieved in. `3^12 = 531,441`
+/// possible indices -- comfortably beyond any segment count this project's
+/// realistic file sizes produce (at `strand_length: 150` with no overlap,
+/// ~25 bytes/segment, that's north of 12 MB of payload before this limit
+/// would ever bind again). A fixed-but-generous width, matching the same
+/// "pick a size that won't realistically be hit" convention the 4-byte
+/// `u32` data-length header already uses elsewhere in this codec.
+///
+/// This used to be a hardcoded 4 trits (`3^4 = 81`, an explicitly
+/// acknowledged limit in an earlier version of this code): any file
+/// needing more than 81 segments silently aliased strand indices modulo
+/// 81, scrambling reassembly order into corrupted output instead of a
+/// clear error -- confirmed as the cause of `decode`'s
+/// "trit sequence decodes to value N > 255" failures on files as small as
+/// a few tens of KB (e.g. this very README, once it grew past ~2KB of
+/// no-overlap-encoded payload).
+const STRAND_INDEX_TRITS: usize = 12;
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -367,19 +387,28 @@ impl DnaCodec for TernaryCodec {
         // Step 3: Encode each segment into nucleotides
         let mut collection = StrandCollection::new(data.len());
 
+        if segments.len() > 3usize.pow(STRAND_INDEX_TRITS as u32) {
+            return Err(DnaError::EncodingError(format!(
+                "input requires {} strands, which exceeds this codec's index \
+                 header capacity of {} (STRAND_INDEX_TRITS = {})",
+                segments.len(),
+                3usize.pow(STRAND_INDEX_TRITS as u32),
+                STRAND_INDEX_TRITS
+            )));
+        }
+
         for (idx, segment) in segments.iter().enumerate() {
             let nucleotides =
                 Self::trits_to_nucleotides(segment, self.config.seed_base)?;
 
-            // Prepend a 4-trit strand index header for ordering during decode
+            // Prepend a fixed-width strand index header for ordering during decode
             let mut strand_data = Vec::new();
-            // Encode index as 4 trits (supports up to 3^4 = 81 strands without overlap)
-            let idx_trits = [
-                ((idx / 27) % 3) as u8,
-                ((idx / 9) % 3) as u8,
-                ((idx / 3) % 3) as u8,
-                (idx % 3) as u8,
-            ];
+            let mut idx_trits = [0u8; STRAND_INDEX_TRITS];
+            let mut v = idx;
+            for i in (0..STRAND_INDEX_TRITS).rev() {
+                idx_trits[i] = (v % 3) as u8;
+                v /= 3;
+            }
             let idx_nucs =
                 Self::trits_to_nucleotides(&idx_trits, self.config.seed_base)?;
             strand_data.extend(idx_nucs);
@@ -401,23 +430,22 @@ impl DnaCodec for TernaryCodec {
 
         for strand in &strands.strands {
             let bases = strand.bases();
-            if bases.len() < 5 {
+            if bases.len() < STRAND_INDEX_TRITS + 1 {
                 return Err(DnaError::DecodingError(
                     "strand too short for header".into(),
                 ));
             }
 
-            // Decode the 4-trit index header
-            let idx_nucs = &bases[0..4];
+            // Decode the fixed-width index header
+            let idx_nucs = &bases[0..STRAND_INDEX_TRITS];
             let idx_trits =
                 Self::nucleotides_to_trits(idx_nucs, self.config.seed_base)?;
-            let idx = idx_trits[0] as usize * 27
-                + idx_trits[1] as usize * 9
-                + idx_trits[2] as usize * 3
-                + idx_trits[3] as usize;
+            let idx = idx_trits
+                .iter()
+                .fold(0usize, |acc, &t| acc * 3 + t as usize);
 
-            // Payload is everything after the 4-trit header
-            let payload = bases[4..].to_vec();
+            // Payload is everything after the index header
+            let payload = bases[STRAND_INDEX_TRITS..].to_vec();
             indexed_payloads.push((idx, payload));
         }
 
@@ -656,10 +684,15 @@ mod tests {
         let encoded = codec.encode(&data).unwrap();
 
         // Should achieve roughly 1.58 bits/nt
-        // With the 4-byte header overhead on 100 bytes, density will be lower
+        // With the 4-byte data-length header plus the per-strand
+        // STRAND_INDEX_TRITS-wide index header on 100 bytes, density is
+        // lower than the theoretical maximum -- and can legitimately dip
+        // just under 1.0 for small inputs, since header overhead is a
+        // fixed per-strand cost, proportionally larger relative to a small
+        // payload.
         let bpn = encoded.bits_per_nucleotide();
         assert!(
-            bpn > 1.0 && bpn < 2.0,
+            bpn > 0.5 && bpn < 2.0,
             "bits_per_nucleotide {} outside expected range",
             bpn
         );
@@ -687,6 +720,69 @@ mod tests {
             "overlap ({}) should produce >= strands than no-overlap ({})",
             enc_yes.strand_count(),
             enc_no.strand_count()
+        );
+    }
+
+    /// Regression test for the strand-index header capacity bug: this
+    /// codec used to prepend a fixed 4-trit index to every strand
+    /// (`3^4 = 81` possible values), so any input needing more than 81
+    /// no-overlap segments silently aliased strand indices modulo 81 --
+    /// scrambling reassembly into corrupted output instead of a decode
+    /// error. At `strand_length: 150` (no overlap, ~25 bytes/segment),
+    /// ~3KB of input needs well over 81 segments -- this would have
+    /// failed with "trit sequence decodes to value N > 255" (or worse,
+    /// silently returned wrong bytes) before `STRAND_INDEX_TRITS` was
+    /// widened to 12.
+    #[test]
+    fn test_encode_decode_roundtrip_past_old_81_strand_index_limit() {
+        let codec = TernaryCodec::new(TernaryConfig::no_overlap());
+        // Deterministic but non-trivial content (not all-zero) so a
+        // scrambled reassembly order would be very unlikely to
+        // accidentally decode back to the same bytes.
+        let data: Vec<u8> = (0..3000u32).map(|i| (i % 256) as u8).collect();
+
+        let encoded = codec.encode(&data).unwrap();
+        assert!(
+            encoded.strand_count() > 81,
+            "test payload only produced {} strands, not enough to exercise \
+             the old 81-strand index limit -- grow the payload",
+            encoded.strand_count()
+        );
+
+        let decoded = codec.decode(&encoded).unwrap();
+        assert_eq!(decoded, data, "roundtrip corrupted data past the old 81-strand limit");
+    }
+
+    /// Confirms the capacity guard actually fires -- turning what would
+    /// otherwise be a repeat of the silent-corruption bug (for an even
+    /// larger input) into a clear `EncodingError` instead. Deliberately
+    /// sized just past `3^STRAND_INDEX_TRITS` segments, not an
+    /// astronomically large input -- this still allocates/processes a
+    /// genuine multi-megabyte payload, so it's a slower test than most in
+    /// this file, but a real exercise of the guard rather than a
+    /// re-statement of its own arithmetic.
+    #[test]
+    fn test_encode_rejects_input_exceeding_index_header_capacity() {
+        let codec = TernaryCodec::new(TernaryConfig::no_overlap());
+        let capacity = 3usize.pow(STRAND_INDEX_TRITS as u32);
+
+        // bytes_to_trits adds a 4-byte length header, and no_overlap's
+        // default strand_length (150) packs 150/6 = 25 bytes/segment --
+        // this is just enough over `capacity` segments' worth of bytes to
+        // push the real segment count one past the limit.
+        let bytes_per_segment = TernaryConfig::no_overlap().strand_length / 6;
+        let data_len = (capacity + 1) * bytes_per_segment;
+        let data = vec![0u8; data_len];
+
+        let result = codec.encode(&data);
+        assert!(
+            result.is_err(),
+            "encoding {} bytes ({} segments' worth) should exceed the \
+             {}-trit index header's {} capacity",
+            data_len,
+            capacity + 1,
+            STRAND_INDEX_TRITS,
+            capacity
         );
     }
 }

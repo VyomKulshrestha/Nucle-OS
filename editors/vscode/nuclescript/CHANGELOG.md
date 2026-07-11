@@ -8,6 +8,24 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.9]
+
+- **NucleScript now supports user-defined `enum`s and a general
+  pattern-matching/exhaustiveness engine.** `enum Name { Variant,
+  Variant(Type) }` declares a real sum type; `EnumName::Variant(payload)`
+  constructs one; `match` now handles both a user `enum` and the built-in
+  `Result` pseudo-enum through one general engine — arm order is free
+  (checked by variant name, not position), and exhaustiveness is enforced
+  (every declared variant needs an arm, or a trailing wildcard `_` covers
+  the rest). Highlighting (`enum` as a keyword, `::` for both enum-variant
+  construction and turbofish), live diagnostics, hover, formatting, and
+  `nucle doc` all understand the new syntax — see the updated README and
+  [`docs/examples/recovery_plan.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/recovery_plan.nsl)
+  in the main repo.
+- Bumped the downloaded `nucle-lsp`/`nucle-cli` binaries to the release
+  that actually understands the new syntax, same reason as every prior
+  language-feature bump.
+
 ## [0.1.8]
 
 - **Closed the deliberate gaps left by `Result<T, E>`/`?`, generics,

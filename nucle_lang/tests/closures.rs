@@ -87,7 +87,8 @@ fn a_closure_passed_inline_as_an_argument_has_no_diagnostics() {
 fn a_closure_captures_a_result_binding_from_its_enclosing_function() {
     // If capture didn't work, `attempt` inside the closure body would be
     // E-VARIABLE-UNDECLARED (or, since it's used as a match scrutinee,
-    // E-MATCH-NOT-RESULT once the undeclared-variable path degrades).
+    // E-MATCH-UNRECOGNIZED-SCRUTINEE once the undeclared-variable path
+    // degrades).
     let src = format!(
         "{}fn f() returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let g: Fn() -> Result<DnaFile, Str> = fn() -> Result<DnaFile, Str> {{\n        let saved: DnaFile = match attempt {{\n            Ok(file) => file,\n            Err(reason) => (store \"b.txt\" into archive)?\n        }}\n    }}\n    let saved: Result<DnaFile, Str> = g()\n}}\n",
         POOL

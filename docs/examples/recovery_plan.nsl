@@ -1,0 +1,69 @@
+// User-defined enums + a general pattern-matching/exhaustiveness
+// engine. Result<T, E>/Ok/Err run through this same general engine as
+// a built-in 2-variant enum -- not a parallel system -- so a match's
+// scrutinee can be either Result-shaped or a real user-declared `enum`,
+// checked for exhaustiveness (every variant needs an arm, or a trailing
+// wildcard `_` covers the rest) either way.
+
+enum RecoveryPlan {
+    Retry,
+    Fallback,
+    GiveUp(Str),
+}
+
+pool primary: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+pool secondary: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+/// A nested match: the outer match destructures the Result `store`
+/// produces (the built-in pseudo-enum); its `Err` arm's own body is a
+/// second match over `plan`, a real user-declared enum. A trailing
+/// wildcard covers `GiveUp` (and any future variant) without needing its
+/// own reason payload here -- exhaustiveness via `_`, not a named arm for
+/// every single variant.
+fn archive_with_plan(plan: RecoveryPlan) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+    let saved: DnaFile = match attempt {
+        Ok(file) => file,
+        Err(reason) => match plan {
+            Retry => (store "sample_a.txt" into primary)?,
+            _ => (store "sample_b.txt" into secondary)?,
+        }
+    }
+}
+
+enum LogLevel {
+    Info(Str),
+    Warning(Str),
+    Error(Str),
+}
+
+/// Every variant carries the same `Str` payload type, so each arm can
+/// just be that payload's own bound name directly -- a clean
+/// demonstration of payload binding/extraction on its own, independent of
+/// the Result-composability shown above.
+fn log_message(level: LogLevel) returns Str {
+    let label: Str = match level {
+        Info(msg) => msg,
+        Warning(msg) => msg,
+        Error(msg) => msg,
+    }
+}
+
+// First call: `primary` is empty, so the outer `Ok` arm runs directly --
+// `plan` is never even inspected.
+let first: Result<DnaFile, Str> = archive_with_plan(RecoveryPlan::Fallback)
+
+// Second call: `sample_a.txt` already exists, so the outer attempt fails
+// and the nested match over `plan` actually runs -- `Fallback` isn't a
+// named arm, so it's caught by the trailing wildcard `_`, landing
+// `sample_b.txt` into `secondary` for real.
+let second: Result<DnaFile, Str> = archive_with_plan(RecoveryPlan::Fallback)

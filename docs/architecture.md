@@ -64,8 +64,8 @@ redundancy for the selected profile and coverage before either executable VFS
 lowering or no-hardware simulation planning.
 
 `if`/`for` are resolved entirely inside `typeck::check_and_desugar`, before
-any of that MIR/optimizer/backend machinery runs — until Step 9 below,
-NucleScript's execution model was "compile a static plan, then run it,"
+any of that MIR/optimizer/backend machinery runs — before `Result<T, E>`/`?`
+(below) existed, NucleScript's execution model was "compile a static plan, then run it,"
 with no runtime branch or loop anywhere in a compiled program.
 `check_and_desugar` evaluates each `if` condition once and keeps only the
 taken branch (the untaken branch is never type-checked, closer to
@@ -115,8 +115,8 @@ before this feature landed. See the "Result / Error Propagation" section
 of [docs/grammar.md](grammar.md) for the full semantics, plus "Pattern
 Matching" below for `match`/`Ok`/`Err`.
 
-**A real, pre-existing gap in this interpreter, closed only later
-(Step 13)**: `exec_function_body` originally only ever processed
+**A real, pre-existing gap in this interpreter, closed only later**:
+`exec_function_body` originally only ever processed
 `Declaration::Let` — a bare statement-form `store`/`retrieve`/`delete`
 inside *any* function body (present in the source, type-checked, never
 producing the function's own return value) was silently skipped, never
@@ -176,7 +176,7 @@ narrow, explicit intrinsic-recognition branch
 (`TypeChecker::infer_consensus_vote`), because its result genuinely
 depends on its *argument values* (the source binding's inferred error
 rate, the requested coverage) — a real compiler-level computation no
-fixed declared signature could express, not something Step 4/6's shared
+fixed declared signature could express, not something the shared
 function-call machinery skipped by accident.
 `simulate`/`synthesize`/`sequence` stay as dedicated grammar forms rather
 than joining the stdlib, since their `confirm hardware` effect-
@@ -220,7 +220,7 @@ with no notion of "generic" at any point. See the "Generics" section of
 honest limitation (a handful of profile-specific typeck warnings can't
 fire while checking a generic body against an abstract type parameter).
 
-**Explicit type-argument syntax, `name::<Illumina>(...)` (Step 13)**:
+**Explicit type-argument syntax, `name::<Illumina>(...)`**:
 seeds the call's substitution map from the explicit arguments (zipped
 against the function's own declared `<T, U>` list) *before* the
 pre-existing per-argument unification loop runs, reusing the same
@@ -235,56 +235,138 @@ by a separate helper, `check_fn_typed_arg`, that doesn't feed the outer
 substitution map at all) — an explicit type argument is the only way to
 call it.
 
-### Pattern matching (`match` / `Ok` / `Err`)
+### Enums (`enum` declarations) and general pattern matching
 
-Resolves entirely within the existing `Result<T,E>`/`?` execution model
-above — no new execution model, no exhaustiveness algorithm, and no
-general pattern-matching engine, because `Result` is the only sum type
-in the language and it's closed to exactly two variants. `Expr::Match`
-carries its scrutinee plus each arm's pattern name and body directly (no
-separate `MatchArm`/`Pattern` AST layer); typeck's `check_match`
-type-checks each arm by reusing the same three-way dispatch `check_let`
-already runs for a `let`'s right-hand side (`?`, a `Result`-shaped
-expression, or a `Pool<...>`-shaped expression), plus one new case (the
-arm's bound name used directly) a `let` doesn't need. The runtime
-(`codegen.rs`'s `eval_expr`) evaluates the scrutinee, then evaluates
-whichever arm matched in a *cloned* copy of the current environment with
-the pattern bound — never mutating the caller's own environment, so the
-binding can't leak past the arm it belongs to. The one genuinely new
-runtime value, `Value::Str`, exists because an `Err`'s message was
-previously only ever in-flight control-flow data (`EvalOutcome::Err`),
-never something a program could bind and hold onto; `Err(reason) => ...`
-needed a real storable representation for it. Two sites have a real
-wildcard `_` arm rather than an exhaustive match (`codegen.rs`'s
-`eval_expr`, `sim_backend.rs`'s `narrate_result_expr`), so adding
-`Expr::Match` to the AST did *not* force a compile error at either site —
-unlike every other site this feature touches (`effects.rs`, `middle.rs`,
-`typeck.rs`'s `substitute_expr`, `formatter.rs`'s `token_text`), which are
-fully exhaustive and did. Both wildcard sites were found by direct code
-reading, not by the compiler, and are only actually proven correct by
-running the shipped example against the real `nucle-cli` binary — see the
-"Pattern Matching" section of [docs/grammar.md](grammar.md) for the full
-semantics, including the deliberate scope limits (fixed arm order, no
-reorderable/duplicate-detected arms, no general exhaustiveness engine).
+Two related gaps stood open from earlier in the language's development,
+named explicitly at the time: a general pattern-matching/exhaustiveness
+engine (needing user-defined enums, which didn't exist at all) and
+accurate effect analysis through an arbitrary closure call (deferred
+separately, still open). This closes the first.
 
-**`Ok(...)`/`Err(...)` constructors and composability (Step 13)**: new
-`Expr::Ok`/`Expr::Err` variants construct a `Result` directly, rather than
-only ever receiving one from `store`/`delete`/a `Result`-returning call.
-The one change that makes nested `match` and `?` applied directly to a
-`match` expression both resolve: `infer_result_expr` gained an
-`Expr::Match` arm delegating to `check_match` and unwrapping a
-`Result`-shaped answer — every existing caller (`check_try`,
-`check_match`'s own scrutinee check, `check_match_arm`) benefits
-automatically, with no separate composability-specific machinery needed.
-A real bug found while verifying this directly: `check_match` was handing
-the `Err` arm the *`Ok` arm's own resolved value type* as context for
-`Err(reason) => Err(reason)`'s missing `Ok` side — correct when the `Ok`
-arm is a bare unwrap, but wrong when it re-wraps (`Ok(file) => Ok(file)`,
-whose own resolved type is already `Result<DnaFile, Str>`, not the bare
-`DnaFile` the `Err` arm actually needs) — producing a spurious doubly-
-wrapped `Result<Result<...>, Str>` and a false `E-MATCH-ARM-TYPE-
-MISMATCH`. Fixed by handing down the scrutinee's own plain Ok-side type
-instead.
+`ast::EnumDecl { name, variants: Vec<EnumVariant>, span, doc }` is a new
+top-level declaration, each variant at most one payload
+(`Variant`/`Variant(Type)`, mirroring `Ok(T)`/`Err(E)`'s own shape — no
+tuple/struct variants). `EnumName::Variant`/`EnumName::Variant(payload)`
+(`Expr::EnumConstruct`) reuses the `::` token turbofish already uses,
+disambiguated by one token of lookahead (turbofish's `::` is
+always followed by `<`; a variant reference's is always followed by an
+identifier). `TypeExpr::Enum(String)` is a new type-expression case;
+concretely, `parse_type_expr`'s previously-hard-error fallback branch now
+treats *any* unrecognized identifier as presumably naming a user enum,
+deferring the real validation to typeck (`check_enum`/`enums` lookup)
+rather than teaching the parser NucleScript's set of declared names.
+
+**Result unification happens at exactly one layer: matching, not
+construction or runtime storage.** The user-facing ask was for `Result<T,
+E>`'s existing `match`/`Ok`/`Err` machinery to run through the same
+general engine as a real user `enum` — not for `Result` to become
+literally an instance of the `enum` mechanism. `Expr::Ok`/`Expr::Err`
+stay their own dedicated, unprefixed `Expr` variants, untouched:
+`Err`'s payload has a bespoke string-literal-only restriction that
+doesn't generalize to arbitrary enum variants, and folding construction
+into one path would mean either a magic `enum_name == "Result"` special
+case or silently dropping that restriction. `Value::Result` similarly
+stays a distinct runtime representation; a new `Value::EnumInstance {
+enum_name, variant, payload }` is a *sibling*, not a replacement — the
+dozens of existing `codegen.rs` sites pattern-matching `Value::Result(Ok
+(_)/Err(_))` directly in the hottest, most safety-critical control-flow
+path (`?`'s short-circuit, `call_user_function`'s auto-wrap) stay exactly
+as they were, compiler-checked and exhaustive, rather than becoming
+stringly-typed `variant == "Ok"` comparisons for zero behavioral gain.
+
+The unification lives entirely in `typeck::check_match`/`codegen.rs`'s
+`eval_expr` Match arm. `check_match` first resolves what's being matched
+via a new `ScrutineeKind` (`Result { ok_ty, err_ty }`, whose two variants
+are always exactly `Ok`/`Err`; or `UserEnum { decl }`, a real `EnumDecl`
+looked up by name) — through a new `infer_scrutinee_kind`, which tries
+the existing, completely unchanged `infer_result_expr` first, and only
+falls back to resolving an enum name (from an `EnumConstruct`, an
+enum-typed variable, a closure/function call's declared return type, or
+a nested `match`) if that fails. Either way, the same four-pass check
+runs: shape-check every arm against the scrutinee's own
+`declared_variants: &[VariantSignature]` (unknown variant name, wildcard
+not last, duplicate arm), exhaustiveness (one arm per declared variant,
+or a trailing wildcard), per-arm type-check via
+`check_match_arm_general`, then unify every arm's resolved type. `eval_
+expr`'s runtime side is unified the same way: a new shared `run_match_
+arm` helper extracts `(variant_name, payload)` uniformly from either a
+`Value::Result` or a `Value::EnumInstance`, finds the arm whose `variant`
+matches (falling back to a wildcard), and evaluates its body in a cloned
+environment — bit-for-bit the same outcome for any existing 2-arm Result
+match, the core of the zero-regression proof (`result_backward_compat.
+rs` re-run completely unmodified, still green).
+
+**Arm order is now free, checked by variant name rather than
+position** — a deliberate, confirmed behavior change from the fixed
+Ok-then-Err order originally required (`match r { Err(e) => ...,
+Ok(v) => ... }` is now exactly as valid as the reverse). `Expr::Match`'s
+shape changed accordingly, from four hardcoded fields
+(`ok_pattern`/`ok_body`/`err_pattern`/`err_body`) to `{ scrutinee, arms:
+Vec<MatchArm> }`, `MatchArm { variant: Option<String>, binding:
+Option<String>, body, span }` (`variant: None` is the wildcard) — a real,
+compiler-enforced breaking change that turned every existing `Expr::
+Match` construction/destructuring site across the workspace into a
+compile error until updated, the same forcing function every prior
+feature relied on.
+
+**The old cross-arm-context trick, correctly generalized.**
+Re-reading the old "hand the `Err` arm the `Ok` arm's own resolved value
+type" logic closely revealed it never actually needed a sibling arm's
+*resolved* value at all — only the scrutinee's own *declared* Ok-side
+type, already fully known statically before any arm is checked. So the
+N-arm generalization turned out simpler than an accumulator-based
+"resolved so far" threading: `check_match_arm_general` receives the full
+`declared_variants` list as static context up front, and `Ok(pattern) =>
+Ok(pattern)`/`Err(pattern) => Err(pattern)` resolve by looking up the
+other of `Ok`/`Err` inside it directly. The general `EnumName::Variant
+(pattern) => EnumName::Variant(pattern)` re-wrap needs no "other side" at
+all — just its own variant's declared payload type.
+
+**A real, user-flagged limitation fixed properly, not worked around.**
+`check_match_arm_general`'s dispatch for "a nested `match` as an arm's
+body" originally only accepted an inner match whose *own* resolved type
+was Result-shaped — an inner match whose every arm already used `?`
+(producing a bare, unwrapped value) was rejected with
+`E-MATCH-ARM-UNTYPABLE`, even though the outer match's own dispatch
+handles a bare bound name fine. Generalized to delegate directly to
+`self.check_match(body, span)` and accept whatever it resolves to —
+Result-shaped, enum-shaped, Pool-shaped, or already-bare — a strictly
+more general and correct fix, verified not to break any existing test.
+
+**Two real gaps surfaced by hands-on testing of the shipped example, one
+fixed, one accepted as a genuine, narrower limitation.** (1) Enum-typed
+function/closure parameters were invisible to scope — no `LetDecl`
+registers a parameter, so the existing `pool_bindings`/`result_bindings`
+convention had no equivalent for an enum-typed parameter until a new
+`enum_bindings: HashMap<String, String>` field was added, populated in
+`check_let`'s new `Expr::EnumConstruct` branch and both param-seeding
+loops (`check_function`/`check_closure_expr`). (2) `Err(...)`'s payload
+must always be a literal string, even inside a user-enum match arm — a
+bound `Str` variable (a user enum's own payload, or an outer arm's
+binding) can never be re-wrapped into a fresh `Err(...)`, since the only
+mechanism for resolving `Err`'s missing `Ok` side is the sibling-arm
+trick within the *same* `Result` match, which has no equivalent for a
+user-enum match. Not fixed (would need new syntax/mechanism, out of
+scope here) — the shipped example is instead designed so every arm
+produces its `Result` through a real, self-contained fallible expression.
+
+`effects.rs`/`middle.rs`/`sim_backend.rs` all generalized their `Expr::
+Match` handling from two hardcoded arms to a fold over `arms` (effect =
+join across scrutinee + every arm; confirmation = AND across all of them
+— the same conservative "every declaration in this join counts" rule
+`if`/`?` already follow); `sim_backend.rs`'s `narrate_result_expr` in
+particular has a real, not-compiler-enforced wildcard `_` arm (same as
+before this step), so its generalization was written and verified
+explicitly rather than relying on the compiler to force it.
+`formatter.rs` needed *zero* changes — its existing token-based rules for
+braces/commas/keywords were confirmed, by direct testing, to already
+generalize correctly to `enum` declarations, `EnumName::Variant`
+construction, and N-arm `match` bodies. See the "Enums"/"Pattern
+Matching" sections of [docs/grammar.md](grammar.md) for the full surface
+semantics, and
+[`docs/examples/recovery_plan.nsl`](examples/recovery_plan.nsl) for a
+complete, runnable example exercising a user enum, a nested match, and
+exhaustiveness via a trailing wildcard.
 
 ### Closures (`Fn(...)` / `fn(params) -> T { body }`)
 
@@ -313,7 +395,7 @@ closure-bound name *before* falling back to the global function table,
 so a call site looks identical whether `name` is a top-level `fn` or a
 local closure.
 
-**Self-recursion (Step 13) — the one genuine runtime bug found in this
+**Self-recursion — the one genuine runtime bug found in this
 whole language's development, not a design gap.** `codegen.rs`'s
 `call_closure` always started a call's own `env` fresh from
 `captured_env`, the snapshot `Expr::Closure` takes at evaluation time --
@@ -337,7 +419,7 @@ rather than one level. The shipped example was redesigned alongside the
 fix to retry into a genuinely different fallback target on the second
 attempt, so the recursion is real *and* terminates.
 
-**Generic closures, `fn<T>(...)` (Step 13)**: `Expr::Closure` gained its
+**Generic closures, `fn<T>(...)`**: `Expr::Closure` gained its
 own `type_params: Vec<String>`, mirroring `FunctionDecl`. Because a fresh
 type-parameter name is only recognized inside a closure literal's own
 declared `<...>` list at parse time (not inferred from surrounding
@@ -354,11 +436,11 @@ fixing a real, latent false-positive `E-ARG-TYPE-MISMATCH` along the way
 equality against any concrete argument, which is always unequal).
 
 **`nucle plan`/`nucle explain` narration through a `let`-bound closure's
-own call (Step 13)**: `sim_backend.rs`'s `narrate_result_expr` now threads
+own call**: `sim_backend.rs`'s `narrate_result_expr` now threads
 a `closures: &mut HashMap<String, Vec<Declaration>>` map (name → body),
 built incrementally by the same two declaration-walking loops that
 already existed, checked *before* the named-function lookup -- the exact
-priority `effects.rs`'s own Step 12 fix already established. A closure
+priority `effects.rs`'s own earlier fix already established. A closure
 received as a `Fn(...)`-typed *parameter*, or an inline closure literal
 passed directly as a call argument, remains unnarratable, since neither's
 real body is known at that call site, only at runtime -- this closes only
@@ -470,7 +552,7 @@ deliberately does **not** print from the AST — the AST drops comments and
 normalizes literal spellings by design (see `ast.rs`), so printing from it
 would silently delete every `//` comment. Instead it re-renders the real
 token stream (`lexer::Lexer`, which already carries each token's
-line/column from Step 0's span work) plus a small dedicated scan for
+line/column from the lexer's own span-tracking work) plus a small dedicated scan for
 comments (the one thing tokenizing discards), consulting the parsed
 `Program` for exactly one thing: each top-level declaration's start line,
 used to force exactly one blank line between top-level declarations
@@ -500,7 +582,7 @@ language server.
 declarations; `assert <condition>` (`ast::AssertOp`, valid anywhere a
 declaration is, not just inside a test) is evaluated by the *exact same*
 `typeck::TypeChecker::eval_condition` an `if` condition uses — there's no
-separate assertion DSL, per the plan's explicit call to reuse Step 4's
+separate assertion DSL, reusing `if`'s own existing
 comparison operators. That's also why an assertion is checked at
 type-check time rather than deferred to some later "runtime" phase:
 NucleScript's probabilistic properties (a pool binding's inferred error

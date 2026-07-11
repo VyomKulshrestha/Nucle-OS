@@ -55,6 +55,8 @@ impl Parser {
             self.parse_let_decl(doc)
         } else if self.check_ident("fn") {
             self.parse_function_decl(doc).map(Declaration::Function)
+        } else if self.check_ident("enum") {
+            self.parse_enum_decl(doc).map(Declaration::Enum)
         } else if self.check_ident("store") || self.check_ident("simulate") {
             self.reject_doc_comment(&doc, "store")?;
             self.parse_store().map(|op| Declaration::Operation(Operation::Store(op)))
@@ -79,23 +81,23 @@ impl Parser {
             self.reject_doc_comment(&doc, "test")?;
             self.parse_test().map(Declaration::Test)
         } else if doc.is_some() {
-            Err(self.error_here("expected a documentable declaration (pool, strand, seq, fn, or pipeline) after a doc comment"))
+            Err(self.error_here("expected a documentable declaration (pool, strand, seq, fn, enum, or pipeline) after a doc comment"))
         } else {
-            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, store, retrieve, delete, assert, simulate, pipeline, if, for, or test"))
+            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, enum, store, retrieve, delete, assert, simulate, pipeline, if, for, or test"))
         }
     }
 
-    /// Doc comments only attach to `pool`/`strand`/`seq`/`fn`/`pipeline`
-    /// (see `ast::PoolDecl::doc`) -- a `///` immediately before anything
-    /// else is rejected here rather than silently dropped, so it reads as
-    /// a mistake to fix, not documentation that quietly went nowhere.
-    /// `let` is handled separately (see `parse_let_decl`) since it can
-    /// desugar to a documentable `SequenceDecl` depending on which form
-    /// is written.
+    /// Doc comments only attach to `pool`/`strand`/`seq`/`fn`/`enum`/
+    /// `pipeline` (see `ast::PoolDecl::doc`) -- a `///` immediately before
+    /// anything else is rejected here rather than silently dropped, so it
+    /// reads as a mistake to fix, not documentation that quietly went
+    /// nowhere. `let` is handled separately (see `parse_let_decl`) since
+    /// it can desugar to a documentable `SequenceDecl` depending on which
+    /// form is written.
     fn reject_doc_comment(&self, doc: &Option<String>, keyword: &str) -> Result<(), ParseError> {
         if doc.is_some() {
             Err(self.error_here(format!(
-                "doc comments can only precede pool/strand/seq/fn/pipeline declarations, not '{}'",
+                "doc comments can only precede pool/strand/seq/fn/enum/pipeline declarations, not '{}'",
                 keyword
             )))
         } else {
@@ -387,6 +389,36 @@ impl Parser {
         Ok(StrandDecl { name, sequence, span: self.span_since(start), doc })
     }
 
+    /// `enum Name { Variant1, Variant2(PayloadType), ... }` (Step 14).
+    /// Each variant is a bare name (unit) or a name followed by exactly
+    /// one parenthesized payload type -- see `ast::EnumVariant`'s own doc
+    /// comment for why never more than one.
+    fn parse_enum_decl(&mut self, doc: Option<String>) -> Result<EnumDecl, ParseError> {
+        let start = self.start_span();
+        self.expect_ident_text("enum")?;
+        let name = self.expect_ident_any("enum name")?;
+        self.expect(TokenKind::LBrace, "'{' after enum name")?;
+        let mut variants = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            let variant_start = self.start_span();
+            let variant_name = self.expect_ident_any("variant name")?;
+            let payload = if self.check(TokenKind::LParen) {
+                self.advance();
+                let ty = self.parse_type_expr()?;
+                self.expect(TokenKind::RParen, "')' after variant payload type")?;
+                Some(ty)
+            } else {
+                None
+            };
+            variants.push(EnumVariant { name: variant_name, payload, span: self.span_since(variant_start) });
+            if !self.consume_comma() && !self.check(TokenKind::RBrace) {
+                return Err(self.error_here("expected ',' or '}' in enum variant list"));
+            }
+        }
+        self.expect(TokenKind::RBrace, "'}' to close enum body")?;
+        Ok(EnumDecl { name, variants, span: self.span_since(start), doc })
+    }
+
     fn parse_sequence_decl(&mut self, doc: Option<String>) -> Result<SequenceDecl, ParseError> {
         let start = self.start_span();
         self.expect_ident_text("seq")?;
@@ -495,8 +527,20 @@ impl Parser {
             self.advance();
             let return_type = self.parse_type_expr()?;
             Ok(TypeExpr::Fn(params, Box::new(return_type)))
+        } else if let TokenKind::Ident(name) = &self.peek().kind {
+            // Any identifier not matching one of the built-in type
+            // keywords above is presumed to name a user-declared `enum`
+            // (Step 14) -- the parser has no `self.enums` table to check
+            // against (declarations aren't resolved until typeck), so a
+            // genuinely undeclared/misspelled name here is deferred to
+            // `E-ENUM-UNKNOWN` at type-check time rather than a parse
+            // error, the same "accept optimistically, validate later"
+            // precedent `PoolState::Var` already set for `Pool<T>`.
+            let name = name.clone();
+            self.advance();
+            Ok(TypeExpr::Enum(name))
         } else {
-            Err(self.error_here("expected type annotation: Pool<...>, Strand, Sequence, File, DnaFile, Recovery, Result<...>, Str, Fn(...), or Void"))
+            Err(self.error_here("expected type annotation: Pool<...>, Strand, Sequence, File, DnaFile, Recovery, Result<...>, Str, Fn(...), Void, or a declared enum name"))
         }
     }
 
@@ -684,6 +728,27 @@ impl Parser {
             let inner = self.parse_expr()?;
             self.expect(TokenKind::RParen, "')' after Err(...)")?;
             Ok(Expr::Err(Box::new(inner)))
+        } else if matches!(self.peek().kind, TokenKind::Ident(_))
+            && matches!(self.tokens.get(self.index + 1).map(|t| &t.kind), Some(TokenKind::ColonColon))
+            && matches!(self.tokens.get(self.index + 2).map(|t| &t.kind), Some(TokenKind::Ident(_)))
+        {
+            // `EnumName::Variant(payload)` / `EnumName::Variant` -- reuses
+            // the `::` token added for turbofish (Step 13). Unambiguous by
+            // one token of lookahead: turbofish is always `::` followed by
+            // `<`, a variant reference is always `::` followed by an
+            // identifier (see `Expr::EnumConstruct`'s doc comment).
+            let enum_name = self.expect_ident_any("enum name")?;
+            self.expect(TokenKind::ColonColon, "'::' after enum name")?;
+            let variant = self.expect_ident_any("variant name")?;
+            let payload = if self.check(TokenKind::LParen) {
+                self.advance();
+                let inner = self.parse_expr()?;
+                self.expect(TokenKind::RParen, "')' after enum variant payload")?;
+                Some(Box::new(inner))
+            } else {
+                None
+            };
+            Ok(Expr::EnumConstruct { enum_name, variant, payload })
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             let name = name.clone();
             let next_is_call = matches!(
@@ -739,28 +804,48 @@ impl Parser {
         }
     }
 
-    /// `match <scrutinee> { Ok(<name>) => <expr>, Err(<name>) => <expr> }`.
-    /// Arm order is fixed (`Ok` then `Err`, an optional trailing comma
-    /// after `Err`) rather than general/reorderable -- `Result` is the
-    /// only sum type in the language and it's closed to exactly two
-    /// variants, so there's nothing to check beyond "both present, right
-    /// order" (see `Expr::Match`'s doc comment in ast.rs).
+    /// `match <scrutinee> { <arm>, ... }` -- the general pattern-matching
+    /// engine (Step 14). Any number of arms, any order (no longer fixed
+    /// `Ok` then `Err`) -- `typeck::TypeChecker::check_match` validates
+    /// exhaustiveness/duplicate-variant/wildcard-position against the
+    /// scrutinee's own declared variant list (built-in Result, or a user
+    /// `enum`). See `Expr::Match`'s doc comment in ast.rs.
     fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
         self.advance(); // `match`
         let scrutinee = self.parse_expr()?;
         self.expect(TokenKind::LBrace, "'{' to open match arms")?;
-        let (ok_pattern, ok_body) = self.parse_match_arm("Ok")?;
-        self.expect(TokenKind::Comma, "',' between match arms")?;
-        let (err_pattern, err_body) = self.parse_match_arm("Err")?;
-        self.consume_comma(); // optional trailing comma
+        let mut arms = Vec::new();
+        while !self.check(TokenKind::RBrace) {
+            arms.push(self.parse_match_arm()?);
+            if !self.consume_comma() && !self.check(TokenKind::RBrace) {
+                return Err(self.error_here("expected ',' or '}' between match arms"));
+            }
+        }
         self.expect(TokenKind::RBrace, "'}' to close match arms")?;
-        Ok(Expr::Match {
-            scrutinee: Box::new(scrutinee),
-            ok_pattern,
-            ok_body: Box::new(ok_body),
-            err_pattern,
-            err_body: Box::new(err_body),
-        })
+        Ok(Expr::Match { scrutinee: Box::new(scrutinee), arms })
+    }
+
+    /// One `match` arm: `_ => <expr>` (wildcard, no capture), `Variant =>
+    /// <expr>` (unit variant, nothing to bind), or `Variant(<binding>) =>
+    /// <expr>` (payload variant). `_` is an ordinary identifier at the
+    /// lexer level (`is_ident_start` accepts `_`), so it's recognized here
+    /// by value rather than needing its own token kind.
+    fn parse_match_arm(&mut self) -> Result<MatchArm, ParseError> {
+        let start = self.start_span();
+        let name = self.expect_ident_any("match arm variant name or '_'")?;
+        let (variant, binding) = if name == "_" {
+            (None, None)
+        } else if self.check(TokenKind::LParen) {
+            self.advance();
+            let binding = self.expect_ident_any("pattern binding name")?;
+            self.expect(TokenKind::RParen, "')' to close pattern")?;
+            (Some(name), Some(binding))
+        } else {
+            (Some(name), None)
+        };
+        self.expect(TokenKind::FatArrow, "'=>'")?;
+        let body = self.parse_expr()?;
+        Ok(MatchArm { variant, binding, body: Box::new(body), span: self.span_since(start) })
     }
 
     /// `fn(params) -> ReturnType { body }` in *expression* position -- an
@@ -837,16 +922,6 @@ impl Parser {
         }
         self.expect(TokenKind::RBrace, "'}' to end closure body")?;
         Ok(Expr::Closure { type_params, params, return_type, body, span: self.span_since(start) })
-    }
-
-    fn parse_match_arm(&mut self, keyword: &str) -> Result<(String, Expr), ParseError> {
-        self.expect_ident_text(keyword)?;
-        self.expect(TokenKind::LParen, "'(' after pattern")?;
-        let name = self.expect_ident_any("pattern binding name")?;
-        self.expect(TokenKind::RParen, "')' to close pattern")?;
-        self.expect(TokenKind::FatArrow, "'=>'")?;
-        let body = self.parse_expr()?;
-        Ok((name, body))
     }
 
     fn consume_confirmation(&mut self, marker: &str) -> Result<bool, ParseError> {

@@ -82,7 +82,7 @@
       "patterns": [
         {
           "name": "keyword.control.nuclescript",
-          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test|match)\\b"
+          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test|match|enum)\\b"
         }
       ]
     },
@@ -125,6 +125,11 @@
         {
           "name": "keyword.operator.arrow.nuclescript",
           "match": "->"
+        },
+        {
+          "comment": "the same '::' token doing double duty as both explicit type-argument syntax (name::<Illumina>(...)) and enum variant construction (EnumName::Variant/EnumName::Variant(payload)) -- listed before the comparison pattern below so a following '<' (turbofish) still matches its own comparison/operator pattern separately rather than this rule trying to consume it too",
+          "name": "keyword.operator.scope.nuclescript",
+          "match": "::"
         },
         {
           "comment": "multi-character comparison forms must be listed as alternatives here (not as separate, later patterns) so they win over the single-character '<'/'>' match at the same position",

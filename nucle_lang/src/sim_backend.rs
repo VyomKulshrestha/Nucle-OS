@@ -174,6 +174,13 @@ fn narrate_result_expr(
         // already inside could produce a step to narrate.
         Expr::Ok(inner) => narrate_result_expr(inner, pools, funcs, closures, steps, calling),
         Expr::Err(inner) => narrate_result_expr(inner, pools, funcs, closures, steps, calling),
+        // Constructing a user enum instance (Step 14) is inert the same
+        // way -- explicit, not left to the trailing wildcard below, since
+        // a missed arm here would silently swallow a nested operation
+        // (e.g. `MyEnum::Fallback(store "x" into pool)`) with no compile
+        // error to catch it.
+        Expr::EnumConstruct { payload: Some(inner), .. } => narrate_result_expr(inner, pools, funcs, closures, steps, calling),
+        Expr::EnumConstruct { payload: None, .. } => {}
         Expr::StoreExpr(op) => {
             if let Some(pool) = pools.get(&op.pool) {
                 let redundancy = op.options.redundancy.unwrap_or(pool.redundancy);
@@ -193,12 +200,15 @@ fn narrate_result_expr(
         }
         // The narrator can't know at plan-time which arm would actually
         // run, so -- like effects/confirmation above it -- it narrates
-        // all three (scrutinee and both arms) unconditionally: describing
-        // everything that could possibly run, not guessing which will.
-        Expr::Match { scrutinee, ok_body, err_body, .. } => {
+        // the scrutinee and every arm unconditionally (Step 14
+        // generalizes this from a fixed two-arm walk to N arms):
+        // describing everything that could possibly run, not guessing
+        // which will.
+        Expr::Match { scrutinee, arms } => {
             narrate_result_expr(scrutinee, pools, funcs, closures, steps, calling);
-            narrate_result_expr(ok_body, pools, funcs, closures, steps, calling);
-            narrate_result_expr(err_body, pools, funcs, closures, steps, calling);
+            for arm in arms {
+                narrate_result_expr(&arm.body, pools, funcs, closures, steps, calling);
+            }
         }
         // Closures resolve first, mirroring `effects.rs`'s own priority
         // -- see this function's own doc comment.

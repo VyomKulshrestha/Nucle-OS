@@ -114,6 +114,7 @@ pub fn check_program_with_symbols(program: &Program) -> (TypeReport, SymbolTable
         strands: checker.strands,
         sequences: checker.sequences,
         bindings: checker.bindings,
+        enums: checker.enums,
     };
     (checker.report, symbols)
 }
@@ -128,6 +129,7 @@ pub struct SymbolTable {
     pub strands: HashMap<String, Span>,
     pub sequences: HashMap<String, Span>,
     pub bindings: HashMap<String, LetDecl>,
+    pub enums: HashMap<String, EnumDecl>,
 }
 
 #[derive(Default)]
@@ -177,7 +179,45 @@ struct TypeChecker {
     /// signature, never an outer function's, even though the closure's
     /// checker otherwise inherits the outer scope's bindings for capture.
     enclosing_result_return: Option<(TypeExpr, TypeExpr)>,
+    /// User-declared `enum`s (Step 14), registered incrementally as
+    /// `check_declaration_single` walks `Declaration::Enum` entries --
+    /// same "declare before use" convention `pools`/`functions` already
+    /// have. `Result<T, E>` is never an entry here; see `TypeExpr::Enum`'s
+    /// own doc comment for why it stays its own privileged type.
+    enums: HashMap<String, EnumDecl>,
+    /// User-enum-typed `let` bindings AND function/closure *parameters*
+    /// (Step 14) -- parallel to `pool_bindings`/`result_bindings`, but
+    /// specifically for the case a parameter has no `LetDecl` of its own
+    /// to register in `self.bindings` (which only ever holds real `let`
+    /// declarations, so a `RecoveryPlan`-typed parameter would otherwise
+    /// be invisible to `infer_scrutinee_kind`'s `Expr::Variable` lookup).
+    /// A `let`-bound enum variable is tracked here too (redundantly with
+    /// `self.bindings`) purely so `infer_scrutinee_kind` has one map to
+    /// check regardless of which kind of binding it is.
+    enum_bindings: HashMap<String, String>,
     report: TypeReport,
+}
+
+/// One variant's name and (optional) payload type, in declaration order
+/// -- the "shape" a `match`'s scrutinee is checked against (Step 14),
+/// whether that shape comes from the built-in Result pseudo-enum or a
+/// real user `EnumDecl`. See `TypeChecker::check_match`.
+struct VariantSignature {
+    name: String,
+    payload_ty: Option<TypeExpr>,
+}
+
+/// What `TypeChecker::infer_scrutinee_kind` resolves a `match`'s
+/// scrutinee to.
+enum ScrutineeKind {
+    /// `Result<ok_ty, err_ty>`-shaped (via the existing, unchanged
+    /// `infer_result_expr`). Its "declared variants" are always exactly
+    /// `[Ok(ok_ty), Err(err_ty)]` -- never looked up in `self.enums`
+    /// (Result is never registered there; see `check_enum`'s
+    /// `E-ENUM-RESERVED-NAME` guard).
+    Result { ok_ty: TypeExpr, err_ty: TypeExpr },
+    /// A real user-declared enum, looked up by name.
+    UserEnum { decl: EnumDecl },
 }
 
 impl TypeChecker {
@@ -245,6 +285,10 @@ impl TypeChecker {
             Declaration::If(if_decl) => self.check_if(if_decl),
             Declaration::For(for_decl) => self.check_for(for_decl),
             Declaration::Test(test) => vec![Declaration::Test(self.check_test(test))],
+            Declaration::Enum(enum_decl) => {
+                self.check_enum(enum_decl);
+                vec![declaration.clone()]
+            }
         }
     }
 
@@ -278,6 +322,8 @@ impl TypeChecker {
         let mut body_checker = TypeChecker::default();
         body_checker.pools = self.pools.clone();
         body_checker.functions = self.functions.clone();
+        body_checker.enums = self.enums.clone();
+        body_checker.enum_bindings = self.enum_bindings.clone();
 
         let mut desugared_body = Vec::new();
         for decl in &test.body {
@@ -416,6 +462,39 @@ impl TypeChecker {
         self.pools.insert(pool.name.clone(), pool.clone());
     }
 
+    /// `enum Name { Variant1, Variant2(Type), ... }` (Step 14). `Result`
+    /// is reserved -- it's never an instance of this general mechanism,
+    /// just uniformly *matchable* alongside one (see `check_match`).
+    /// Whether a variant's own payload type (if it names another enum)
+    /// actually resolves is checked lazily, at the point something tries
+    /// to construct/match it (`check_enum_construct`/`check_match`) --
+    /// exactly like `Pool<...>`-typed parameters aren't independently
+    /// re-validated against "does this pool exist" at declaration time
+    /// either.
+    fn check_enum(&mut self, decl: &EnumDecl) {
+        if decl.name == "Result" {
+            self.report.error(decl.span, "E-ENUM-RESERVED-NAME", "'Result' is a built-in type and cannot be redeclared as an enum");
+            return;
+        }
+        if self.enums.contains_key(&decl.name) {
+            self.report.error(decl.span, "E-ENUM-DUPLICATE", format!("enum '{}' is declared more than once", decl.name));
+            return;
+        }
+        if decl.variants.is_empty() {
+            self.report.error(decl.span, "E-ENUM-EMPTY", format!("enum '{}' has no variants", decl.name));
+            return;
+        }
+        let mut seen = HashSet::new();
+        for variant in &decl.variants {
+            if !seen.insert(&variant.name) {
+                self.report.error(variant.span, "E-ENUM-VARIANT-DUPLICATE", format!(
+                    "enum '{}' declares variant '{}' more than once", decl.name, variant.name
+                ));
+            }
+        }
+        self.enums.insert(decl.name.clone(), decl.clone());
+    }
+
     fn check_import(&mut self, import: &ImportDecl) {
         if !package_exists(&import.source) {
             self.report.error(import.span, "E-IMPORT-UNKNOWN-SOURCE", format!("import source '{}' is not available", import.source));
@@ -532,6 +611,29 @@ impl TypeChecker {
                 } else {
                     self.result_bindings.insert(binding.name.clone(), (ok, err));
                     self.bindings.insert(binding.name.clone(), binding.clone());
+                }
+            }
+            return;
+        }
+
+        // `let x: EnumName = EnumName::Variant(<expr>)` / `EnumName::
+        // Variant` -- a direct user-enum construction (Step 14). Checked
+        // before the un-unwrapped Result path below for the same reason
+        // `Ok`/`Err`/`Match`/`Closure` are: without this branch, neither
+        // `infer_result_expr` nor `infer_expr` recognizes `Expr::
+        // EnumConstruct` at all, so the binding would silently fall
+        // through `None => return` below with no diagnostic and never
+        // register in `self.bindings`.
+        if let Expr::EnumConstruct { enum_name, variant, payload } = &binding.expr {
+            if let Some(constructed) = self.check_enum_construct(enum_name, variant, payload.as_deref(), binding.span) {
+                if constructed != binding.annotation {
+                    self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
+                        "binding '{}' is annotated as {} but this constructs {}",
+                        binding.name, crate::docgen::render_type(&binding.annotation), crate::docgen::render_type(&constructed)
+                    ));
+                } else {
+                    self.bindings.insert(binding.name.clone(), binding.clone());
+                    self.enum_bindings.insert(binding.name.clone(), enum_name.clone());
                 }
             }
             return;
@@ -778,99 +880,309 @@ impl TypeChecker {
         Some(ok_ty)
     }
 
-    /// `match <scrutinee> { Ok(<name>) => <ok_body>, Err(<name>) => <err_body> }`'s
-    /// validity: `scrutinee` must be `Result`-shaped (`E-MATCH-NOT-RESULT`
-    /// if not), each arm's body must resolve to a type (see
-    /// `check_match_arm`), and both arms' types must agree
-    /// (`E-MATCH-ARM-TYPE-MISMATCH` if not). Returns the unified type on
-    /// success -- exactly what a `match` expression "is", the same way
+    /// What a `match`'s scrutinee resolved to -- either the built-in
+    /// `Result<T, E>` "pseudo-enum" (never registered in `self.enums`) or
+    /// a real user-declared `enum`. See `check_match`.
+    fn infer_scrutinee_kind(&mut self, expr: &Expr, span: Span) -> Option<ScrutineeKind> {
+        // Reuses the EXISTING, unchanged `infer_result_expr` first --
+        // Result resolution is completely unaffected by user enums; every
+        // expr shape it already recognizes (StoreExpr/DeleteExpr/Ok/Err/
+        // nested Match/Variable/FunctionCall) keeps working exactly as
+        // before.
+        if let Some((ok_ty, err_ty)) = self.infer_result_expr(expr, span) {
+            return Some(ScrutineeKind::Result { ok_ty, err_ty });
+        }
+        // Otherwise, is it enum-shaped? Mirrors `infer_result_expr`'s own
+        // Variable/FunctionCall/nested-Match cases, but resolving against
+        // `self.enums` instead of a fixed Ok/Err pair.
+        let enum_name = match expr {
+            Expr::EnumConstruct { enum_name, .. } => Some(enum_name.clone()),
+            // Checks `enum_bindings` (covers both a `let`-bound enum
+            // variable and a function/closure *parameter*, which has no
+            // `LetDecl` of its own to look up in `self.bindings`) -- see
+            // `TypeChecker::enum_bindings`'s own doc comment.
+            Expr::Variable(name) => self.enum_bindings.get(name).cloned(),
+            Expr::FunctionCall { name, .. } if self.closures.contains_key(name) => match &self.closures[name].2 {
+                TypeExpr::Enum(n) => Some(n.clone()),
+                _ => None,
+            },
+            Expr::FunctionCall { name, .. } => match self.lookup_function(name).map(|f| f.return_type.clone()) {
+                Some(TypeExpr::Enum(n)) => Some(n),
+                _ => None,
+            },
+            // A nested match whose own unified arm type is an enum --
+            // composability, mirroring `infer_result_expr`'s own nested-
+            // Match delegation.
+            Expr::Match { .. } => match self.check_match(expr, span) {
+                Some(TypeExpr::Enum(n)) => Some(n),
+                _ => None,
+            },
+            _ => None,
+        }?;
+        self.enums.get(&enum_name).cloned().map(|decl| ScrutineeKind::UserEnum { decl })
+    }
+
+    /// `match <scrutinee> { <arm>, ... }`'s validity (Step 14) --
+    /// generalizes the original Result-only, fixed-two-arm check to any
+    /// number of arms over either Result's own two implicit variants
+    /// (`Ok`/`Err`) or a user-declared `enum`'s real variant list.
+    /// `scrutinee` must resolve to one of those (`E-MATCH-UNRECOGNIZED-
+    /// SCRUTINEE` if not); every declared variant needs exactly one arm
+    /// (by name) or a trailing wildcard covering the rest
+    /// (`E-MATCH-NON-EXHAUSTIVE`); an arm naming an unknown variant
+    /// (`E-MATCH-UNKNOWN-VARIANT`), two arms naming the same variant
+    /// (`E-MATCH-DUPLICATE-ARM`), or a wildcard that isn't last
+    /// (`E-MATCH-ARM-AFTER-WILDCARD`) are all rejected. Returns the
+    /// unified arm type on success (`E-MATCH-ARM-TYPE-MISMATCH` if arms
+    /// disagree) -- exactly what a `match` expression "is", the same way
     /// `check_try` returns `?`'s unwrapped type.
     fn check_match(&mut self, m: &Expr, span: Span) -> Option<TypeExpr> {
-        let Expr::Match { scrutinee, ok_pattern, ok_body, err_pattern, err_body } = m else {
+        let Expr::Match { scrutinee, arms } = m else {
             unreachable!("check_match called on a non-Match expression");
         };
-        let Some((ok_ty, err_ty)) = self.infer_result_expr(scrutinee, span) else {
-            self.report.error(span, "E-MATCH-NOT-RESULT", "'match' can only scrutinize a Result<T, E>-typed expression");
+
+        let Some(kind) = self.infer_scrutinee_kind(scrutinee, span) else {
+            self.report.error(span, "E-MATCH-UNRECOGNIZED-SCRUTINEE", "'match' can only scrutinize a Result<T, E>-typed expression or a declared enum-typed expression");
             return None;
         };
-        // The `Ok` arm is checked first so its result can be handed to
-        // the `Err` arm as context -- what makes `Err(reason) =>
-        // Err(reason)` (alongside `Ok(file) => Ok(file)`) resolvable:
-        // `Err(...)`'s own missing `Ok` type has no sensible default,
-        // unlike `Ok(...)`'s missing `Err` type (which always defaults
-        // to `Str`). The context handed down is the *scrutinee's own*
-        // Ok-side type (`ok_ty`, from `infer_result_expr` above) rather
-        // than the Ok arm's own resolved value type (`ok_result`) --
-        // those two differ exactly when the Ok arm re-wraps via
-        // `Ok(file) => Ok(file)`, whose own resolved type is already
-        // `Result<DnaFile, Str>`, not the bare `DnaFile` `Err(reason) =>
-        // Err(reason)` needs as its own `Ok` side.
-        let ok_result = self.check_match_arm(ok_body, ok_pattern, &ok_ty, None, span);
-        let err_result = self.check_match_arm(err_body, err_pattern, &err_ty, Some(&ok_ty), span);
-        let (ok_result, err_result) = (ok_result?, err_result?);
-        if ok_result != err_result {
-            self.report.error(span, "E-MATCH-ARM-TYPE-MISMATCH", format!(
-                "match arms produce different types: Ok(...) => {}, Err(...) => {}",
-                crate::docgen::render_type(&ok_result), crate::docgen::render_type(&err_result)
-            ));
+        let declared_variants: Vec<VariantSignature> = match &kind {
+            ScrutineeKind::Result { ok_ty, err_ty } => vec![
+                VariantSignature { name: "Ok".to_string(), payload_ty: Some(ok_ty.clone()) },
+                VariantSignature { name: "Err".to_string(), payload_ty: Some(err_ty.clone()) },
+            ],
+            ScrutineeKind::UserEnum { decl } => {
+                decl.variants.iter().map(|v| VariantSignature { name: v.name.clone(), payload_ty: v.payload.clone() }).collect()
+            }
+        };
+
+        // Pass 1: shape-check the arm list itself -- unknown variant
+        // names, a wildcard that isn't last, duplicate arms for the same
+        // variant -- independent of body types.
+        let mut wildcard_seen = false;
+        for arm in arms {
+            if wildcard_seen {
+                self.report.error(arm.span, "E-MATCH-ARM-AFTER-WILDCARD", "no arms are allowed after a wildcard '_' arm");
+            }
+            match &arm.variant {
+                None => wildcard_seen = true,
+                Some(name) if !declared_variants.iter().any(|v| &v.name == name) => {
+                    self.report.error(arm.span, "E-MATCH-UNKNOWN-VARIANT", format!("'{}' is not a variant of this match's scrutinee type", name));
+                }
+                Some(_) => {}
+            }
+        }
+        let mut seen_names: HashSet<&String> = HashSet::new();
+        for arm in arms {
+            if let Some(name) = &arm.variant {
+                if !seen_names.insert(name) {
+                    self.report.error(arm.span, "E-MATCH-DUPLICATE-ARM", format!("variant '{}' is matched by more than one arm", name));
+                }
+            }
+        }
+
+        // Pass 2: exhaustiveness -- every declared variant needs a named
+        // arm, unless a wildcard covers whatever's missing.
+        if !wildcard_seen {
+            for v in &declared_variants {
+                if !seen_names.contains(&v.name) {
+                    self.report.error(span, "E-MATCH-NON-EXHAUSTIVE", format!("match is missing an arm for variant '{}'", v.name));
+                }
+            }
+        }
+
+        // Pass 3: type-check each present arm's body, in source order.
+        // `declared_variants` is static context known up front (the
+        // scrutinee's own type), which is what makes the old two-arm
+        // "hand Err the Ok arm's context" trick generalize cleanly to N
+        // arms with no incremental accumulator needed -- see
+        // `check_match_arm_general`'s own doc comment.
+        let mut resolved: Vec<(Span, TypeExpr)> = Vec::new();
+        let mut any_failed = false;
+        for arm in arms {
+            let pattern_ty = arm.variant.as_ref().and_then(|n| declared_variants.iter().find(|v| &v.name == n)).and_then(|v| v.payload_ty.clone());
+            match self.check_match_arm_general(&arm.body, arm.binding.as_deref(), pattern_ty.as_ref(), &declared_variants, arm.span) {
+                Some(ty) => resolved.push((arm.span, ty)),
+                None => any_failed = true,
+            }
+        }
+        if any_failed || resolved.is_empty() {
             return None;
         }
-        Some(ok_result)
+
+        // Pass 4: unify all resolved arm types -- generalizes the old
+        // 2-way Ok/Err equality check to N arms.
+        let (_, first_ty) = resolved[0].clone();
+        for (arm_span, ty) in &resolved[1..] {
+            if ty != &first_ty {
+                self.report.error(*arm_span, "E-MATCH-ARM-TYPE-MISMATCH", format!(
+                    "match arms produce different types: expected {}, got {}",
+                    crate::docgen::render_type(&first_ty), crate::docgen::render_type(ty)
+                ));
+                return None;
+            }
+        }
+        Some(first_ty)
     }
 
     /// A match arm's body is one of: the pattern variable itself (the
     /// trivial "use the unwrapped value as-is" arm), `Ok(<pattern>)`/
-    /// `Err(<pattern>)` (re-wrapping the arm's own bound value -- see
-    /// below for why this is special-cased rather than routed through
-    /// `check_ok_expr`/`check_err_expr`'s generic path), `?` (reuses
-    /// `check_try`), a Result-shaped expression (reuses
-    /// `infer_result_expr` -- an arm can produce a still-wrapped
-    /// `Result`, e.g. a fallback `store`), or a Pool-shaped expression
-    /// (reuses `infer_expr`) -- the same dispatch `check_let` already
-    /// runs for a `let`'s RHS, plus the pattern-name cases a `let`
-    /// doesn't need. `other_arm_ty` is the *sibling* arm's already-
-    /// resolved type if checked already (`None` when checking the `Ok`
-    /// arm, which is always checked first) -- the only external context
-    /// available here for `Err(<pattern>)`'s otherwise-unknowable `Ok`
-    /// side.
-    fn check_match_arm(&mut self, body: &Expr, pattern: &str, pattern_ty: &TypeExpr, other_arm_ty: Option<&TypeExpr>, span: Span) -> Option<TypeExpr> {
-        if matches!(body, Expr::Variable(name) if name == pattern) {
-            return Some(pattern_ty.clone());
-        }
-        // `Ok(<pattern>)`/`Err(<pattern>)` -- re-wrapping the arm's own
-        // bound value, e.g. `Ok(file) => Ok(file)` alongside
-        // `Err(reason) => Err(reason)`. The pattern's own name is
-        // deliberately never registered in any typeck scope map (see
-        // `Expr::Match`'s doc comment in ast.rs), so `check_ok_expr`/
-        // `check_err_expr`'s generic, externally-resolvable-expression
-        // path can't see it -- this is the one case that needs its own
-        // handling here instead.
-        if let Expr::Ok(inner) = body {
-            if matches!(inner.as_ref(), Expr::Variable(name) if name == pattern) {
-                let err_ty = other_arm_ty.cloned().unwrap_or(TypeExpr::Str);
-                return Some(TypeExpr::Result(Box::new(pattern_ty.clone()), Box::new(err_ty)));
+    /// `Err(<pattern>)` (Result-specific re-wrap) or `EnumName::Variant(
+    /// <pattern>)` (the general form, for a user enum) -- re-wrapping the
+    /// arm's own bound value; see below for why this is special-cased
+    /// rather than routed through `check_ok_expr`/`check_err_expr`/
+    /// `check_enum_construct`'s generic path -- `?` (reuses `check_try`),
+    /// a Result-shaped expression (reuses `infer_result_expr` -- an arm
+    /// can produce a still-wrapped `Result`, e.g. a fallback `store`), an
+    /// enum-shaped expression (mirrors the Result case for user enums),
+    /// or a Pool-shaped expression (reuses `infer_expr`) -- the same
+    /// dispatch `check_let` already runs for a `let`'s RHS, plus the
+    /// pattern-name cases a `let` doesn't need.
+    ///
+    /// `declared_variants` is the scrutinee's own full variant list,
+    /// known statically before any arm is checked (see `check_match`).
+    /// This is what the old two-arm code's "hand the Err arm the Ok
+    /// arm's context" trick actually generalizes to: re-reading that
+    /// code closely, `Err(reason) => Err(reason)`'s missing `Ok` type
+    /// never needed the *Ok arm's own resolved value*, only the
+    /// scrutinee's *declared* Ok-side type -- which is already part of
+    /// `declared_variants`, with no need to thread an incremental
+    /// "resolved so far" accumulator through arm checking. A general
+    /// `EnumName::Variant(pattern) => EnumName::Variant(pattern)` re-wrap
+    /// needs no "other side" context at all -- just its own variant's
+    /// declared payload type, already known via `pattern_ty`.
+    fn check_match_arm_general(
+        &mut self,
+        body: &Expr,
+        binding: Option<&str>,
+        pattern_ty: Option<&TypeExpr>,
+        declared_variants: &[VariantSignature],
+        span: Span,
+    ) -> Option<TypeExpr> {
+        // 1. The pattern's own bound name, used directly.
+        if let (Some(pattern), Expr::Variable(name)) = (binding, body) {
+            if name == pattern {
+                return match pattern_ty {
+                    Some(ty) => Some(ty.clone()),
+                    None => {
+                        self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "this arm's variant has no payload to bind, but its body uses the pattern name as a value");
+                        None
+                    }
+                };
             }
         }
-        if let Expr::Err(inner) = body {
+        // 2. `Ok(<pattern>)`/`Err(<pattern>)` -- Result-specific re-wrap.
+        // The pattern's own name is deliberately never registered in any
+        // typeck scope map (see `Expr::Match`'s doc comment in ast.rs),
+        // so `check_ok_expr`/`check_err_expr`'s generic,
+        // externally-resolvable-expression path can't see it.
+        if let (Some(pattern), Expr::Ok(inner)) = (binding, body) {
             if matches!(inner.as_ref(), Expr::Variable(name) if name == pattern) {
-                let Some(ok_ty) = other_arm_ty.cloned() else {
-                    self.report.error(span, "E-ERR-CONSTRUCTOR-AMBIGUOUS", "cannot infer Err(...)'s Ok type here -- check the sibling Ok(...) arm first, or use Err(...) only where an Ok(...) arm's type is already known");
+                let err_ty = declared_variants.iter().find(|v| v.name == "Err").and_then(|v| v.payload_ty.clone()).unwrap_or(TypeExpr::Str);
+                let Some(ok_ty) = pattern_ty.cloned() else {
+                    self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "this arm's variant has no payload to bind for Ok(...) to re-wrap");
                     return None;
                 };
-                return Some(TypeExpr::Result(Box::new(ok_ty), Box::new(pattern_ty.clone())));
+                return Some(TypeExpr::Result(Box::new(ok_ty), Box::new(err_ty)));
             }
         }
+        if let (Some(pattern), Expr::Err(inner)) = (binding, body) {
+            if matches!(inner.as_ref(), Expr::Variable(name) if name == pattern) {
+                let Some(ok_ty) = declared_variants.iter().find(|v| v.name == "Ok").and_then(|v| v.payload_ty.clone()) else {
+                    self.report.error(span, "E-ERR-CONSTRUCTOR-AMBIGUOUS", "cannot infer Err(...)'s Ok type here -- this match's scrutinee has no declared Ok side");
+                    return None;
+                };
+                let Some(err_ty) = pattern_ty.cloned() else {
+                    self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "this arm's variant has no payload to bind for Err(...) to re-wrap");
+                    return None;
+                };
+                return Some(TypeExpr::Result(Box::new(ok_ty), Box::new(err_ty)));
+            }
+        }
+        // 3. `EnumName::Variant(<pattern>)` -- the general form of (2),
+        // for user enums. Needs no "other side" at all: constructing
+        // `EnumName::Variant` just needs `EnumName`'s own name and this
+        // variant's own declared payload type, both already known.
+        if let (Some(pattern), Expr::EnumConstruct { enum_name, variant, payload: Some(inner) }) = (binding, body) {
+            if matches!(inner.as_ref(), Expr::Variable(name) if name == pattern) {
+                return self.check_enum_construct(enum_name, variant, Some(inner.as_ref()), span);
+            }
+        }
+        // 4. `?`.
         if let Expr::Try(inner) = body {
             return self.check_try(inner, span);
         }
+        // 5. A nested `match` -- delegates to `check_match` and accepts
+        // *whatever* type it resolves to (Result-shaped, enum-shaped,
+        // Pool-shaped, or already-unwrapped/bare), not just a
+        // Result-shaped one. This is more general than routing through
+        // `infer_result_expr`'s own nested-`Match` case (used elsewhere
+        // for genuine `Result`/`?` composability), which only accepts a
+        // still-wrapped `Result`: an arm whose body is itself a `match`
+        // with every inner arm already unwrapped via `?` (a bare
+        // `DnaFile`, say) is just as valid an arm body as one that
+        // produces a still-wrapped `Result` -- exactly the same
+        // "unwrapped vs. still-wrapped" choice a single arm already has.
+        if let Expr::Match { .. } = body {
+            return self.check_match(body, span);
+        }
+        // 6. Result-shaped body.
         if let Some((ok, err)) = self.infer_result_expr(body, span) {
             return Some(TypeExpr::Result(Box::new(ok), Box::new(err)));
         }
+        // 7. Enum-shaped body -- new, mirrors (6) for user enums.
+        if let Expr::EnumConstruct { enum_name, variant, payload } = body {
+            if let Some(ty) = self.check_enum_construct(enum_name, variant, payload.as_deref(), span) {
+                return Some(ty);
+            }
+            return None;
+        }
+        // 8. Pool-shaped body.
         if let Some(pool_ty) = self.infer_expr(body, span) {
             return Some(TypeExpr::Pool(PoolType { state: pool_ty.state, error_rate_percent: Some(pool_ty.error_rate_percent) }));
         }
-        self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "match arm's body must be the pattern's own bound name, a Result-shaped expression, or a Pool-shaped expression");
+        self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "match arm's body must be the pattern's own bound name, a re-wrapped construction of its own variant, a nested match, a Result-shaped expression, an enum-shaped expression, or a Pool-shaped expression");
         None
+    }
+
+    /// `EnumName::Variant(<expr>)`/`EnumName::Variant`'s validity (Step
+    /// 14) -- looks up the enum (`E-ENUM-CONSTRUCT-UNKNOWN-ENUM` if not
+    /// declared), the variant (`E-ENUM-CONSTRUCT-UNKNOWN-VARIANT` if the
+    /// enum has no such variant), then checks payload-presence and (if
+    /// present) payload-type agreement against the variant's declaration
+    /// (`E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH` covers all three failure
+    /// shapes: missing a required payload, an unexpected payload on a
+    /// unit variant, or a payload of the wrong type).
+    fn check_enum_construct(&mut self, enum_name: &str, variant: &str, payload: Option<&Expr>, span: Span) -> Option<TypeExpr> {
+        let Some(decl) = self.enums.get(enum_name).cloned() else {
+            self.report.error(span, "E-ENUM-CONSTRUCT-UNKNOWN-ENUM", format!("enum '{}' is not declared", enum_name));
+            return None;
+        };
+        let Some(variant_decl) = decl.variants.iter().find(|v| v.name == variant) else {
+            self.report.error(span, "E-ENUM-CONSTRUCT-UNKNOWN-VARIANT", format!("'{}' is not a variant of enum '{}'", variant, enum_name));
+            return None;
+        };
+        match (&variant_decl.payload, payload) {
+            (None, None) => Some(TypeExpr::Enum(enum_name.to_string())),
+            (None, Some(_)) => {
+                self.report.error(span, "E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH", format!("'{}::{}' is a unit variant and takes no payload", enum_name, variant));
+                None
+            }
+            (Some(_), None) => {
+                self.report.error(span, "E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH", format!("'{}::{}' requires a payload", enum_name, variant));
+                None
+            }
+            (Some(expected_ty), Some(payload_expr)) => match self.infer_value_type(payload_expr, span) {
+                Some(ref ty) if ty == expected_ty => Some(TypeExpr::Enum(enum_name.to_string())),
+                Some(ty) => {
+                    self.report.error(span, "E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH", format!(
+                        "'{}::{}' expects a payload of type {}, got {}",
+                        enum_name, variant, crate::docgen::render_type(expected_ty), crate::docgen::render_type(&ty)
+                    ));
+                    None
+                }
+                None => None, // infer_value_type already reported its own diagnostic
+            },
+        }
     }
 
     /// Infers a "value type" for an expression that's meant to become
@@ -899,6 +1211,12 @@ impl TypeChecker {
         }
         if let Some(pool_ty) = self.infer_expr(expr, span) {
             return Some(TypeExpr::Pool(PoolType { state: pool_ty.state, error_rate_percent: Some(pool_ty.error_rate_percent) }));
+        }
+        // A direct (not variable-mediated) user-enum construction --
+        // e.g. `Ok(MyEnum::Variant(x))` -- mirrors the Result-shaped case
+        // above for user enums (Step 14).
+        if let Expr::EnumConstruct { enum_name, variant, payload } = expr {
+            return self.check_enum_construct(enum_name, variant, payload.as_deref(), span);
         }
         None
     }
@@ -975,6 +1293,8 @@ impl TypeChecker {
         closure_checker.sequences = self.sequences.clone();
         closure_checker.closures = self.closures.clone();
         closure_checker.closure_decls = self.closure_decls.clone();
+        closure_checker.enums = self.enums.clone();
+        closure_checker.enum_bindings = self.enum_bindings.clone();
         // Set from the CLOSURE's own return type, not inherited from the
         // outer scope's `self.enclosing_result_return` -- a `?` inside
         // this closure's body validates against this closure's own
@@ -1000,6 +1320,14 @@ impl TypeChecker {
                 }
                 TypeExpr::Fn(param_types, ret) => {
                     closure_checker.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**ret).clone()));
+                }
+                // A user-enum-typed parameter (Step 14) -- tracked
+                // separately from `bindings` (which only ever holds real
+                // `let` declarations) since a parameter has no `LetDecl`
+                // of its own. See `TypeChecker::enum_bindings`'s own doc
+                // comment.
+                TypeExpr::Enum(enum_name) => {
+                    closure_checker.enum_bindings.insert(param.name.clone(), enum_name.clone());
                 }
                 _ => {}
             }
@@ -1381,7 +1709,8 @@ impl TypeChecker {
             | Expr::Match { .. }
             | Expr::Closure { .. }
             | Expr::Ok(_)
-            | Expr::Err(_) => None,
+            | Expr::Err(_)
+            | Expr::EnumConstruct { .. } => None,
         }
     }
 
@@ -1469,6 +1798,8 @@ impl TypeChecker {
         let mut body_checker = TypeChecker::default();
         body_checker.pools = self.pools.clone();
         body_checker.functions = self.functions.clone();
+        body_checker.enums = self.enums.clone();
+        body_checker.enum_bindings = self.enum_bindings.clone();
         // Must be set before the body is checked below (not after): it's
         // what `check_try` (reached through `check_let`, reached through
         // `check_declaration_single`) reads to validate every `?` inside
@@ -1504,6 +1835,11 @@ impl TypeChecker {
                 // lookup exactly like a `let`-bound closure already is.
                 TypeExpr::Fn(param_types, return_type) => {
                     body_checker.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**return_type).clone()));
+                }
+                // A user-enum-typed parameter (Step 14) -- see
+                // `TypeChecker::enum_bindings`'s own doc comment.
+                TypeExpr::Enum(enum_name) => {
+                    body_checker.enum_bindings.insert(param.name.clone(), enum_name.clone());
                 }
                 _ => {}
             }
@@ -1918,7 +2254,8 @@ fn substitute_declaration(decl: &Declaration, binding: &str, value: &str) -> Dec
         | Declaration::Strand(_)
         | Declaration::Sequence(_)
         | Declaration::Pipeline(_)
-        | Declaration::Function(_) => decl.clone(),
+        | Declaration::Function(_)
+        | Declaration::Enum(_) => decl.clone(),
     }
 }
 
@@ -1969,16 +2306,21 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
             confirmed: op.confirmed,
             span: op.span,
         }),
-        // The pattern names themselves are a separate, function-body-local
-        // namespace from the `for`-loop's substituted `binding` -- only
-        // the scrutinee and arm bodies can reference it, so only they get
-        // recursed into.
-        Expr::Match { scrutinee, ok_pattern, ok_body, err_pattern, err_body } => Expr::Match {
+        // The pattern names (`MatchArm::binding`) are a separate,
+        // function-body-local namespace from the `for`-loop's substituted
+        // `binding` -- only the scrutinee and arm bodies can reference
+        // it, so only they get recursed into.
+        Expr::Match { scrutinee, arms } => Expr::Match {
             scrutinee: Box::new(substitute_expr(scrutinee, binding, value)),
-            ok_pattern: ok_pattern.clone(),
-            ok_body: Box::new(substitute_expr(ok_body, binding, value)),
-            err_pattern: err_pattern.clone(),
-            err_body: Box::new(substitute_expr(err_body, binding, value)),
+            arms: arms
+                .iter()
+                .map(|arm| MatchArm {
+                    variant: arm.variant.clone(),
+                    binding: arm.binding.clone(),
+                    body: Box::new(substitute_expr(&arm.body, binding, value)),
+                    span: arm.span,
+                })
+                .collect(),
         },
         // Params are their own local namespace (same shadowing model as
         // any nested `let` reusing the loop variable's name) -- only the
@@ -1992,6 +2334,11 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
         },
         Expr::Ok(inner) => Expr::Ok(Box::new(substitute_expr(inner, binding, value))),
         Expr::Err(inner) => Expr::Err(Box::new(substitute_expr(inner, binding, value))),
+        Expr::EnumConstruct { enum_name, variant, payload } => Expr::EnumConstruct {
+            enum_name: enum_name.clone(),
+            variant: variant.clone(),
+            payload: payload.as_ref().map(|inner| Box::new(substitute_expr(inner, binding, value))),
+        },
     }
 }
 

@@ -33,6 +33,20 @@ Codes are grouped by which declaration/operation they check, matching
 
 **Fix:** rename the duplicate pool, raise redundancy, switch to a supported codec, or declare the referenced pool before using it.
 
+## Enums (`enum` declarations)
+
+| Code | Level | Meaning |
+|------|-------|---------|
+| `E-ENUM-DUPLICATE` | error | Two `enum` declarations share a name. |
+| `E-ENUM-RESERVED-NAME` | error | `enum Result { ... }` — `Result` is a built-in, privileged type, not an instance of the general `enum` mechanism (see `docs/grammar.md`'s "Pattern Matching" section). |
+| `E-ENUM-EMPTY` | error | `enum Name { }` — an enum with zero variants. |
+| `E-ENUM-VARIANT-DUPLICATE` | error | The same variant name appears twice in one `enum`'s body. |
+| `E-ENUM-CONSTRUCT-UNKNOWN-ENUM` | error | `EnumName::Variant(...)` where `EnumName` isn't a declared `enum`. |
+| `E-ENUM-CONSTRUCT-UNKNOWN-VARIANT` | error | `EnumName` is declared, but has no variant named `Variant`. |
+| `E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH` | error | The payload doesn't match the variant's own declaration — a payload given to a unit variant, no payload given to a payload-carrying variant, or a payload whose inferred type doesn't match the variant's declared payload type. |
+
+**Fix:** rename the duplicate enum/variant, use a different name than `Result`, declare at least one variant, or match the constructor's payload (present/absent, and its type) to the variant's own declaration.
+
 ## Imports (`import { ... } from "..."`)
 
 | Code | Level | Meaning |
@@ -84,15 +98,19 @@ Codes are grouped by which declaration/operation they check, matching
 | `E-TYPE-PARAM-CONFLICT` | error | A generic function's type parameter (e.g. the `P` in `fn combine<P>(a: Pool<P>, b: Pool<P>)`) is used in more than one parameter (or bound both explicitly via `::<...>()` and implicitly by an argument), and two of those imply different concrete profiles for it. |
 | `E-TYPE-PARAM-UNRESOLVED` | error | A generic function's type parameter was never bound by any argument in a call, and no explicit `::<Illumina>()` type argument bound it either — its return type (if the parameter also appears there) can't be resolved to anything concrete for that call. The real case this reaches: a type parameter that appears *only* inside a `Fn(...)`-typed parameter's own signature, never as a directly `Pool<P>`-shaped argument — inference alone has nothing to unify it from. |
 | `E-TYPE-PARAM-ARITY` | error | An explicit type-argument list, `name::<Illumina, Nanopore>(...)`, has a different number of entries than the function's own declared `<T, U>` list. |
-| `E-MATCH-NOT-RESULT` | error | `match`'s scrutinee isn't `Result`-shaped — e.g. a `Pool<...>` binding, or anything else `?` couldn't be applied to either. A `match` expression itself is a valid scrutinee for another `match` (nesting is supported). |
-| `E-MATCH-ARM-TYPE-MISMATCH` | error | The `Ok` and `Err` arms produce different types (e.g. one arm ends in the bound value directly, the other in a still-wrapped `Result`). Both arms must unify to the same type, which becomes the whole `match` expression's type. |
-| `E-MATCH-ARM-UNTYPABLE` | error | An arm's body is none of the five shapes `match` supports: the pattern's own bound name, `Ok(<pattern>)`/`Err(<pattern>)` re-wrapping the arm's own bound value, `?` applied to a fallible expression, a `Result`-shaped expression, or a `Pool<...>`-shaped expression. |
+| `E-MATCH-UNRECOGNIZED-SCRUTINEE` | error | `match`'s scrutinee isn't `Result`-shaped or a declared `enum`-typed expression — e.g. a `Pool<...>` binding. Renamed from `E-MATCH-NOT-RESULT`: `match` now scrutinizes either the built-in `Result` pseudo-enum or a user `enum`, so "not `Result`" was no longer the whole story. |
+| `E-MATCH-UNKNOWN-VARIANT` | error | A `match` arm names a variant that doesn't belong to the scrutinee's own type — a typo'd `Ok`/`Err`, or a name that isn't one of a user `enum`'s declared variants. |
+| `E-MATCH-NON-EXHAUSTIVE` | error | A `match` is missing an arm for at least one of the scrutinee's declared variants, and has no trailing wildcard `_` arm to cover the rest. |
+| `E-MATCH-DUPLICATE-ARM` | error | Two arms in the same `match` name the same variant. |
+| `E-MATCH-ARM-AFTER-WILDCARD` | error | An arm appears after a wildcard `_` arm — the wildcard must be last, since it's meant to catch everything not already named. |
+| `E-MATCH-ARM-TYPE-MISMATCH` | error | Two arms produce different types (e.g. one arm ends in the bound value directly, another in a still-wrapped `Result`). Every present arm must unify to the same type, which becomes the whole `match` expression's type. |
+| `E-MATCH-ARM-UNTYPABLE` | error | An arm's body is none of the shapes `match` supports: the pattern's own bound name, `Ok(<pattern>)`/`Err(<pattern>)` or `EnumName::Variant(<pattern>)` re-wrapping the arm's own bound value, `?` applied to a fallible expression, a nested `match`, a `Result`-shaped expression, an enum-shaped expression, or a `Pool<...>`-shaped expression. A bare string/number literal is not one of these shapes (the same restriction `Ok(...)`'s own payload has — see `E-OK-CONSTRUCTOR-INVALID`). |
 | `E-OK-CONSTRUCTOR-INVALID` | error | `Ok(<expr>)`'s payload isn't a bound variable, `?`, a `Result`-shaped expression, or a `Pool`-shaped expression — e.g. a bare string/number literal, which carries no type of its own to make `Ok`'s side concrete. |
 | `E-ERR-CONSTRUCTOR-INVALID` | error | `Err(<expr>)`'s payload isn't a string literal — the only way to author a *new* `Str` value (an already-bound `Str` variable can't be referenced here; see `docs/grammar.md`'s "Result / Error Propagation" section). |
 | `E-ERR-CONSTRUCTOR-AMBIGUOUS` | error | A bare `Err(...)` has no way to resolve its missing `Ok` side — no enclosing `let`'s `Result<T, E>` annotation, no sibling `Ok` match arm already checked, and it isn't the tail of a `Result`-returning function/closure. |
 | `E-CLOSURE-RETURN-TYPE-MISMATCH` | error | A closure literal (`fn(params) -> T { body }`) is declared to return a `Result<...>`/`Pool<...>` type `T`, but its body's last binding doesn't produce that type. Only these two shapes are validated — the same pre-existing gap `E-RETURN-TYPE-MISMATCH`/`E-RETURN-TYPE-NOT-RESULT` already have for a `Void`/`DnaFile`/`File`/`Str`/`Fn`-returning function or closure. |
 
-**Fix:** rename the duplicate, rename the duplicate parameter, make the function body's last binding produce the declared return type, add the missing `?`, move `?` inside a `Result`-returning function, fix the mismatched error type, pass arguments (or explicit type arguments) that consistently imply the same concrete profile for each type parameter, match the explicit type-argument count to the function's own declared list, rewrite a match arm's body to one of the five shapes `match` supports, give `Ok(...)`/`Err(...)` a payload of the right shape, annotate the enclosing `let`/check the sibling `Ok` arm/move `Err(...)` to a `Result`-returning function's tail, or make a closure's body actually produce its declared `Result<...>`/`Pool<...>` return type.
+**Fix:** rename the duplicate, rename the duplicate parameter, make the function body's last binding produce the declared return type, add the missing `?`, move `?` inside a `Result`-returning function, fix the mismatched error type, pass arguments (or explicit type arguments) that consistently imply the same concrete profile for each type parameter, match the explicit type-argument count to the function's own declared list, add/remove/rename a match arm so every declared variant has exactly one (or add a trailing wildcard), move a misplaced wildcard to the end, rewrite a match arm's body to one of the shapes `match` supports, give `Ok(...)`/`Err(...)` a payload of the right shape, annotate the enclosing `let`/check the sibling `Ok` arm/move `Err(...)` to a `Result`-returning function's tail, or make a closure's body actually produce its declared `Result<...>`/`Pool<...>` return type.
 
 ## Strands (`strand` declarations)
 
@@ -126,7 +144,7 @@ Codes are grouped by which declaration/operation they check, matching
 
 **Fix:** prefix with `simulate` for a dry run, declare the target pool, raise redundancy for critical data, raise coverage or lower the recovery target, or set `coverage` explicitly.
 
-`store`/`delete`/`retrieve` used in *expression* position (Step 9 --
+`store`/`delete`/`retrieve` used in *expression* position (part of
 `Result<T, E>`/`?`, see [docs/grammar.md](grammar.md)) run through this
 exact same validation, not a separate check -- an undeclared pool, a
 missing confirmation, or an unindexed query field is caught identically
@@ -156,9 +174,9 @@ right-hand side of a `let`.
 `if`'s condition and `assert`'s condition are evaluated by the exact same
 compile-time machinery (`typeck::TypeChecker::eval_condition`), so both
 share this one set of diagnostic codes — the codes were renamed from an
-earlier `E-IF-CONDITION-*` scheme (Step 4) to the current `E-CONDITION-*`
+earlier `E-IF-CONDITION-*` scheme to the current `E-CONDITION-*`
 form specifically so a message about `assert`'s condition doesn't
-misleadingly say "if condition" (Step 7).
+misleadingly say "if condition".
 
 | Code | Level | Meaning |
 |------|-------|---------|

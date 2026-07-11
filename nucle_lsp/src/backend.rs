@@ -192,6 +192,17 @@ fn hover_text_for(name: &str, symbols: &SymbolTable) -> Option<String> {
     if symbols.sequences.contains_key(name) {
         return Some(format!("```nuclescript\nseq {}: Sequence\n```", name));
     }
+    if let Some(decl) = symbols.enums.get(name) {
+        let variants: Vec<String> = decl
+            .variants
+            .iter()
+            .map(|v| match &v.payload {
+                Some(ty) => format!("{}({})", v.name, describe_type(ty)),
+                None => v.name.clone(),
+            })
+            .collect();
+        return Some(format!("```nuclescript\nenum {} {{ {} }}\n```", name, variants.join(", ")));
+    }
     if let Some(binding) = symbols.bindings.get(name) {
         return Some(format!("```nuclescript\nlet {}: {}\n```", name, describe_type(&binding.annotation)));
     }
@@ -210,6 +221,9 @@ fn definition_span_for(name: &str, symbols: &SymbolTable) -> Option<Span> {
     }
     if let Some(span) = symbols.sequences.get(name) {
         return Some(*span);
+    }
+    if let Some(decl) = symbols.enums.get(name) {
+        return Some(decl.span);
     }
     if let Some(binding) = symbols.bindings.get(name) {
         return Some(binding.span);
@@ -236,6 +250,7 @@ fn describe_type(ty: &TypeExpr) -> String {
             params.iter().map(describe_type).collect::<Vec<_>>().join(", "),
             describe_type(ret)
         ),
+        TypeExpr::Enum(name) => name.clone(),
     }
 }
 
@@ -265,6 +280,10 @@ fn document_symbols(symbols: &SymbolTable) -> Vec<DocumentSymbol> {
     }
     for (name, span) in &symbols.sequences {
         result.push(make(name, "Sequence".to_string(), SymbolKind::STRING, *span));
+    }
+    for (name, decl) in &symbols.enums {
+        let variants = decl.variants.iter().map(|v| v.name.clone()).collect::<Vec<_>>().join(", ");
+        result.push(make(name, variants, SymbolKind::ENUM, decl.span));
     }
     for (name, binding) in &symbols.bindings {
         result.push(make(name, describe_type(&binding.annotation), SymbolKind::VARIABLE, binding.span));

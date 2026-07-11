@@ -46,6 +46,7 @@ pub enum Declaration {
     If(IfDecl),
     For(ForDecl),
     Test(TestDecl),
+    Enum(EnumDecl),
 }
 
 impl Declaration {
@@ -65,6 +66,7 @@ impl Declaration {
             Declaration::If(d) => d.span,
             Declaration::For(d) => d.span,
             Declaration::Test(d) => d.span,
+            Declaration::Enum(d) => d.span,
         }
     }
 }
@@ -179,6 +181,43 @@ pub struct StrandDecl {
     pub doc: Option<String>,
 }
 
+/// `enum Name { Variant1, Variant2(PayloadType), ... }` -- a user-defined
+/// sum type (Step 14). Unlike `Result<T, E>` (which stays its own
+/// privileged `TypeExpr::Result`/`Expr::Ok`/`Expr::Err` machinery, never
+/// registered here), an `EnumDecl` is looked up by name from
+/// `typeck::TypeChecker::enums`, exactly the way `PoolDecl`/`FunctionDecl`
+/// are looked up from `self.pools`/`self.functions`. `enum Result { ... }`
+/// is rejected (`E-ENUM-RESERVED-NAME`) precisely because Result is not
+/// an instance of this general mechanism, just uniformly *matchable*
+/// alongside one (see `typeck::TypeChecker::check_match`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumDecl {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    #[serde(default)]
+    pub span: Span,
+    /// See `PoolDecl::doc`.
+    #[serde(default)]
+    pub doc: Option<String>,
+}
+
+/// One variant of a user-declared `enum`. At most one payload type --
+/// mirrors `Ok(T)`/`Err(E)`'s own shape exactly, deliberately not a tuple
+/// or struct-like multi-field variant (see the Step 14 plan's own scope
+/// discussion for why: every downstream consumer -- pattern binding,
+/// re-wrap construction, runtime `Value::EnumInstance` -- is written
+/// around "zero or one payload value per variant," and nothing in this
+/// language's actual domain needs more than that yet).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumVariant {
+    pub name: String,
+    /// `None` for a unit variant (`Retry`); `Some(ty)` for a
+    /// single-payload variant (`GiveUp(Str)`).
+    pub payload: Option<TypeExpr>,
+    #[serde(default)]
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SequenceDecl {
     pub name: String,
@@ -254,6 +293,14 @@ pub enum TypeExpr {
     /// `Str`'s existing type-name convention, distinct from the lowercase
     /// `fn` keyword used for both named declarations and closure literals.
     Fn(Vec<TypeExpr>, Box<TypeExpr>),
+    /// Names a user-declared `enum` by name (Step 14), resolved against
+    /// `typeck::TypeChecker::enums` at type-check time
+    /// (`E-ENUM-UNKNOWN` if it doesn't resolve). `Result<T, E>` is NOT
+    /// represented this way -- it keeps its own dedicated
+    /// `TypeExpr::Result` variant unchanged; only the *matching* logic
+    /// (`check_match`/`eval_expr`) treats Result and a `TypeExpr::Enum`
+    /// uniformly, never the type system itself.
+    Enum(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -370,22 +417,23 @@ pub enum Expr {
     /// same relationship to `Declaration::Operation(Operation::Delete)`
     /// as `StoreExpr` has to `Operation::Store`.
     DeleteExpr(DeleteOp),
-    /// `match <scrutinee> { Ok(<name>) => <expr>, Err(<name>) => <expr> }`
-    /// -- destructures a `Result<T, E>`-shaped `scrutinee`, binding its
-    /// payload to `ok_pattern`/`err_pattern` (visible only within that
-    /// arm's own `*_body`) before evaluating it. Deliberately narrow:
-    /// `Result` is the only sum type in the language and it's closed to
-    /// exactly two variants, so arm order is fixed (`Ok` then `Err`)
-    /// rather than general/reorderable -- see `typeck::TypeChecker::
-    /// check_match` for the validity rules and `codegen::eval_expr`/
-    /// `sim_backend::narrate_result_expr` for the runtime/narration
-    /// counterparts.
+    /// `match <scrutinee> { <arm>, ... }` -- the general pattern-matching
+    /// engine (Step 14). `scrutinee` must resolve to either the built-in
+    /// `Result<T, E>` "pseudo-enum" (its two implicit variants are always
+    /// exactly `Ok(T)`/`Err(E)`) or a user-declared `TypeExpr::Enum`
+    /// looked up in `self.enums` -- see `typeck::TypeChecker::check_match`
+    /// for exactly how. Every declared variant needs exactly one arm (by
+    /// name) or a trailing wildcard covering the rest; an arm naming an
+    /// unknown variant, a non-exhaustive set with no wildcard, a wildcard
+    /// that isn't last, or two arms naming the same variant are all
+    /// rejected (see the `E-MATCH-*` diagnostics). Arm order in `arms` is
+    /// preserved from source but is no longer semantically fixed the way
+    /// the old two-field shape hardcoded "Ok then Err" -- exhaustiveness
+    /// is checked by name against the scrutinee's own declared variant
+    /// list, not by position, so `Err` may now appear before `Ok`.
     Match {
         scrutinee: Box<Expr>,
-        ok_pattern: String,
-        ok_body: Box<Expr>,
-        err_pattern: String,
-        err_body: Box<Expr>,
+        arms: Vec<MatchArm>,
     },
     /// `fn(params) -> ReturnType { body }` in expression position -- an
     /// anonymous closure literal, never a top-level `Declaration`. Has no
@@ -427,6 +475,44 @@ pub enum Expr {
     /// arm, or the enclosing function/closure's declared return type) --
     /// `E-ERR-CONSTRUCTOR-AMBIGUOUS` if none is available.
     Err(Box<Expr>),
+    /// `EnumName::Variant(<expr>)` / `EnumName::Variant` (bare, for a unit
+    /// variant) -- constructs an instance of a user-declared `enum`
+    /// (Step 14). Reuses the `::` token already added for
+    /// `name::<Illumina>(...)` turbofish calls (Step 13); disambiguated
+    /// at parse time by what follows `::` (`<` means turbofish, an
+    /// identifier means a variant name -- see
+    /// `parser::parse_primary_expr`). Deliberately NOT how `Ok`/`Err` are
+    /// represented -- those stay their own dedicated `Expr` variants,
+    /// unprefixed, exactly as before (see their own doc comments for why:
+    /// `Err`'s string-literal-only payload restriction and the unprefixed
+    /// surface syntax are both irreducibly Result-specific). This is the
+    /// general construction path for every *other* enum. See
+    /// `typeck::TypeChecker::check_enum_construct` for validity rules and
+    /// `codegen::eval_expr`'s `Expr::EnumConstruct` arm for the runtime
+    /// counterpart.
+    EnumConstruct {
+        enum_name: String,
+        variant: String,
+        payload: Option<Box<Expr>>,
+    },
+}
+
+/// One arm of a general `match` (Step 14). `variant: None` marks a
+/// wildcard `_` arm, which must be the last arm if present
+/// (`E-MATCH-ARM-AFTER-WILDCARD` otherwise) -- see `Expr::Match`'s doc
+/// comment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchArm {
+    /// `Some("Ok")`/`Some("Err")` for Result, `Some("Fallback")` etc. for
+    /// a user enum's variant, `None` for a wildcard `_` arm.
+    pub variant: Option<String>,
+    /// The pattern's bound name, e.g. `file` in `Ok(file) => ...`. `None`
+    /// for a unit variant's arm (`Retry => ...`, nothing to bind) or a
+    /// wildcard with no capture (`_ => ...`).
+    pub binding: Option<String>,
+    pub body: Box<Expr>,
+    #[serde(default)]
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
