@@ -36,7 +36,31 @@ fn fn_type_parses_into_the_expected_shape() {
         "#,
     );
     let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
-    assert_eq!(func.params[0].ty, TypeExpr::Fn(vec![TypeExpr::Str], Box::new(TypeExpr::Str)));
+    assert_eq!(func.params[0].ty, TypeExpr::Fn(vec![TypeExpr::Str], Box::new(TypeExpr::Str), None));
+}
+
+#[test]
+fn fn_type_with_confirm_hardware_parses_into_the_expected_shape() {
+    let program = parse(
+        r#"
+        fn apply(f: Fn(Str) -> Str confirm hardware) returns Void {
+        }
+        "#,
+    );
+    let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
+    assert_eq!(func.params[0].ty, TypeExpr::Fn(vec![TypeExpr::Str], Box::new(TypeExpr::Str), Some(FnEffectAnnotation::Hardware)));
+}
+
+#[test]
+fn fn_type_with_confirm_physical_key_parses_into_the_expected_shape() {
+    let program = parse(
+        r#"
+        fn apply(f: Fn(Str) -> Str confirm physical_key) returns Void {
+        }
+        "#,
+    );
+    let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
+    assert_eq!(func.params[0].ty, TypeExpr::Fn(vec![TypeExpr::Str], Box::new(TypeExpr::Str), Some(FnEffectAnnotation::PhysicalKey)));
 }
 
 #[test]
@@ -351,6 +375,153 @@ fn confirmed_destructive_effect_inside_a_closure_is_confirmed() {
         }
         "#;
     assert!(!diagnostic_codes(src).contains(&"E-SYNTHESIS-UNCONFIRMED".to_string()));
+}
+
+// ---------------------------------------------------------------------
+// Effect-annotated Fn(...) types -- closing the "accurate effect
+// analysis through an arbitrary closure call" gap the tests above
+// document as still open. `confirm hardware`/`confirm physical_key` on
+// a `Fn(...)` type declares a ceiling; every concrete closure ever bound
+// into that slot is checked against it at its own binding site, which is
+// what makes trusting the ceiling at the parameter's own call site sound.
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_properly_confirmed_matching_closure_satisfies_an_annotated_param() {
+    let src = format!(
+        "{}fn run_with_confirm(op: Fn() -> Void confirm physical_key) returns Void {{
+    let x: Void = op()
+}}
+fn caller() returns Void {{
+    let z: Void = run_with_confirm(fn() -> Void {{
+        delete \"a.txt\" from archive confirm physical_key
+    }})
+}}
+",
+        POOL
+    );
+    assert!(diagnostic_codes(&src).is_empty(), "diagnostics: {:?}", diagnostic_codes(&src));
+}
+
+#[test]
+fn a_closure_whose_real_effect_exceeds_the_declared_hardware_ceiling_is_rejected() {
+    let src = format!(
+        "{}fn run_with_hardware(op: Fn() -> Void confirm hardware) returns Void {{
+    let x: Void = op()
+}}
+fn caller() returns Void {{
+    let z: Void = run_with_hardware(fn() -> Void {{
+        delete \"a.txt\" from archive confirm physical_key
+    }})
+}}
+",
+        POOL
+    );
+    assert!(
+        diagnostic_codes(&src).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()),
+        "a Destructive closure bound to a confirm-hardware-only slot must be rejected, got: {:?}",
+        diagnostic_codes(&src)
+    );
+}
+
+#[test]
+fn a_closure_with_the_right_effect_but_no_internal_confirmation_is_rejected() {
+    let src = format!(
+        "{}fn run_with_physical_key(op: Fn() -> Void confirm physical_key) returns Void {{
+    let x: Void = op()
+}}
+fn caller() returns Void {{
+    let z: Void = run_with_physical_key(fn() -> Void {{
+        delete \"a.txt\" from archive
+    }})
+}}
+",
+        POOL
+    );
+    assert!(
+        diagnostic_codes(&src).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()),
+        "an unconfirmed Destructive closure must be rejected even though the effect matches, got: {:?}",
+        diagnostic_codes(&src)
+    );
+}
+
+#[test]
+fn an_unannotated_fn_typed_param_still_accepts_any_confirmed_closure_unchanged() {
+    // Backward compatibility: no annotation means exactly today's
+    // behavior -- the closure's own confirmation is real and independent
+    // (`E-DELETE-UNCONFIRMED` would fire on its own if it weren't), but
+    // this new mechanism adds no additional check for an unannotated
+    // parameter.
+    let src = format!(
+        "{}fn run_without_annotation(op: Fn() -> Void) returns Void {{
+    let x: Void = op()
+}}
+fn caller() returns Void {{
+    let z: Void = run_without_annotation(fn() -> Void {{
+        delete \"a.txt\" from archive confirm physical_key
+    }})
+}}
+",
+        POOL
+    );
+    assert!(diagnostic_codes(&src).is_empty(), "diagnostics: {:?}", diagnostic_codes(&src));
+}
+
+#[test]
+fn capturing_an_annotated_outer_parameter_with_a_matching_annotation_is_accepted() {
+    // The hole a dedicated architecture-review pass found in this
+    // feature's first draft: an inner closure that CAPTURES an
+    // annotated outer parameter (rather than receiving one as an
+    // explicit call argument) must still resolve soundly.
+    let src = format!(
+        "{}fn outer(attempt_fn: Fn() -> Void confirm physical_key) returns Void {{
+    let g: Fn() -> Void confirm physical_key = fn() -> Void {{
+        let y: Void = attempt_fn()
+    }}
+    let z: Void = g()
+}}
+",
+        POOL
+    );
+    assert!(diagnostic_codes(&src).is_empty(), "diagnostics: {:?}", diagnostic_codes(&src));
+}
+
+#[test]
+fn capturing_an_annotated_outer_parameter_with_a_mismatched_annotation_is_rejected() {
+    let src = format!(
+        "{}fn outer(attempt_fn: Fn() -> Void confirm physical_key) returns Void {{
+    let g: Fn() -> Void confirm hardware = fn() -> Void {{
+        let y: Void = attempt_fn()
+    }}
+    let z: Void = g()
+}}
+",
+        POOL
+    );
+    assert!(
+        diagnostic_codes(&src).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()),
+        "g's own declared confirm hardware ceiling doesn't cover the Destructive effect it actually captures, got: {:?}",
+        diagnostic_codes(&src)
+    );
+}
+
+#[test]
+fn forwarding_an_annotated_parameter_to_a_compatibly_annotated_parameter_is_accepted() {
+    // A `Fn(...)`-typed parameter passed straight through as another
+    // function's own compatibly-annotated parameter argument -- resolved
+    // soundly via the declared ceiling alone, no concrete closure or
+    // special-casing needed.
+    let src = format!(
+        "{}fn inner(cb: Fn() -> Void confirm physical_key) returns Void {{
+    let x: Void = cb()
+}}
+fn outer(cb: Fn() -> Void confirm physical_key) returns Void {{
+    let y: Void = inner(cb)
+}}
+",
+        POOL
+    );
+    assert!(diagnostic_codes(&src).is_empty(), "diagnostics: {:?}", diagnostic_codes(&src));
 }
 
 // ---------------------------------------------------------------------

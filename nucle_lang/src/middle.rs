@@ -84,7 +84,7 @@ pub fn lower_program(program: &Program) -> MirProgram {
                     error_rate_percent,
                     // No scope-tracking here either -- same documented
                     // gap as `effects::decl_effect_info`'s own `Let` arm.
-                    effect: expr_effect(&binding.expr, &funcs, &crate::effects::FunctionTable::new(), &mut std::collections::HashSet::new()),
+                    effect: expr_effect(&binding.expr, &funcs, &crate::effects::FunctionTable::new(), &std::collections::HashMap::new(), &mut std::collections::HashSet::new()),
                 });
             }
             Declaration::Operation(Operation::Store(store)) => {

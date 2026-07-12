@@ -158,8 +158,14 @@ pub fn compile_simulation(program: Program, type_report: TypeReport) -> Simulati
 /// `effects.rs`'s own `closures` fix already established (checked
 /// before `funcs`). A closure received as a `Fn(...)`-typed *parameter*
 /// is still unnarratable: its real body isn't known at this call site
-/// either, only at runtime -- the same limit `effects.rs`'s fix
-/// accepted for the identical reason.
+/// either, only at runtime. Effect-annotated `Fn(...)` types
+/// (`confirm hardware`/`confirm physical_key`) close the *effect/
+/// confirmation-analysis* version of this gap (see `effects.rs`'s
+/// `fn_param_effects`) -- a declared ceiling is enough to know a call
+/// site's effect and whether it's properly confirmed -- but a ceiling
+/// isn't a real body, so this narrator still can't synthesize a
+/// concrete VFS step for it. Only whole-program flow analysis (the
+/// option not taken) could close this specific, narrower remaining gap.
 fn narrate_result_expr(
     expr: &Expr,
     pools: &HashMap<String, PoolDecl>,

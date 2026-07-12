@@ -245,17 +245,33 @@ pub fn execute_program(
 
 /// Whether a `let` binding's expression needs the real interpreter
 /// (`eval_expr`) rather than being left alone exactly as before -- true
-/// only for the handful of shapes that actually need real runtime
-/// evaluation (Steps 9-14). Everything else (`Pool<...>`-shaped
-/// bindings, `SimulatePool`/`SynthesizePool`/`SequencePool`, calls to
-/// non-`Result`-returning functions) is untouched by this function and
+/// only for the shapes that actually need real runtime evaluation.
+/// `Pool<...>`-shaped bindings, `SimulatePool`/`SynthesizePool`/
+/// `SequencePool`, and a call to a function returning one of the
+/// compile-time-only types (`Pool<...>`/`Strand`/`Sequence`/`File`/
+/// `Recovery` -- none of which `value::Value` has a runtime
+/// representation for at all) are untouched by this function and
 /// untouched by `execute_program`'s per-declaration loop -- exactly as
 /// before, since none of those ever produced a `VfsCall`/needed runtime
-/// action either. `Expr::EnumConstruct` (Step 14) needs this too, or a
-/// top-level `let plan: RecoveryPlan = RecoveryPlan::Retry` would
-/// silently never populate `env` -- function-body-local `let`s are
-/// unaffected either way (`exec_function_body` calls `eval_expr`
-/// unconditionally for every one, regardless of this function).
+/// action either. `Expr::EnumConstruct` needs this too, or a top-level
+/// `let plan: RecoveryPlan = RecoveryPlan::Retry` would silently never
+/// populate `env` -- function-body-local `let`s are unaffected either
+/// way (`exec_function_body` calls `eval_expr` unconditionally for
+/// every one, regardless of this function).
+///
+/// **A real, pre-existing gap this closes**: a call to a function
+/// returning anything *other* than `Result<_, _>` (most commonly
+/// `Void`) used to be treated as never needing real evaluation --
+/// correct before statement-form `store`/`retrieve`/`delete` inside a
+/// function body could execute for real, but wrong afterward: a
+/// top-level `let result: Void = do_thing()` where `do_thing`'s body has
+/// a real statement-form `store`/`delete` silently never ran it at all,
+/// with no error, no diagnostic, nothing -- discovered while building
+/// the effect-annotated-`Fn(...)`-types example, whose whole point is a
+/// top-level call chain into a genuinely `Destructive` closure. Fixed by
+/// routing *any* function call through `eval_expr` except a call to one
+/// of the five compile-time-only return types above, which `eval_expr`
+/// has no `Value` shape to produce for anyway.
 fn is_result_producing(expr: &Expr, funcs: &FunctionTable) -> bool {
     match expr {
         Expr::StoreExpr(_) | Expr::DeleteExpr(_) | Expr::Try(_) | Expr::Match { .. } | Expr::EnumConstruct { .. } => true,
@@ -264,7 +280,10 @@ fn is_result_producing(expr: &Expr, funcs: &FunctionTable) -> bool {
         // real `env.clone()` at the exact point of the literal, which
         // only happens by actually running `eval_expr` on it.
         Expr::Closure { .. } => true,
-        Expr::FunctionCall { name, .. } => matches!(funcs.get(name).map(|f| &f.return_type), Some(TypeExpr::Result(_, _))),
+        Expr::FunctionCall { name, .. } => !matches!(
+            funcs.get(name).map(|f| &f.return_type),
+            Some(TypeExpr::Pool(_)) | Some(TypeExpr::Strand) | Some(TypeExpr::Sequence) | Some(TypeExpr::File) | Some(TypeExpr::Recovery)
+        ),
         _ => false,
     }
 }

@@ -14,7 +14,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use nucle_lang::ast::{Span, TypeExpr};
+use nucle_lang::ast::{FnEffectAnnotation, Span, TypeExpr};
 use nucle_lang::{analyze, Diagnostic as NucleDiagnostic, DiagnosticLevel, SymbolTable};
 
 pub struct Backend {
@@ -245,10 +245,15 @@ fn describe_type(ty: &TypeExpr) -> String {
         TypeExpr::Void => "Void".to_string(),
         TypeExpr::Result(ok, err) => format!("Result<{}, {}>", describe_type(ok), describe_type(err)),
         TypeExpr::Str => "Str".to_string(),
-        TypeExpr::Fn(params, ret) => format!(
-            "Fn({}) -> {}",
+        TypeExpr::Fn(params, ret, effect) => format!(
+            "Fn({}) -> {}{}",
             params.iter().map(describe_type).collect::<Vec<_>>().join(", "),
-            describe_type(ret)
+            describe_type(ret),
+            match effect {
+                Some(FnEffectAnnotation::Hardware) => " confirm hardware",
+                Some(FnEffectAnnotation::PhysicalKey) => " confirm physical_key",
+                None => "",
+            }
         ),
         TypeExpr::Enum(name) => name.clone(),
     }

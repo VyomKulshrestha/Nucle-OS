@@ -67,7 +67,7 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       | 'Strand' | 'Sequence' | 'File' | 'DnaFile' | 'Recovery' | 'Void'
                       | 'Result' '<' TypeExpr ',' TypeExpr '>'
                       | 'Str'
-                      | 'Fn' '(' ( TypeExpr ( ',' TypeExpr )* )? ')' ( '->' | 'returns' ) TypeExpr
+                      | 'Fn' '(' ( TypeExpr ( ',' TypeExpr )* )? ')' ( '->' | 'returns' ) TypeExpr FnEffectAnnotation?
                       | Identifier
                       // 'Result<T, E>' and generic 'Pool<T>' (via PoolState's
                       // 'Var' case below) are the only two generic
@@ -80,7 +80,10 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       // expected. 'Fn(...)' is a closure/function's own
                       // type -- always non-generic, usable as a 'let'
                       // annotation or a function parameter's type. The
-                      // bare 'Identifier' case is presumed to
+                      // optional trailing 'FnEffectAnnotation' declares
+                      // the effect ceiling a call through this type is
+                      // trusted to have -- see "Effect-Annotated Function
+                      // Types" below. The bare 'Identifier' case is presumed to
                       // name a user 'enum' -- the parser accepts any
                       // identifier here unconditionally, and typeck
                       // resolves/validates it against the declared 'enum'
@@ -88,6 +91,13 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       // failure if it isn't one. See "Result / Error
                       // Propagation", "Generics", "Closures", and "Enums"
                       // below.
+
+// The two confirmation keywords already used after 'synthesise'/
+// 'sequence'/'delete', reused verbatim here rather than inventing a new
+// vocabulary -- see "Effect-Annotated Function Types" below.
+FnEffectAnnotation  ::= 'confirm' 'hardware'
+                      | 'confirm' 'physical_key'
+
 PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'Amplified' | 'Recovered' | Identifier
                       // the bare Identifier case is only ever a name
                       // already declared in the enclosing FunctionDecl's
@@ -382,6 +392,17 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   contract the top-level statement form always had), which a caller
   catches via the ordinary `?`/`match` machinery if that function itself
   returns `Result<_, _>`.
+- **A top-level `let` bound to a call of a function returning anything
+  other than `Result<_, _>` (most commonly `Void`) now actually executes
+  that call**, instead of being silently skipped. This closed a real gap
+  the statement-form fix above created without covering: once a
+  function's body could have real statement-form side effects
+  regardless of its own return type, a top-level `let result: Void =
+  do_thing()` still never ran `do_thing`'s body at all -- present in the
+  source, type-checked, but inert. A call to a function returning one of
+  the five compile-time-only types (`Pool<...>`/`Strand`/`Sequence`/
+  `File`/`Recovery`, none of which has a runtime value to produce) is
+  still left alone, exactly as before, since nothing changes for those.
 - **A `File`/`Str`-typed parameter now carries its real argument value
   at runtime**, rather than being an inert, type-checked-only
   label. `store <identifier> into <pool>`'s "file variable" syntax (an
@@ -733,16 +754,83 @@ fn archive_with_retry() returns Result<DnaFile, Str> {
   established (closures before named functions). **A real, honest
   limitation remains**: a closure received as a `Fn(...)`-typed
   *parameter*, or an inline closure literal passed directly as a call
-  argument, is still unnarratable — neither's real body is known at that
-  call site, only at runtime. The same applies to effect analysis for a
-  `Fn(...)`-typed *parameter*'s call specifically (its real body isn't
-  knowable until runtime, so it's optimistically treated as `Pure`) — but
-  a *`let`-bound* closure's real effect *is* resolved correctly at its
-  call site, since its actual body is right there in the source.
+  argument, is still unnarratable for `nucle plan` purposes — neither's
+  real body is known at that call site, only at runtime, and a declared
+  effect ceiling (below) isn't a real body to synthesize a concrete VFS
+  step from. *Effect/confirmation analysis* for a `Fn(...)`-typed
+  parameter's call, unlike narration, can now be made accurate — see
+  "Effect-Annotated Function Types" below.
 
 See [docs/errors.md](errors.md) for `E-CLOSURE-RETURN-TYPE-MISMATCH`, and
 [`docs/examples/closure_retry.nsl`](examples/closure_retry.nsl) for a
 complete, runnable example.
+
+---
+
+## Effect-Annotated Function Types (`Fn(...) -> T confirm hardware` / `confirm physical_key`)
+
+A `Fn(...)`-typed *parameter*'s own call, unlike a `let`-bound closure's,
+could never have its effect analyzed accurately: the concrete closure a
+caller actually passes isn't knowable at the call site inside the
+function body, only at runtime, so it was always optimistically treated
+as `Pure` — a real, silent gap where a genuinely `Synthesis`/
+`Sequencing`/`Destructive` operation reached through an indirect closure
+call could execute without the `confirm hardware`/`confirm physical_key`
+that same operation would need if it were called directly. `Fn(...)`
+types can now optionally declare the effect ceiling their parameter's
+call is trusted to have, closing this specific gap without needing
+whole-program flow analysis:
+
+```nsl
+pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+
+fn archive_with_cleanup_policy(cleanup: Fn() -> Void confirm physical_key) returns Void {
+    let x: Void = cleanup()
+}
+
+fn run_cleanup() returns Void {
+    let purge_expired: Fn() -> Void confirm physical_key = fn() -> Void {
+        delete "sample_a.txt" from archive confirm physical_key
+    }
+    let result: Void = archive_with_cleanup_policy(purge_expired)
+}
+```
+
+- **The annotation is a ceiling, declared once on the type** — `confirm
+  hardware` covers whatever the language's own `confirm hardware` token
+  already covers (`Synthesis`/`Sequencing`, which require the identical
+  confirmation), `confirm physical_key` covers `Destructive`. No
+  annotation (every `Fn(...)` type written before this feature, and any
+  written without one going forward) means exactly the pre-existing
+  behavior: the parameter's own call is still optimistically `Pure`, and
+  no new checking applies to it — this is purely additive, opt-in syntax.
+- **Soundness comes from checking every concrete binding site, not the
+  call site.** Whenever a real closure is bound into an annotated slot —
+  passed as an argument to an annotated parameter, or assigned to an
+  annotated `let` — its own actual effect (computed the same way a
+  `let`-bound closure's already is) must already be internally confirmed
+  and must fall within the declared ceiling, or `E-FN-EFFECT-ARG-
+  MISMATCH` reports it right there. Because every possible concrete value
+  that could ever reach the parameter's own call was already checked
+  wherever *it* was bound, trusting the declared ceiling at the call site
+  itself is sound by induction — no need to see the real body there at
+  all. This same check handles a closure captured from an enclosing
+  scope (an inner closure calling an annotated outer parameter) and a
+  parameter forwarded straight through as another function's compatibly
+  annotated parameter, with no special-casing for either.
+- **Still a ceiling, not full hardware-request precision** — `Synthesis`
+  and `Sequencing` are deliberately not distinguished at the annotation
+  level (the language's own `confirm hardware` doesn't distinguish them
+  either), and hardware-request collection (`nucle hardware export`)
+  never walks into any function or closure body at all, indirect calls
+  included, so this doesn't change what that pipeline sees either way.
+- **Narration is still a separate, unclosed gap** — see the note on
+  `nucle plan` above; a declared ceiling tells the compiler what
+  confirmation is needed, not what to narrate.
+
+See [docs/errors.md](errors.md) for `E-FN-EFFECT-ARG-MISMATCH`, and
+[`docs/examples/effect_annotated_closure.nsl`](examples/effect_annotated_closure.nsl)
+for a complete, runnable example.
 
 ---
 

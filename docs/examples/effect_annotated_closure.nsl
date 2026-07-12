@@ -1,0 +1,43 @@
+// Effect-annotated function types close the "accurate effect analysis
+// through an arbitrary closure call" gap: calling a Fn(...)-typed
+// *parameter* couldn't have its real effect analyzed before, since the
+// concrete closure passed in isn't known until runtime -- an
+// unannotated Fn(...) type still can't (and every existing program
+// keeps working unchanged), but `confirm hardware`/`confirm
+// physical_key` lets a function declare the ceiling its parameter's
+// call is trusted to have. That trust is sound because every concrete
+// closure ever bound into an annotated slot is checked against the
+// declared ceiling once, wherever it's concretely bound -- not
+// re-derived at the parameter's own call site, which still can't see
+// the real body at all.
+
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+/// `cleanup`'s own call inside this body is trusted to have `Destructive`
+/// effect and to already be confirmed -- checked once, wherever a real
+/// closure is bound into this parameter (see `run_cleanup` below), not
+/// re-derived here.
+fn archive_with_cleanup_policy(cleanup: Fn() -> Void confirm physical_key) returns Void {
+    let x: Void = cleanup()
+}
+
+/// The concrete closure actually passed in: a real, already-confirmed
+/// delete. If this closure did something other than `Destructive`, or
+/// did `Destructive` work without its own `confirm physical_key`,
+/// `E-FN-EFFECT-ARG-MISMATCH` would report it right here -- not
+/// silently let it through as `archive_with_cleanup_policy`'s own
+/// effect.
+fn run_cleanup() returns Void {
+    let purge_expired: Fn() -> Void confirm physical_key = fn() -> Void {
+        delete "sample_a.txt" from archive confirm physical_key
+    }
+    let result: Void = archive_with_cleanup_policy(purge_expired)
+}
+
+store "sample_a.txt" into archive
+
+let cleaned: Void = run_cleanup()

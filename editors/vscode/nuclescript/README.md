@@ -56,6 +56,16 @@ NucleScript, the declarative DNA-storage operations language for
   formatting all understand `Fn(...)` and closure literals — including
   generic closures (`fn<T>(...)`) and a closure calling itself by its own
   bound name.
+- **Effect-annotated `Fn(...)` types** — `Fn(...) -> T confirm hardware`/
+  `confirm physical_key` lets a function declare the effect ceiling its
+  `Fn(...)`-typed parameter's call is trusted to have, so calling a
+  closure received as a parameter (unlike one bound to a `let`, already
+  handled) can finally have its effect analyzed accurately instead of
+  being silently assumed `Pure`. No annotation means exactly the
+  pre-existing behavior — purely additive, opt-in syntax reusing the same
+  `confirm hardware`/`confirm physical_key` tokens already used
+  elsewhere. Diagnostics (`E-FN-EFFECT-ARG-MISMATCH`), hover, formatting,
+  and `nucle doc` all understand the new syntax.
 - **`Ok(...)`/`Err(...)` constructors, explicit `::<Illumina>()` type
   arguments, and real parameter values** — `Result` values can now be
   built directly (`Ok(saved)`, `Err("reason")`), composed with nested
@@ -107,13 +117,16 @@ generic over three different pool profiles, branching on a caught
 `Result` directly with `match`, a genuinely higher-order function with
 real closure capture, a self-recursive closure, an explicit
 `::<Illumina>()` type argument paired with a real `File`-typed parameter
-value, and a user-defined `enum` matched via a nested `match` with
-exhaustiveness enforced by a trailing wildcard) live in
+value, a user-defined `enum` matched via a nested `match` with
+exhaustiveness enforced by a trailing wildcard, and an effect-annotated
+`Fn(...)` parameter whose confirmed destructive closure actually runs
+through two layers of function calls) live in
 [`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
 in the main repo — start with `store.nsl`, then `hero.nsl`, then
 `result_fallback_store.nsl`, then `generic_pool_recovery.nsl`, then
 `match_result_fallback.nsl`, then `closure_retry.nsl`, then
-`explicit_type_args_and_file_param.nsl`, then `recovery_plan.nsl`.
+`explicit_type_args_and_file_param.nsl`, then `recovery_plan.nsl`, then
+`effect_annotated_closure.nsl`.
 
 **Using the official packages:** imports like `from "nuclescript/presets"`
 (`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,

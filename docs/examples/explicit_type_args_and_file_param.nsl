@@ -1,5 +1,5 @@
-// Step 10/9: explicit type-argument syntax (item 3) and real function-
-// parameter values (item 4), demonstrated together.
+// Explicit type-argument syntax and real function-parameter values,
+// demonstrated together.
 
 pool illumina_archive: DnaPool {
     codec: Ternary,
@@ -28,7 +28,7 @@ fn recover_generically<P>(source: Pool<Illumina, 0.35%>, recover_fn: Fn(Pool<P, 
 /// bound filename flows through `env` into the statement-form `store`
 /// below (no `let`, so it never contributes to this function's own
 /// return value) -- if it fails, the whole function aborts via the
-/// statement form's own unconditional-abort contract (Step 9); if it
+/// statement form's own unconditional-abort contract; if it
 /// succeeds, execution falls through to the expression-form `store`
 /// that actually produces this function's `Result`. Proves parameters
 /// carry real values, not just type-checked labels.

@@ -292,7 +292,20 @@ pub enum TypeExpr {
     /// never its own `type_params`. Capitalized to match `Pool`/`Result`/
     /// `Str`'s existing type-name convention, distinct from the lowercase
     /// `fn` keyword used for both named declarations and closure literals.
-    Fn(Vec<TypeExpr>, Box<TypeExpr>),
+    ///
+    /// The third field is an optional declared effect ceiling
+    /// (`Fn(...) -> T confirm hardware`/`confirm physical_key`) -- `None`
+    /// for every `Fn(...)` type written without one, which is every
+    /// `Fn(...)` type that existed before this field was added. See
+    /// `FnEffectAnnotation` and `effects.rs`'s `fn_param_effects`
+    /// plumbing for why this closes the "effect analysis through an
+    /// arbitrary closure call" gap: calling a `Fn(...)`-typed
+    /// *parameter* can't have its real body inspected (the concrete
+    /// closure passed in isn't known until runtime), so without an
+    /// annotation it's optimistically treated as `Pure` -- a real,
+    /// accepted, still-standing limitation for anything that doesn't
+    /// opt in.
+    Fn(Vec<TypeExpr>, Box<TypeExpr>, Option<FnEffectAnnotation>),
     /// Names a user-declared `enum` by name (Step 14), resolved against
     /// `typeck::TypeChecker::enums` at type-check time
     /// (`E-ENUM-UNKNOWN` if it doesn't resolve). `Result<T, E>` is NOT
@@ -532,6 +545,33 @@ impl std::fmt::Display for Effect {
             Self::Destructive => "Destructive",
         };
         write!(f, "{}", name)
+    }
+}
+
+/// A `Fn(...)` type's optional declared effect ceiling -- mirrors the
+/// *only* two confirmation keywords the language already has
+/// (`confirm hardware` for `Synthesis`/`Sequencing`, `confirm
+/// physical_key` for `Destructive`), rather than exposing a finer
+/// source-level distinction the rest of the language doesn't have
+/// either. See `TypeExpr::Fn`'s doc comment for why this exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FnEffectAnnotation {
+    Hardware,
+    PhysicalKey,
+}
+
+impl FnEffectAnnotation {
+    /// Internal bookkeeping only -- `Synthesis` is an arbitrary (but
+    /// consistent, matching `effects::join_effects`'s own tie-break
+    /// order) stand-in for "whatever hardware effect the real closure
+    /// turns out to have"; never exposed as a source-level distinction,
+    /// since `confirm hardware` itself doesn't distinguish `Synthesis`
+    /// from `Sequencing` either.
+    pub fn to_effect(self) -> Effect {
+        match self {
+            Self::Hardware => Effect::Synthesis,
+            Self::PhysicalKey => Effect::Destructive,
+        }
     }
 }
 

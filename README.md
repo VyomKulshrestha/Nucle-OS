@@ -662,10 +662,36 @@ plan`/`nucle explain` now narrate through a `let`-bound closure's own
 call. See the ["Closures"](docs/grammar.md) section of the grammar
 reference for the full semantics (including the honest limits still
 standing: no mutual recursion between two independently-`let`-bound
-closures, and neither narration nor effect analysis sees through a
-`Fn(...)`-typed *parameter*'s call) and
+closures, and narration still can't see through a `Fn(...)`-typed
+*parameter*'s call) and
 [docs/examples/closure_retry.nsl](docs/examples/closure_retry.nsl) for a
 complete, runnable example.
+
+A `Fn(...)`-typed parameter can now declare the effect ceiling its call
+is trusted to have, closing the one real gap closures left open: calling
+a parameter (as opposed to a `let`-bound closure) couldn't have its
+effect analyzed at all before, since the concrete closure a caller
+passes isn't knowable until runtime — silently treated as `Pure` even if
+it turned out to be genuinely destructive.
+
+```nuclescript
+fn archive_with_cleanup_policy(cleanup: Fn() -> Void confirm physical_key) returns Void {
+    let x: Void = cleanup()
+}
+```
+
+No annotation (every `Fn(...)` type written before this, and any written
+without one going forward) means exactly the pre-existing behavior —
+this is purely additive, opt-in syntax. Soundness comes from checking
+every concrete closure at the point it's bound into an annotated slot
+(an argument, or a `let`), not at the parameter's own call site — which
+is what makes trusting the declared ceiling there sound, including
+through a captured outer parameter or a parameter forwarded straight
+through to another compatibly-annotated one. See the
+["Effect-Annotated Function Types"](docs/grammar.md) section of the
+grammar reference for the full semantics and
+[docs/examples/effect_annotated_closure.nsl](docs/examples/effect_annotated_closure.nsl)
+for a complete, runnable example.
 
 For ecosystem growth, the compiler also exposes stable integration surfaces:
 built-in preset imports, a serializable playground analysis API, and hardware
@@ -728,6 +754,7 @@ Current NucleScript result summary:
 | `docs/examples/closure_retry.nsl` | 31 B ×2 + 30 B + 39 B | 8 | 8 | 16 | 7120 nt | 445 nt | 2.00× | Closures: a higher-order `retry_once` genuinely calls its closure argument twice on a caught failure; a captured-binding closure's fallback lands; a self-recursive closure retries into a different fallback target and terminates |
 | `docs/examples/explicit_type_args_and_file_param.nsl` | 30 B ×2 | 4 | 4 | 8 | 3560 nt | 445 nt | 2.00× | `recover_generically::<Illumina>(...)` resolves a type parameter inference alone can't, and a `File`-typed parameter's real filename flows into a statement-form `store` |
 | `docs/examples/recovery_plan.nsl` | 31 B ×2 | 4 | 4 | 8 | 3560 nt | 445 nt | 2.00× | A user-defined `enum RecoveryPlan`, a nested match (a user-enum match inside a `Result` match's `Err` arm), and exhaustiveness via a trailing wildcard `_` |
+| `docs/examples/effect_annotated_closure.nsl` | - | - | - | - | - | - | - | Effect-annotated `Fn(...) -> Void confirm physical_key`: a confirmed destructive closure passed through two layers of function calls actually stores then deletes `sample_a.txt` for real, and `nucle doc` correctly reports `Destructive (confirmed)` instead of the previous, silently wrong `Pure` |
 
 Compiler diagnostics are surfaced before execution. For example,
 `docs/examples/critical_redundancy_warning.nsl` warns when critical data uses
@@ -965,11 +992,11 @@ nucle agent "pool status"
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
 | `nucle_vfs` | 50 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
-| `nucle_lang` | 230 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list), closures/higher-order functions (real lexical capture, a genuinely higher-order call retrying twice on a caught failure, effect analysis correctly resolving a called closure's real body, the existing arity/type-mismatch/undeclared-function paths proven unaffected), a gap-closing pass over earlier `Result`/generics/pattern-matching/closures work (`Ok(...)`/`Err(...)` constructors and composability with nested `match`/`?`, explicit `::<Illumina>()` type arguments, real statement-form execution and real `File`/`Str`-typed parameter values inside function bodies, generic closures, a self-recursive closure actually terminating for real against a live VFS, and `nucle plan`/`nucle explain` narration reaching into a `let`-bound closure's own body), and user-defined `enum`s + a general N-arm pattern-matching/exhaustiveness engine (one diagnostic code per new `E-ENUM-*`/`E-MATCH-*` failure mode, free arm order, a real user-flagged nested-match limitation fixed, `Result`/`Ok`/`Err` re-run unmodified through `result_backward_compat.rs`'s golden-file suite proving zero behavior change from the unification) |
+| `nucle_lang` | 243 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list), closures/higher-order functions (real lexical capture, a genuinely higher-order call retrying twice on a caught failure, effect analysis correctly resolving a called closure's real body, the existing arity/type-mismatch/undeclared-function paths proven unaffected), a gap-closing pass over earlier `Result`/generics/pattern-matching/closures work (`Ok(...)`/`Err(...)` constructors and composability with nested `match`/`?`, explicit `::<Illumina>()` type arguments, real statement-form execution and real `File`/`Str`-typed parameter values inside function bodies, generic closures, a self-recursive closure actually terminating for real against a live VFS, and `nucle plan`/`nucle explain` narration reaching into a `let`-bound closure's own body), user-defined `enum`s + a general N-arm pattern-matching/exhaustiveness engine (one diagnostic code per new `E-ENUM-*`/`E-MATCH-*` failure mode, free arm order, a real user-flagged nested-match limitation fixed, `Result`/`Ok`/`Err` re-run unmodified through `result_backward_compat.rs`'s golden-file suite proving zero behavior change from the unification), and effect-annotated `Fn(...)` function types (the new `E-FN-EFFECT-ARG-MISMATCH` code, positive/negative/capture/forwarding scenarios, white-box tests proving a populated `fn_param_effects` table resolves an otherwise-unresolvable call to its declared ceiling, and a regression test for a separately-found, real bug where a top-level call to a `Void`-returning function with statement-form side effects never actually executed them) |
 | `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **508 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **521 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

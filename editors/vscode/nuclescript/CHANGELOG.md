@@ -8,6 +8,27 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.10]
+
+- **`Fn(...)` types can now declare an effect ceiling.** `Fn(...) -> T
+  confirm hardware`/`confirm physical_key` lets a function declare what
+  effect its `Fn(...)`-typed parameter's call is trusted to have, closing
+  the one real gap closures left open: a call to a closure received as a
+  parameter couldn't have its effect analyzed before, since the concrete
+  closure a caller passes isn't known until runtime — silently treated as
+  `Pure` even if genuinely destructive. No annotation means exactly
+  today's behavior; this is purely additive, opt-in syntax reusing the
+  same `confirm hardware`/`confirm physical_key` tokens already used
+  elsewhere, so highlighting already understands it with no grammar
+  changes. Diagnostics (`E-FN-EFFECT-ARG-MISMATCH`), hover, formatting,
+  and `nucle doc` all understand the new syntax — see the updated README
+  and
+  [`docs/examples/effect_annotated_closure.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/effect_annotated_closure.nsl)
+  in the main repo.
+- Bumped the downloaded `nucle-lsp`/`nucle-cli` binaries to the release
+  that actually understands the new syntax, same reason as every prior
+  language-feature bump.
+
 ## [0.1.9]
 
 - **NucleScript now supports user-defined `enum`s and a general

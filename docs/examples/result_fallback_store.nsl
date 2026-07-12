@@ -1,4 +1,4 @@
-// Step 9: `Result<T, E>` + `?` -- a store that can genuinely fail (the
+// `Result<T, E>` + `?` -- a store that can genuinely fail (the
 // same file stored twice into the same pool) is caught inside a
 // function instead of aborting the whole program, and a plain top-level
 // binding can hold the still-wrapped Result for a caller to inspect.

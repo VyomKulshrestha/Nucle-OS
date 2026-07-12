@@ -1,5 +1,5 @@
->// Step 11: pattern matching over `Result<T, E>` -- unlike Step 9's
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// Pattern matching over `Result<T, E>` -- unlike
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >// `result_fallback_store.nsl` (which needs a *second* caller-side
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >// function to inspect a caught `Err`), `match` branches on `Ok`/`Err`

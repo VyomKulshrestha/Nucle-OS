@@ -169,6 +169,18 @@ struct TypeChecker {
     /// at runtime, so that case is a real, documented gap (see
     /// `effects::expr_effect`'s doc comment), not silently guessed at.
     closure_decls: HashMap<String, FunctionDecl>,
+    /// A `Fn(...)`-typed *parameter*'s declared effect ceiling (from an
+    /// `Fn(...) -> T confirm hardware`/`confirm physical_key` annotation
+    /// on its type), keyed by parameter name -- the counterpart to
+    /// `closure_decls` for the one case that has no real body to recurse
+    /// into. `Hardware`/`PhysicalKey` are converted to the `Effect` they
+    /// stand in for (see `FnEffectAnnotation::to_effect`) before storage,
+    /// since this is purely internal bookkeeping consumed by
+    /// `effects.rs`'s own `fn_param_effects` threading. Only ever
+    /// populated for an *annotated* `Fn(...)`-typed parameter -- an
+    /// unannotated one contributes no entry here, preserving today's
+    /// exact "unresolvable call, assumed Pure" behavior unchanged.
+    fn_param_effects: HashMap<String, Effect>,
     /// The `(Ok, Err)` pair of the function/closure currently being
     /// type-checked, if it declares a `Result<...>` return type -- `None`
     /// at top level (a `?` outside any function) and for a non-`Result`-
@@ -529,8 +541,8 @@ impl TypeChecker {
         // common shape for a side-effecting function. Bailing out on `None`
         // before this check would silently skip confirmation checking for
         // exactly that case.
-        let effect = expr_effect(&binding.expr, &self.functions, &self.closure_decls, &mut std::collections::HashSet::new());
-        if !expr_has_required_confirmation(&binding.expr, &self.functions, &self.closure_decls, &mut std::collections::HashSet::new()) {
+        let effect = expr_effect(&binding.expr, &self.functions, &self.closure_decls, &self.fn_param_effects, &mut std::collections::HashSet::new());
+        if !expr_has_required_confirmation(&binding.expr, &self.functions, &self.closure_decls, &self.fn_param_effects, &mut std::collections::HashSet::new()) {
             self.report.error(binding.span, "E-SYNTHESIS-UNCONFIRMED", format!(
                 "binding '{}' has {} effect and requires explicit hardware confirmation",
                 binding.name, effect
@@ -654,7 +666,7 @@ impl TypeChecker {
             // Rolled back below if the body turns out not to actually
             // match its own declared type, so a broken self-reference
             // never leaks into whatever's checked next.
-            let pre_registered = if let TypeExpr::Fn(param_types, ret) = &binding.annotation {
+            let pre_registered = if let TypeExpr::Fn(param_types, ret, _) = &binding.annotation {
                 self.closures.insert(binding.name.clone(), (type_params.clone(), param_types.clone(), (**ret).clone()));
                 self.closure_decls.insert(binding.name.clone(), FunctionDecl {
                     name: binding.name.clone(),
@@ -670,9 +682,28 @@ impl TypeChecker {
                 false
             };
             let closure_ty = self.check_closure_expr(type_params, params, return_type, body, *span);
+            // A closure literal's own inferred type never carries an
+            // effect annotation (see `check_closure_expr`'s own
+            // construction site) -- only the *slot* it's bound into
+            // does. So the annotation field is erased from the
+            // BINDING's own declared type before this structural
+            // comparison, and validated separately, right after, via
+            // `check_fn_effect_compatibility` -- comparing them directly
+            // would make any annotated `Fn(...)` binding permanently
+            // unsatisfiable (`Some(...)` can never structurally equal
+            // `None`).
+            let annotation_erased = match &binding.annotation {
+                TypeExpr::Fn(p, r, _) => TypeExpr::Fn(p.clone(), r.clone(), None),
+                other => other.clone(),
+            };
+            let declared_effect = match &binding.annotation {
+                TypeExpr::Fn(_, _, effect) => *effect,
+                _ => None,
+            };
             match closure_ty {
-                Some(closure_ty) if closure_ty == binding.annotation => {
-                    if let TypeExpr::Fn(param_types, ret) = closure_ty {
+                Some(closure_ty) if closure_ty == annotation_erased => {
+                    if let TypeExpr::Fn(param_types, ret, _) = closure_ty {
+                        self.check_fn_effect_compatibility(declared_effect, &binding.expr, binding.span);
                         self.closures.insert(binding.name.clone(), (type_params.clone(), param_types, *ret));
                         self.closure_decls.insert(binding.name.clone(), FunctionDecl {
                             name: binding.name.clone(),
@@ -841,8 +872,8 @@ impl TypeChecker {
             Expr::FunctionCall { name, args, .. } => {
                 let func = self.lookup_function(name)?;
                 for (param, arg) in func.params.iter().zip(args.iter()) {
-                    if let TypeExpr::Fn(expected_params, expected_return) = &param.ty {
-                        self.check_fn_typed_arg(expected_params, expected_return, arg, &param.name, span);
+                    if let TypeExpr::Fn(expected_params, expected_return, expected_effect) = &param.ty {
+                        self.check_fn_typed_arg(expected_params, expected_return, *expected_effect, arg, &param.name, span);
                     }
                 }
                 match func.return_type {
@@ -1293,6 +1324,7 @@ impl TypeChecker {
         closure_checker.sequences = self.sequences.clone();
         closure_checker.closures = self.closures.clone();
         closure_checker.closure_decls = self.closure_decls.clone();
+        closure_checker.fn_param_effects = self.fn_param_effects.clone();
         closure_checker.enums = self.enums.clone();
         closure_checker.enum_bindings = self.enum_bindings.clone();
         // Set from the CLOSURE's own return type, not inherited from the
@@ -1318,8 +1350,11 @@ impl TypeChecker {
                 TypeExpr::Strand => {
                     closure_checker.strands.insert(param.name.clone(), span);
                 }
-                TypeExpr::Fn(param_types, ret) => {
+                TypeExpr::Fn(param_types, ret, effect) => {
                     closure_checker.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**ret).clone()));
+                    if let Some(effect) = effect {
+                        closure_checker.fn_param_effects.insert(param.name.clone(), effect.to_effect());
+                    }
                 }
                 // A user-enum-typed parameter (Step 14) -- tracked
                 // separately from `bindings` (which only ever holds real
@@ -1376,7 +1411,7 @@ impl TypeChecker {
             ));
             return None;
         }
-        Some(TypeExpr::Fn(params.iter().map(|p| p.ty.clone()).collect(), Box::new(return_type.clone())))
+        Some(TypeExpr::Fn(params.iter().map(|p| p.ty.clone()).collect(), Box::new(return_type.clone()), None))
     }
 
     /// Validates a call's arguments against a closure's own `(param_types,
@@ -1442,8 +1477,8 @@ impl TypeChecker {
                         }
                     }
                 }
-                TypeExpr::Fn(expected_params, expected_return) => {
-                    self.check_fn_typed_arg(expected_params, expected_return, arg, name, span);
+                TypeExpr::Fn(expected_params, expected_return, expected_effect) => {
+                    self.check_fn_typed_arg(expected_params, expected_return, *expected_effect, arg, name, span);
                 }
                 _ => {}
             }
@@ -1467,7 +1502,7 @@ impl TypeChecker {
     /// declared signature. Reuses `E-ARG-TYPE-MISMATCH` for both "wrong
     /// signature" and "not a closure at all" -- the same code an ordinary
     /// mismatched argument already reports.
-    fn check_fn_typed_arg(&mut self, expected_params: &[TypeExpr], expected_return: &TypeExpr, arg: &Expr, param_name: &str, span: Span) {
+    fn check_fn_typed_arg(&mut self, expected_params: &[TypeExpr], expected_return: &TypeExpr, expected_effect: Option<FnEffectAnnotation>, arg: &Expr, param_name: &str, span: Span) {
         let actual = match arg {
             // Only the signature matters for this structural comparison
             // -- `type_params` is dropped. A generic closure argument's
@@ -1478,7 +1513,7 @@ impl TypeChecker {
             Expr::Variable(name) => self.closures.get(name).cloned().map(|(_, params, ret)| (params, ret)),
             Expr::Closure { type_params, params, return_type, body, span: closure_span } => {
                 match self.check_closure_expr(type_params, params, return_type, body, *closure_span) {
-                    Some(TypeExpr::Fn(actual_params, actual_return)) => Some((actual_params, *actual_return)),
+                    Some(TypeExpr::Fn(actual_params, actual_return, _)) => Some((actual_params, *actual_return)),
                     _ => return,
                 }
             }
@@ -1495,11 +1530,72 @@ impl TypeChecker {
                         actual_params.iter().map(crate::docgen::render_type).collect::<Vec<_>>().join(", "),
                         crate::docgen::render_type(&actual_return),
                     ));
+                } else {
+                    self.check_fn_effect_compatibility(expected_effect, arg, span);
                 }
             }
             None => {
                 self.report.error(span, "E-ARG-TYPE-MISMATCH", format!("argument for parameter '{}' must be a closure", param_name));
             }
+        }
+    }
+
+    /// The soundness-critical check that makes an effect-annotated
+    /// `Fn(...)` type actually sound, not just decorative: whenever a
+    /// concrete closure expression is bound into an annotated slot (an
+    /// argument passed to an annotated parameter, or a closure literal
+    /// assigned to an annotated `let`), its own *real* effect -- computed
+    /// the identical way any named function's/let-bound closure's call
+    /// already is, via `effects::function_call_effect`/`effects::
+    /// body_effect` -- must already be internally confirmed and must
+    /// fall within the declared ceiling. This single check, reused at
+    /// every concrete-binding site, is what lets a call to the
+    /// *parameter itself* later be trusted as `(declared_effect,
+    /// confirmed=true)` inside `effects.rs` (see `fn_param_effects`)
+    /// without ever needing to see the real body at that inner call site
+    /// -- by induction, every value that could ever reach it was already
+    /// checked here, wherever it was concretely bound.
+    ///
+    /// `expr` is resolved the same way regardless of shape -- a literal
+    /// closure's body is joined directly via `effects::body_effect`; a
+    /// named reference resolves via `effects::function_call_effect`,
+    /// which itself already checks `closure_decls` (a real body) before
+    /// `fn_param_effects` (a trusted ceiling from an *enclosing*
+    /// annotated parameter) before falling back to today's unchanged
+    /// `Pure`/confirmed default for anything unannotated -- so this one
+    /// call correctly handles a literal, a `let`-bound closure, a
+    /// captured outer parameter, and a forwarded parameter alike, with
+    /// no special-casing for any of them.
+    fn check_fn_effect_compatibility(&mut self, expected: Option<FnEffectAnnotation>, expr: &Expr, span: Span) {
+        let Some(expected) = expected else { return };
+        let (actual_effect, actual_confirmed) = match expr {
+            Expr::Closure { params, body, .. } => {
+                // The literal's own annotated `Fn(...)`-typed parameters
+                // (if it takes any) are scoped in too, exactly like
+                // `function_call_effect` already does for a named
+                // function/closure -- so a closure literal that itself
+                // takes an effect-annotated parameter resolves calls to
+                // it correctly, not just calls to whatever it captures.
+                let scoped = crate::effects::scoped_fn_param_effects(params, &self.fn_param_effects);
+                crate::effects::body_effect(body, &self.functions, &scoped, &mut HashSet::new())
+            }
+            Expr::Variable(name) => {
+                crate::effects::function_call_effect(name, &self.functions, &self.closure_decls, &self.fn_param_effects, &mut HashSet::new())
+            }
+            _ => return,
+        };
+        let confirmed_enough = actual_effect == Effect::Pure || actual_confirmed;
+        if !crate::effects::effect_satisfies_annotation(actual_effect, expected) {
+            self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
+                "this closure's real effect is {}, which doesn't fall within the parameter's declared {}",
+                actual_effect,
+                match expected { FnEffectAnnotation::Hardware => "confirm hardware", FnEffectAnnotation::PhysicalKey => "confirm physical_key" },
+            ));
+        } else if !confirmed_enough {
+            self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
+                "this closure has {} effect but isn't itself confirmed (missing its own confirm inside its body)",
+                actual_effect,
+            ));
         }
     }
 
@@ -1630,8 +1726,8 @@ impl TypeChecker {
                                 }
                             }
                         }
-                    } else if let TypeExpr::Fn(expected_params, expected_return) = &param.ty {
-                        self.check_fn_typed_arg(expected_params, expected_return, arg, &param.name, span);
+                    } else if let TypeExpr::Fn(expected_params, expected_return, expected_effect) = &param.ty {
+                        self.check_fn_typed_arg(expected_params, expected_return, *expected_effect, arg, &param.name, span);
                     }
                 }
 
@@ -1833,8 +1929,11 @@ impl TypeChecker {
                 // inside the body, resolved through `infer_expr`/
                 // `infer_result_expr`'s closures-first `FunctionCall`
                 // lookup exactly like a `let`-bound closure already is.
-                TypeExpr::Fn(param_types, return_type) => {
+                TypeExpr::Fn(param_types, return_type, effect) => {
                     body_checker.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**return_type).clone()));
+                    if let Some(effect) = effect {
+                        body_checker.fn_param_effects.insert(param.name.clone(), effect.to_effect());
+                    }
                 }
                 // A user-enum-typed parameter (Step 14) -- see
                 // `TypeChecker::enum_bindings`'s own doc comment.

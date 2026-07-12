@@ -526,7 +526,21 @@ impl Parser {
             }
             self.advance();
             let return_type = self.parse_type_expr()?;
-            Ok(TypeExpr::Fn(params, Box::new(return_type)))
+            let effect = if self.check_ident("confirm") {
+                self.advance();
+                if self.check_ident("hardware") {
+                    self.advance();
+                    Some(FnEffectAnnotation::Hardware)
+                } else if self.check_ident("physical_key") {
+                    self.advance();
+                    Some(FnEffectAnnotation::PhysicalKey)
+                } else {
+                    return Err(self.error_here("expected 'hardware' or 'physical_key' after 'confirm' in Fn's effect annotation"));
+                }
+            } else {
+                None
+            };
+            Ok(TypeExpr::Fn(params, Box::new(return_type), effect))
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             // Any identifier not matching one of the built-in type
             // keywords above is presumed to name a user-declared `enum`

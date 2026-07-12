@@ -462,23 +462,111 @@ closure (real params/return_type/body, so its actual effect can be
 computed by recursing into it, exactly like a named function already
 can) that `typeck::TypeChecker::check_let` populates and passes through
 at its own confirmation-gating call site -- the one place that actually
-gates compilation. Two related, deliberately *not* fixed gaps, both
-because the real fix would require either unsafe cross-scope guessing or
-disproportionate new machinery for a secondary reporting concern: a
-`Fn(...)`-typed *parameter*'s call (its real body isn't knowable until
-runtime, so it's optimistically treated as `Pure`/confirmed, no worse
-than the pre-existing "can't resolve, assume Pure" fallback for any
-unresolvable name); and `effect_summary`/`decl_effect_info`'s own
-independent, scope-free walk (used by `nucle explain`), which always
-passes an empty closures table and so treats every closure call as
-inert -- deliberately not given a whole-program closure pre-scan, since
-pooling same-named closures from unrelated scopes by name alone would
-risk silently picking the *wrong* one's effect, a correctness bug worse
-than the honest incompleteness it would "fix." `sim_backend.rs`'s
-narrator has the identical, symmetric gap for the same reason (it
-resolves callees by static name and has no runtime environment to
-consult) -- see the "Closures" section of [docs/grammar.md](grammar.md)
-for the full semantics and every documented limitation.
+gates compilation. A `Fn(...)`-typed *parameter*'s call was left as a
+real, deliberately open gap at the time (its real body isn't knowable
+until runtime, so it was optimistically treated as `Pure`/confirmed, no
+worse than the pre-existing "can't resolve, assume Pure" fallback for
+any unresolvable name) -- closed by effect-annotated function types,
+below. `sim_backend.rs`'s narrator has the identical, symmetric gap for
+the same reason (it resolves callees by static name and has no runtime
+environment to consult) and remains genuinely open -- see the "Closures"
+section of [docs/grammar.md](grammar.md) for the full semantics.
+
+### Effect-annotated function types
+
+The other real gap `Fn(...)`-typed parameters left open: their call
+inside a function body couldn't have its effect analyzed at all, since
+the concrete closure a caller passes isn't knowable until runtime.
+`TypeExpr::Fn` gained a third field, `Option<FnEffectAnnotation>`
+(`Hardware`/`PhysicalKey`, mirroring the *only* two confirmation
+keywords the language already has -- `confirm hardware` for
+`Synthesis`/`Sequencing`, `confirm physical_key` for `Destructive`) --
+`None` for every `Fn(...)` type written before this feature, preserving
+today's exact behavior unconditionally. Surface syntax reuses the exact
+existing `confirm`/`hardware`/`physical_key` tokens
+(`Fn(...) -> T confirm hardware`), so no new lexer tokens were needed.
+
+**The soundness argument, and the hole an architecture-review pass found
+in the first draft.** The only place a *concrete* closure value is ever
+created is an `Expr::Closure` literal -- a parameter, a `let`-bound name,
+or a captured name inside a nested closure is always just an alias to a
+closure created somewhere else. So the actual invariant needed is: a
+call to any `Fn(...)`-typed expression is sound to trust as
+`(declared_effect, confirmed=true)` as long as every concrete closure
+ever bound into that annotated slot was checked against the ceiling
+*once*, wherever it was concretely bound -- not re-derived at the
+parameter's own call site. The first draft's design checked this only
+for the explicit-argument-passing case; a dedicated review pass found
+that a *capture* (an inner closure calling an annotated *outer*
+parameter, never passed as an explicit call argument at all) was never
+covered, which would have made the ceiling untrustworthy for that case.
+The fix, adopted in the final design: run the *same* effect computation
+uniformly everywhere a concrete closure is bound into an annotated slot
+(`typeck::TypeChecker::check_fn_effect_compatibility`, called from both
+`check_fn_typed_arg` and `check_let`'s existing closure-registration
+flow), always using the *current* scope's real `fn_param_effects` --
+this naturally resolves the capture case for free (the enclosing
+function's own annotated parameters are already in scope when the inner
+closure's effect gets computed) and the *forwarding* case too (an
+annotated parameter passed straight through as another function's
+compatibly-annotated parameter resolves via its own trusted ceiling,
+no real body needed) with no special-casing for either.
+
+Concretely: `effects.rs` gained `fn_param_effects: &HashMap<String,
+Effect>` as a new parameter threaded through `expr_effect`/`expr_has_
+required_confirmation`/`function_call_effect`/`decl_effect_info` (mapping
+a `Fn(...)`-typed parameter's name to the `Effect` its annotation stands
+for) -- `function_call_effect`'s existing "unresolvable name" fallback
+now checks this table before defaulting to `(Pure, true)`. A new
+`effects::scoped_fn_param_effects` builds the table a callable's *own*
+body should be resolved against: its own annotated parameters (always
+authoritative -- a name collision could only type-check if the callable
+itself also declares that name) layered over whatever the enclosing
+scope already had (meaningful only for a closure, which really does
+capture lexically). `function_call_effect`'s own body-joining loop was
+extracted into a new `effects::body_effect`, reused by `typeck::
+TypeChecker::check_fn_effect_compatibility` to compute a closure
+*literal*'s effect directly (it has no name of its own to resolve a call
+against). `typeck::TypeChecker` gained a parallel `fn_param_effects:
+HashMap<String, Effect>` field, populated in `check_function`'s and
+`check_closure_expr`'s existing parameter-seeding loops and cloned into
+child checkers the same way `closures`/`closure_decls` already are.
+
+**Deliberately not attempted**: distinguishing `Synthesis` from
+`Sequencing` at the annotation level -- the language's own `confirm
+hardware` doesn't distinguish them either, and `nucle_hardware`'s
+`collect_hardware_requests`/`middle::lower_program` are already strictly
+top-level-scoped, never walking into any function or closure body at all
+(verified directly: `Declaration::Function` is an explicit no-op there),
+so this analysis's output was never going to reach that pipeline either
+way, annotated or not. `sim_backend.rs`'s narrator remains genuinely
+unable to see through an annotated parameter's call -- a declared
+ceiling is not a real body to synthesize a concrete VFS step from; only
+whole-program flow analysis (the option not taken) could close that
+specific, narrower gap.
+
+**A second, unrelated real bug found while building the verification
+example.** `codegen.rs`'s `is_result_producing` (gating whether a
+top-level `let` is routed through the real interpreter at all) only ever
+returned `true` for a call to a `Result<_, _>`-returning function --
+correct before statement-form execution existed, wrong afterward: a
+top-level `let result: Void = do_thing()` where `do_thing`'s body has a
+real statement-form `store`/`delete` silently never ran it, with no
+error and no diagnostic, discovered because the effect-annotated-`Fn
+(...)`-types example is specifically a top-level call chain into a
+genuinely `Destructive` closure. Fixed by routing any function call
+through `eval_expr` except one returning a compile-time-only type
+(`Pool<...>`/`Strand`/`Sequence`/`File`/`Recovery`, none of which
+`value::Value` has a runtime representation for at all, so `eval_expr`
+has nothing to produce for them anyway).
+
+See the "Effect-Annotated Function Types" section of
+[docs/grammar.md](grammar.md) for the full surface semantics, and
+[`docs/examples/effect_annotated_closure.nsl`](examples/effect_annotated_closure.nsl)
+for a complete, runnable example -- verified directly with `nucle doc`,
+which now shows both functions in the example correctly reporting
+`Destructive (confirmed)` rather than the previous, silently wrong
+`Pure`.
 
 ### Language Server (`nucle_lsp`)
 

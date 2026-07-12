@@ -407,6 +407,36 @@ fn a_file_typed_parameters_real_filename_flows_into_a_statement_form_store() {
     assert_eq!(os.dna_stat().file_count, 2);
 }
 
+#[test]
+fn a_top_level_call_to_a_void_returning_function_actually_executes_its_body() {
+    // A real, pre-existing gap found while building the effect-annotated
+    // `Fn(...)` types example: `codegen::is_result_producing` (which
+    // gates whether a top-level `let` binding is routed through the real
+    // interpreter at all) only ever returned `true` for a call to a
+    // `Result<_, _>`-returning function -- correct before statement-form
+    // `store`/`retrieve`/`delete` could execute inside a function body,
+    // wrong afterward. A top-level `let result: Void = f()` where `f`'s
+    // body has a real statement-form `store` silently never ran it,
+    // with no error and no diagnostic. Fixed by routing any function
+    // call through `eval_expr` except one returning a compile-time-only
+    // type (`Pool<...>`/`Strand`/`Sequence`/`File`/`Recovery`), which
+    // has no runtime `Value` shape to produce anyway.
+    let dir = examples_dir();
+    let src = format!(
+        "{}fn f() returns Void {{\n    store \"sample_a.txt\" into archive\n}}\nlet result: Void = f()\n",
+        POOL
+    );
+    let mut os = nucle_vfs::syscall::NucleOS::new(100);
+    let mut plan = compile(&src).expect("must compile cleanly");
+    let result = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
+    assert!(
+        result.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_a.txt")),
+        "a Void-returning function's real statement-form store must actually execute, steps: {:?}",
+        result.steps
+    );
+    assert_eq!(os.dna_stat().file_count, 1);
+}
+
 // ---------------------------------------------------------------------
 // Formatter
 // ---------------------------------------------------------------------

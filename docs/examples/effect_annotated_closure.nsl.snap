@@ -1,0 +1,198 @@
+>// Effect-annotated function types close the "accurate effect analysis
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// through an arbitrary closure call" gap: calling a Fn(...)-typed
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// *parameter* couldn't have its real effect analyzed before, since the
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// concrete closure passed in isn't known until runtime -- an
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// unannotated Fn(...) type still can't (and every existing program
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// keeps working unchanged), but `confirm hardware`/`confirm
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// physical_key` lets a function declare the ceiling its parameter's
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// call is trusted to have. That trust is sound because every concrete
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// closure ever bound into an annotated slot is checked against the
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// declared ceiling once, wherever it's concretely bound -- not
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// re-derived at the parameter's own call site, which still can't see
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// the real body at all.
+#^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>
+>pool archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// `cleanup`'s own call inside this body is trusted to have `Destructive`
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// effect and to already be confirmed -- checked once, wherever a real
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// closure is bound into this parameter (see `run_cleanup` below), not
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// re-derived here.
+#^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archive_with_cleanup_policy(cleanup: Fn() -> Void confirm physical_key) returns Void {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                      ^^ source.nuclescript
+#                                        ^^ source.nuclescript storage.type.nuclescript
+#                                          ^^^ source.nuclescript
+#                                             ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^ source.nuclescript storage.type.nuclescript
+#                                                    ^ source.nuclescript
+#                                                     ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                            ^ source.nuclescript
+#                                                             ^^^^^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                         ^^ source.nuclescript
+#                                                                           ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                                  ^ source.nuclescript
+#                                                                                   ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                       ^^^ source.nuclescript
+>    let x: Void = cleanup()
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^ source.nuclescript storage.type.nuclescript
+#               ^ source.nuclescript
+#                ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                 ^ source.nuclescript
+#                  ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                         ^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// The concrete closure actually passed in: a real, already-confirmed
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// delete. If this closure did something other than `Destructive`, or
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// did `Destructive` work without its own `confirm physical_key`,
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// `E-FN-EFFECT-ARG-MISMATCH` would report it right here -- not
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// silently let it through as `archive_with_cleanup_policy`'s own
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// effect.
+#^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn run_cleanup() returns Void {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#              ^^^ source.nuclescript
+#                 ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^ source.nuclescript storage.type.nuclescript
+#                             ^^^ source.nuclescript
+>    let purge_expired: Fn() -> Void confirm physical_key = fn() -> Void {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^ source.nuclescript storage.type.nuclescript
+#                         ^^^ source.nuclescript
+#                            ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^ source.nuclescript storage.type.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                        ^ source.nuclescript
+#                                                         ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                                          ^ source.nuclescript
+#                                                           ^^ source.nuclescript keyword.control.nuclescript
+#                                                             ^^^ source.nuclescript
+#                                                                ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                                                                  ^ source.nuclescript
+#                                                                   ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                       ^^^ source.nuclescript
+>        delete "sample_a.txt" from archive confirm physical_key
+#^^^^^^^^ source.nuclescript
+#        ^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^ source.nuclescript
+#               ^ source.nuclescript string.quoted.double.nuclescript
+#                ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                            ^ source.nuclescript string.quoted.double.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^ source.nuclescript keyword.control.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                          ^ source.nuclescript
+#                                           ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                  ^ source.nuclescript
+#                                                   ^^^^^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>    }
+#^^^^^^ source.nuclescript
+>    let result: Void = archive_with_cleanup_policy(purge_expired)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^ source.nuclescript variable.other.nuclescript
+#              ^^ source.nuclescript
+#                ^^^^ source.nuclescript storage.type.nuclescript
+#                    ^ source.nuclescript
+#                     ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                      ^ source.nuclescript
+#                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                  ^ source.nuclescript
+#                                                   ^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>store "sample_a.txt" into archive
+#^^^^^ source.nuclescript keyword.control.nuclescript
+#     ^ source.nuclescript
+#      ^ source.nuclescript string.quoted.double.nuclescript
+#       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+>
+>let cleaned: Void = run_cleanup()
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^ source.nuclescript storage.type.nuclescript
+#                 ^ source.nuclescript
+#                  ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                   ^ source.nuclescript
+#                    ^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                               ^^^ source.nuclescript
+>

@@ -10,7 +10,7 @@
 //! package instead of needing this file to know about it specially; this
 //! only ever walks whatever `Program` it's given.
 
-use crate::ast::{Declaration, PipelineStep, Program, TypeExpr};
+use crate::ast::{Declaration, FnEffectAnnotation, PipelineStep, Program, TypeExpr};
 use crate::effects::{decl_effect_info, function_table, ResolvingSet};
 
 /// Renders every documented (and undocumented -- see below) top-level
@@ -123,7 +123,7 @@ fn render_section<'a>(
         }
         out.push_str(&format!("\n```nuclescript\n{}\n```\n", entry.signature));
 
-        let info = decl_effect_info(decl, funcs, &mut ResolvingSet::new());
+        let info = decl_effect_info(decl, funcs, &std::collections::HashMap::new(), &mut ResolvingSet::new());
         let confirmation = if !info.confirmation_required {
             String::new()
         } else if info.confirmed {
@@ -152,10 +152,15 @@ pub(crate) fn render_type(ty: &TypeExpr) -> String {
         TypeExpr::Void => "Void".to_string(),
         TypeExpr::Result(ok, err) => format!("Result<{}, {}>", render_type(ok), render_type(err)),
         TypeExpr::Str => "Str".to_string(),
-        TypeExpr::Fn(params, ret) => format!(
-            "Fn({}) -> {}",
+        TypeExpr::Fn(params, ret, effect) => format!(
+            "Fn({}) -> {}{}",
             params.iter().map(render_type).collect::<Vec<_>>().join(", "),
-            render_type(ret)
+            render_type(ret),
+            match effect {
+                Some(FnEffectAnnotation::Hardware) => " confirm hardware",
+                Some(FnEffectAnnotation::PhysicalKey) => " confirm physical_key",
+                None => "",
+            }
         ),
         TypeExpr::Enum(name) => name.clone(),
     }

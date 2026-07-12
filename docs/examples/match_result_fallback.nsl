@@ -1,4 +1,4 @@
-// Step 11: pattern matching over `Result<T, E>` -- unlike Step 9's
+// Pattern matching over `Result<T, E>` -- unlike
 // `result_fallback_store.nsl` (which needs a *second* caller-side
 // function to inspect a caught `Err`), `match` branches on `Ok`/`Err`
 // directly inside the same function: try storing `sample_a.txt`, and

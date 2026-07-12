@@ -1,4 +1,4 @@
-// Step 12: closures / higher-order functions. Two demonstrations: a
+// Closures / higher-order functions. Two demonstrations: a
 // genuinely higher-order function that calls whatever closure it's
 // given (no capture needed), and a `let`-bound closure that captures a
 // Result binding from its enclosing function.
