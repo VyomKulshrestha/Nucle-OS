@@ -8,6 +8,23 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.11]
+
+- **Fixed: the auto-downloaded `nucle-cli` binary was stale.**
+  `src/cliDownload.ts`'s pinned release tag hadn't been bumped since
+  v0.1.5, so a fresh install's "Run File"/"Format Document" silently
+  downloaded a `nucle-cli` that predates user-defined `enum`s/`match`
+  (main repo v0.1.6) and effect-annotated `Fn(...)` types (v0.1.7)
+  entirely — it would fail to parse either syntax, including this
+  extension's own example files
+  ([`recovery_plan.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/recovery_plan.nsl),
+  [`effect_annotated_closure.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/effect_annotated_closure.nsl)).
+  Now pinned to v0.1.8, which also picks up the main repo's new
+  concurrent hardware-submission model (`nucle_hardware`'s `Provider`
+  trait, `nucle hardware export` accepting multiple sources) — a
+  CLI/backend change with no new `.nsl` syntax, so nothing else in this
+  extension needed updating for it.
+
 ## [0.1.10]
 
 - **`Fn(...)` types can now declare an effect ceiling.** `Fn(...) -> T
