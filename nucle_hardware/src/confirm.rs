@@ -3,7 +3,7 @@
 //! confirmed. This lives in the library, not the CLI, so every consumer of
 //! `Provider` gets the same safety check — not just `nucle hardware export`.
 
-use crate::provider::Provider;
+use crate::provider::{JobHandle, Provider};
 use nucle_lang::hardware::HardwareRequest;
 use nucle_lang::Effect;
 
@@ -34,6 +34,25 @@ pub fn submit_with_confirmation(
         ));
     }
     provider.execute_batch(batch)
+}
+
+/// Like `submit_with_confirmation`, but returns a handle immediately instead
+/// of blocking until the job finishes — lets a caller submit several batches
+/// back-to-back and only block on all of them at the end, so N submissions
+/// never wait on each other even against a provider with real latency.
+pub fn submit_with_confirmation_async(
+    provider: &dyn Provider,
+    batch: &[HardwareRequest],
+    confirmed: bool,
+) -> Result<Box<dyn JobHandle>, String> {
+    let effectful = count_effectful(batch);
+    if effectful > 0 && !confirmed {
+        return Err(format!(
+            "Refusing to submit {} cost-bearing/destructive request(s) without confirmation.",
+            effectful
+        ));
+    }
+    Ok(provider.submit(batch))
 }
 
 #[cfg(test)]
@@ -120,5 +139,24 @@ mod tests {
         let batch = [synthesis_request("a.bin"), sequencing_request("b.bin"), destructive_request("c.bin")];
         let err = submit_with_confirmation(&provider, &batch, false).unwrap_err();
         assert!(err.contains('3'), "expected error to mention 3 effectful requests, got: {}", err);
+    }
+
+    #[test]
+    fn submit_with_confirmation_async_rejects_effectful_batch_without_confirm() {
+        let provider = MockProvider;
+        let batch = [synthesis_request("a.bin")];
+        match submit_with_confirmation_async(&provider, &batch, false) {
+            Err(e) => assert!(e.contains("without confirmation")),
+            Ok(_) => panic!("expected rejection without confirmation"),
+        }
+    }
+
+    #[test]
+    fn submit_with_confirmation_async_returns_a_handle_that_waits_to_the_same_result() {
+        let provider = MockProvider;
+        let batch = [synthesis_request("a.bin"), destructive_request("b.bin")];
+        let handle = submit_with_confirmation_async(&provider, &batch, true).unwrap();
+        let msg = handle.wait().unwrap();
+        assert!(msg.contains('2'));
     }
 }

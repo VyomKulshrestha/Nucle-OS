@@ -150,7 +150,7 @@ A ReAct agent that takes natural-language file operations, plans across the VFS 
 
 ### Layer 7 — Hardware Bridge (`nucle_hardware`)
 
-The execution boundary between compiled NucleScript plans and real lab hardware. `nucle_lang::hardware` only ever collects typed `HardwareRequest`s (Synthesis, Sequencing, Destructive) from an effect-checked program; `nucle_hardware::Provider` is the one trait that actually submits them — today via `MockProvider` (dry run) or `FileExportProvider` (writes a JSON batch for lab submission). No real vendor adapter (Twist, IDT, Illumina, Oxford Nanopore) exists yet by design — see [docs/architecture.md](docs/architecture.md#hardware-bridge-and-provider-boundaries).
+The execution boundary between compiled NucleScript plans and real lab hardware. `nucle_lang::hardware` only ever collects typed `HardwareRequest`s (Synthesis, Sequencing, Destructive) from an effect-checked program; `nucle_hardware::Provider` is the one trait that actually submits them via `submit(&self, batch) -> Box<dyn JobHandle>` (returns immediately; poll `status()` or block on `wait()`) — today via `MockProvider` (instant dry run), `DelayedMockProvider` (dry run simulating real hardware latency on a `std::thread`, demonstrating genuine concurrent submission — no new dependencies, no async runtime), or `FileExportProvider` (writes a JSON batch for lab submission). No real vendor adapter (Twist, IDT, Illumina, Oxford Nanopore) exists yet by design — see [docs/architecture.md](docs/architecture.md#hardware-bridge-and-provider-boundaries).
 
 ---
 
@@ -971,6 +971,9 @@ nucle package verify "@nuclescript/presets"
 nucle hardware export docs/examples/effect_confirmations.nsl --confirm -o batch.json
 nucle hardware export docs/examples/effect_confirmations.nsl --confirm --provider mock
 
+# Multiple sources submit concurrently instead of one at a time
+nucle hardware export a.nsl b.nsl c.nsl --confirm --provider mock-delayed --simulated-delay-ms 300
+
 # Environment and integrity diagnostics
 nucle doctor
 
@@ -993,10 +996,10 @@ nucle agent "pool status"
 | `nucle_vfs` | 50 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`) |
 | `nucle_agent` | 27 | Tool defs, planner, executor |
 | `nucle_lang` | 243 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection, VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list), closures/higher-order functions (real lexical capture, a genuinely higher-order call retrying twice on a caught failure, effect analysis correctly resolving a called closure's real body, the existing arity/type-mismatch/undeclared-function paths proven unaffected), a gap-closing pass over earlier `Result`/generics/pattern-matching/closures work (`Ok(...)`/`Err(...)` constructors and composability with nested `match`/`?`, explicit `::<Illumina>()` type arguments, real statement-form execution and real `File`/`Str`-typed parameter values inside function bodies, generic closures, a self-recursive closure actually terminating for real against a live VFS, and `nucle plan`/`nucle explain` narration reaching into a `let`-bound closure's own body), user-defined `enum`s + a general N-arm pattern-matching/exhaustiveness engine (one diagnostic code per new `E-ENUM-*`/`E-MATCH-*` failure mode, free arm order, a real user-flagged nested-match limitation fixed, `Result`/`Ok`/`Err` re-run unmodified through `result_backward_compat.rs`'s golden-file suite proving zero behavior change from the unification), and effect-annotated `Fn(...)` function types (the new `E-FN-EFFECT-ARG-MISMATCH` code, positive/negative/capture/forwarding scenarios, white-box tests proving a populated `fn_param_effects` table resolves an otherwise-unresolvable call to its declared ceiling, and a regression test for a separately-found, real bug where a top-level call to a `Void`-returning function with statement-form side effects never actually executed them) |
-| `nucle_hardware` | 21 | Confirmation gating (effectful/destructive rejection, count/message correctness), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation |
+| `nucle_hardware` | 27 | Confirmation gating (effectful/destructive rejection, count/message correctness, sync and async variants), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation, and the job-handle/concurrency model (`submit()` returning before a real simulated delay elapses, multiple concurrent jobs finishing in well under their sequential-sum time, `Pending`/`Running`/`Complete` status transitions) |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **521 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **527 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 
@@ -1010,7 +1013,7 @@ nucle_index/     — Retrieval & indexing (CRISPR-sim, vector index)
 nucle_vfs/       — Virtual file system (syscall-style API, storage/recovery manifests, migration)
 nucle_agent/     — Agent interface (ReAct planner)
 nucle_lang/      — NucleScript compiler, MIR optimizer, package registry, lock files, ecosystem APIs, simulation backend, and VFS backend
-nucle_hardware/  — Hardware provider adapters (Provider trait, MockProvider, FileExportProvider)
+nucle_hardware/  — Hardware provider adapters (Provider trait with submit()/JobHandle, MockProvider, DelayedMockProvider, FileExportProvider)
 nucle_lsp/       — NucleScript language server (tower-lsp adapter over nucle_lang::analyze: diagnostics, hover, go-to-definition, document outline)
 nucle_cli/       — Command-line interface
 nucle_playground/ — Interactive web playground (tiny_http server + static frontend), also published at github.com/Nuclescript/playground

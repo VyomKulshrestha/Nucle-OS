@@ -3,6 +3,7 @@
 //! Unified command-line tool tying all layers together.
 
 use clap::{Parser, Subcommand};
+use nucle_hardware::JobHandle;
 use nucle_vfs::syscall::NucleOS;
 use nucle_agent::executor::Executor;
 use nucle_agent::tools;
@@ -276,16 +277,23 @@ enum PackageAction {
 
 #[derive(Subcommand, Debug, Clone)]
 enum HardwareSubcommand {
-    /// Export batch requests from a NucleScript file to a JSON file
+    /// Export batch requests from one or more NucleScript files to a JSON file
     Export {
-        /// NucleScript file to compile and extract requests from
-        source: String,
-        /// Output path for the exported JSON batch file (used by the file-export provider)
+        /// NucleScript file(s) to compile and extract requests from. Passing
+        /// more than one submits every file's batch concurrently instead of
+        /// one at a time.
+        #[arg(required = true, num_args = 1..)]
+        source: Vec<String>,
+        /// Output path for the exported JSON batch file (used by the
+        /// file-export provider). With multiple sources, each gets its own
+        /// path (an index is inserted before the extension).
         #[arg(short, long, default_value = "batch.json")]
         output: String,
-        /// Provider to submit the batch to: 'file-export' (default) or 'mock'.
-        /// Vendor names (e.g. 'twist') are accepted but no vendor-specific
-        /// adapter exists yet, so they fall back to file-export.
+        /// Provider to submit the batch to: 'file-export' (default), 'mock',
+        /// or 'mock-delayed' (simulates real hardware latency on a
+        /// background thread — see --simulated-delay-ms). Vendor names (e.g.
+        /// 'twist') are accepted but no vendor-specific adapter exists yet,
+        /// so they fall back to file-export.
         #[arg(short, long, default_value = "file-export")]
         provider: String,
         /// Required whenever the batch contains a Synthesis, Sequencing, or
@@ -293,6 +301,10 @@ enum HardwareSubcommand {
         /// cost-bearing or destructive submission before it proceeds.
         #[arg(long)]
         confirm: bool,
+        /// Simulated hardware latency in milliseconds, only used by
+        /// '--provider mock-delayed'.
+        #[arg(long, default_value_t = 500)]
+        simulated_delay_ms: u64,
     },
 }
 
@@ -1428,84 +1440,245 @@ fn cmd_package(action: PackageAction, json: bool) {
     }
 }
 
+/// Compiles one NucleScript source file down to its hardware requests —
+/// shared by both the single- and multi-source export paths so the
+/// lex/parse/typecheck/collect sequence (in particular, the typecheck
+/// confirm-gate) can't silently diverge between them.
+fn compile_source(source: &str) -> Result<Vec<nucle_lang::hardware::HardwareRequest>, String> {
+    let content = fs::read_to_string(source).map_err(|e| format!("Error reading source file '{}': {}", source, e))?;
+
+    let tokens = nucle_lang::Lexer::new(&content).tokenize().map_err(|e| format!("Lexing error: {}", e))?;
+    let program = nucle_lang::Parser::new(tokens).parse_program().map_err(|e| format!("Parsing error: {}", e))?;
+
+    // Reuse the compiler's own effect/confirmation check — a program missing
+    // `confirm hardware`/`confirm physical_key` in source must never reach
+    // the export step.
+    let report = nucle_lang::typeck::check_program(&program);
+    if report.has_errors() {
+        return Err(format!("NucleScript type check failed:\n{}", report));
+    }
+
+    Ok(nucle_lang::hardware::collect_hardware_requests(&program))
+}
+
+/// Inserts `_<index>` before a path's extension, so multiple concurrent
+/// file-export submissions in one invocation never race on the same path
+/// (e.g. `batch.json` -> `batch_1.json`, `batch_2.json`, ...).
+fn indexed_output_path(base: &str, index: usize) -> String {
+    let path = std::path::Path::new(base);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("batch");
+    let ext = path.extension().and_then(|s| s.to_str());
+    let file_name = match ext {
+        Some(ext) => format!("{}_{}.{}", stem, index, ext),
+        None => format!("{}_{}", stem, index),
+    };
+    match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(parent) => parent.join(file_name).to_string_lossy().into_owned(),
+        None => file_name,
+    }
+}
+
 fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
     match subcommand {
-        HardwareSubcommand::Export { source, output, provider, confirm } => {
-            let content = match fs::read_to_string(&source) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error reading source file '{}': {}", source, e);
-                    std::process::exit(1);
-                }
-            };
+        HardwareSubcommand::Export { source, output, provider, confirm, simulated_delay_ms } => {
+            if source.len() == 1 {
+                export_single(&source[0], &output, &provider, confirm, simulated_delay_ms, json);
+            } else {
+                export_multiple(&source, &output, &provider, confirm, simulated_delay_ms, json);
+            }
+        }
+    }
+}
 
-            let tokens = match nucle_lang::Lexer::new(&content).tokenize() {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("Lexing error: {}", e);
-                    std::process::exit(1);
-                }
-            };
-            let program = match nucle_lang::Parser::new(tokens).parse_program() {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("Parsing error: {}", e);
-                    std::process::exit(1);
-                }
-            };
+/// The original, single-file export path — unchanged output shape (a flat
+/// JSON object on success) so no existing consumer of `nucle hardware
+/// export <file>` breaks.
+fn export_single(source: &str, output: &str, provider: &str, confirm: bool, simulated_delay_ms: u64, json: bool) {
+    let requests = match compile_source(source) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    };
+    let effectful_count = nucle_hardware::count_effectful(&requests);
+    let delay = std::time::Duration::from_millis(simulated_delay_ms);
 
-            // Reuse the compiler's own effect/confirmation check — a program
-            // missing `confirm hardware`/`confirm physical_key` in source
-            // must never reach the export step.
-            let report = nucle_lang::typeck::check_program(&program);
-            if report.has_errors() {
-                eprintln!("NucleScript type check failed:\n{}", report);
+    // The confirmation gate lives in nucle_hardware::confirm, not here, so
+    // every consumer of Provider gets the same safety check — not just this
+    // CLI command.
+    let (used_provider, result): (&str, Result<String, String>) = match provider {
+        "mock" => ("mock", nucle_hardware::submit_with_confirmation(&nucle_hardware::MockProvider, &requests, confirm)),
+        "mock-delayed" => (
+            "mock-delayed",
+            nucle_hardware::submit_with_confirmation(&nucle_hardware::DelayedMockProvider::new(delay), &requests, confirm),
+        ),
+        "file-export" => {
+            let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(output));
+            ("file-export", nucle_hardware::submit_with_confirmation(&p, &requests, confirm))
+        }
+        other => {
+            eprintln!(
+                "Note: no vendor adapter implemented for provider '{}' yet; falling back to file-export.",
+                other
+            );
+            let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(output));
+            ("file-export", nucle_hardware::submit_with_confirmation(&p, &requests, confirm))
+        }
+    };
+
+    match result {
+        Ok(msg) => {
+            if json {
+                let json_val = serde_json::json!({
+                    "status": "Success",
+                    "provider": used_provider,
+                    "exported_file": output,
+                    "requests_count": requests.len(),
+                    "effectful_requests_confirmed": effectful_count > 0,
+                });
+                println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+            } else {
+                println!("✓ {}", msg);
+            }
+        }
+        Err(e) => {
+            eprintln!("Export failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// One compiled source's hardware requests plus the resolved output path
+/// (already index-suffixed) it'll be exported to.
+struct PendingSource {
+    source: String,
+    output_path: String,
+    requests: Vec<nucle_lang::hardware::HardwareRequest>,
+}
+
+/// The new concurrent path for 2+ sources in one invocation: compiles every
+/// source, refuses the whole command upfront if any needs `--confirm` (so no
+/// job ever starts if the command is going to be rejected), then submits all
+/// batches back-to-back — each `submit()` call returns immediately, so N
+/// submissions never block on each other, even against `mock-delayed`'s real
+/// background-thread latency — and finally waits on all of them and reports
+/// per-source success/failure.
+fn export_multiple(sources: &[String], output: &str, provider: &str, confirm: bool, simulated_delay_ms: u64, json: bool) {
+    let mut submissions = Vec::new();
+    for (i, src) in sources.iter().enumerate() {
+        let requests = match compile_source(src) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Failed to compile '{}': {}", src, e);
                 std::process::exit(1);
             }
+        };
+        submissions.push(PendingSource {
+            source: src.clone(),
+            output_path: indexed_output_path(output, i + 1),
+            requests,
+        });
+    }
 
-            let requests = nucle_lang::hardware::collect_hardware_requests(&program);
-            let effectful_count = nucle_hardware::count_effectful(&requests);
+    for sub in &submissions {
+        let effectful = nucle_hardware::count_effectful(&sub.requests);
+        if effectful > 0 && !confirm {
+            eprintln!(
+                "Refusing to submit: '{}' contains {} cost-bearing/destructive request(s) without confirmation.",
+                sub.source, effectful
+            );
+            std::process::exit(1);
+        }
+    }
 
-            // The confirmation gate lives in nucle_hardware::confirm, not
-            // here, so every consumer of Provider gets the same safety
-            // check — not just this CLI command.
-            let (used_provider, result): (&str, Result<String, String>) = match provider.as_str() {
-                "mock" => ("mock", nucle_hardware::submit_with_confirmation(&nucle_hardware::MockProvider, &requests, confirm)),
-                "file-export" => {
-                    let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&output));
-                    ("file-export", nucle_hardware::submit_with_confirmation(&p, &requests, confirm))
-                }
-                other => {
+    let delay = std::time::Duration::from_millis(simulated_delay_ms);
+    let mut warned_fallback = false;
+    let mut pending: Vec<(&PendingSource, &str, Box<dyn JobHandle>)> = Vec::new();
+
+    for sub in &submissions {
+        let (used_provider, handle_result): (&str, Result<Box<dyn JobHandle>, String>) = match provider {
+            "mock" => (
+                "mock",
+                nucle_hardware::submit_with_confirmation_async(&nucle_hardware::MockProvider, &sub.requests, confirm),
+            ),
+            "mock-delayed" => (
+                "mock-delayed",
+                nucle_hardware::submit_with_confirmation_async(
+                    &nucle_hardware::DelayedMockProvider::new(delay),
+                    &sub.requests,
+                    confirm,
+                ),
+            ),
+            "file-export" => {
+                let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&sub.output_path));
+                ("file-export", nucle_hardware::submit_with_confirmation_async(&p, &sub.requests, confirm))
+            }
+            other => {
+                if !warned_fallback {
                     eprintln!(
                         "Note: no vendor adapter implemented for provider '{}' yet; falling back to file-export.",
                         other
                     );
-                    let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&output));
-                    ("file-export", nucle_hardware::submit_with_confirmation(&p, &requests, confirm))
+                    warned_fallback = true;
                 }
-            };
+                let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&sub.output_path));
+                ("file-export", nucle_hardware::submit_with_confirmation_async(&p, &sub.requests, confirm))
+            }
+        };
 
-            match result {
-                Ok(msg) => {
-                    if json {
-                        let json_val = serde_json::json!({
-                            "status": "Success",
-                            "provider": used_provider,
-                            "exported_file": output,
-                            "requests_count": requests.len(),
-                            "effectful_requests_confirmed": effectful_count > 0,
-                        });
-                        println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
-                    } else {
-                        println!("✓ {}", msg);
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Export failed: {}", e);
-                    std::process::exit(1);
-                }
+        match handle_result {
+            Ok(handle) => pending.push((sub, used_provider, handle)),
+            Err(e) => {
+                eprintln!("Export failed for '{}': {}", sub.source, e);
+                std::process::exit(1);
             }
         }
+    }
+
+    let mut any_failed = false;
+    let mut results: Vec<(&PendingSource, &str, Result<String, String>)> = Vec::new();
+    for (sub, used_provider, handle) in pending {
+        let outcome = handle.wait();
+        if outcome.is_err() {
+            any_failed = true;
+        }
+        results.push((sub, used_provider, outcome));
+    }
+
+    if json {
+        let arr: Vec<_> = results
+            .iter()
+            .map(|(sub, used_provider, res)| match res {
+                Ok(msg) => serde_json::json!({
+                    "source": sub.source,
+                    "status": "Success",
+                    "provider": used_provider,
+                    "message": msg,
+                    "exported_file": sub.output_path,
+                    "requests_count": sub.requests.len(),
+                    "effectful_requests_confirmed": nucle_hardware::count_effectful(&sub.requests) > 0,
+                }),
+                Err(e) => serde_json::json!({
+                    "source": sub.source,
+                    "status": "Failed",
+                    "provider": used_provider,
+                    "error": e,
+                }),
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&arr).unwrap());
+    } else {
+        for (sub, _used_provider, res) in &results {
+            match res {
+                Ok(msg) => println!("✓ [{}] {}", sub.source, msg),
+                Err(e) => eprintln!("✗ [{}] Export failed: {}", sub.source, e),
+            }
+        }
+    }
+
+    if any_failed {
+        std::process::exit(1);
     }
 }
 

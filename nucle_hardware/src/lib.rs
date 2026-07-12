@@ -7,14 +7,16 @@
 //! for the trait they'd implement.
 
 pub mod confirm;
+pub mod delayed_mock;
 pub mod file_export;
 pub mod mock;
 pub mod provider;
 
-pub use confirm::{count_effectful, is_effectful, submit_with_confirmation};
+pub use confirm::{count_effectful, is_effectful, submit_with_confirmation, submit_with_confirmation_async};
+pub use delayed_mock::DelayedMockProvider;
 pub use file_export::FileExportProvider;
 pub use mock::MockProvider;
-pub use provider::Provider;
+pub use provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider};
 
 /// Shared test fixtures for building `HardwareRequest`s without depending
 /// on a real `.nsl` compile — used across confirm/mock/file_export tests.
