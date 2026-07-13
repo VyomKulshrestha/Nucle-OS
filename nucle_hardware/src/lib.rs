@@ -68,4 +68,35 @@ pub(crate) mod fixtures {
             detail: RequestType::Synthesis { file_name: file.to_string(), profile: "n/a".to_string() },
         }
     }
+
+    /// Shaped exactly like what `collect_hardware_requests` really produces
+    /// for a `pipeline { ..., verify roundtrip }` stage -- `RequestType::Qc`,
+    /// `Effect::Pure`. Unlike `pure_request`, this proves the actual
+    /// Qc/Recovery design decision (read-only, no confirmation required),
+    /// not just that gating logic ignores `Pure` in the abstract.
+    pub fn qc_request(file: &str) -> HardwareRequest {
+        HardwareRequest {
+            effect: Effect::Pure,
+            target: file.to_string(),
+            profile: None,
+            confirmation: String::new(),
+            detail: RequestType::Qc { file_name: file.to_string(), checks: vec!["roundtrip".to_string()] },
+        }
+    }
+
+    /// Shaped exactly like what `collect_hardware_requests` really produces
+    /// for a `consensus_vote(...)` call -- `RequestType::Recovery`,
+    /// `Effect::Pure`.
+    pub fn recovery_request(binding_name: &str) -> HardwareRequest {
+        HardwareRequest {
+            effect: Effect::Pure,
+            target: binding_name.to_string(),
+            profile: None,
+            confirmation: String::new(),
+            detail: RequestType::Recovery {
+                binding_name: binding_name.to_string(),
+                consensus_method: "majority-vote".to_string(),
+            },
+        }
+    }
 }

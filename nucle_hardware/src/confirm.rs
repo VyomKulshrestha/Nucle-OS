@@ -58,7 +58,7 @@ pub fn submit_with_confirmation_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{destructive_request, pure_request, sequencing_request, synthesis_request};
+    use crate::fixtures::{destructive_request, pure_request, qc_request, recovery_request, sequencing_request, synthesis_request};
     use crate::mock::MockProvider;
 
     #[test]
@@ -158,5 +158,23 @@ mod tests {
         let handle = submit_with_confirmation_async(&provider, &batch, true).unwrap();
         let msg = handle.wait().unwrap();
         assert!(msg.contains('2'));
+    }
+
+    #[test]
+    fn qc_and_recovery_requests_are_not_effectful() {
+        // The actual design decision from actions2.md's Step 1: Qc/Recovery
+        // are read-only, so they must never require --confirm. Proven here
+        // against fixtures shaped exactly like collect_hardware_requests'
+        // real output, not just a generic Pure-effect stand-in.
+        assert!(!is_effectful(&[qc_request("a.bin"), recovery_request("recovered")]));
+        assert_eq!(count_effectful(&[qc_request("a.bin"), recovery_request("recovered")]), 0);
+    }
+
+    #[test]
+    fn a_batch_of_only_qc_and_recovery_requests_submits_without_confirm() {
+        let provider = MockProvider;
+        let batch = [qc_request("a.bin"), recovery_request("recovered")];
+        let result = submit_with_confirmation(&provider, &batch, false);
+        assert!(result.is_ok());
     }
 }
