@@ -101,6 +101,12 @@ impl Planner {
             return Self::plan_delete(input, &lower);
         }
 
+        // ── Migrate ── (checked before Status/List so "migrate ... to
+        // codec/redundancy N" isn't swallowed by a broader keyword first)
+        if Self::matches_any(&lower, &["migrate"]) {
+            return Self::plan_migrate(input, &lower);
+        }
+
         // ── Status / Info ──
         if Self::matches_any(&lower, &["status", "info", "stats", "stat", "pool", "health"]) {
             return Ok(Plan::new("Get pool status")
@@ -116,7 +122,7 @@ impl Planner {
         // ── Help ──
         if Self::matches_any(&lower, &["help", "tools", "commands"]) {
             return Ok(Plan::new("Show help")
-                .step(ToolCall::new(ToolName::PoolStatus)));
+                .step(ToolCall::new(ToolName::Help)));
         }
 
         Err(format!("could not understand command: '{}'", input))
@@ -181,6 +187,40 @@ impl Planner {
         Ok(Plan::new(&format!("Delete '{}'", filename))
             .step(ToolCall::new(ToolName::DeleteFile)
                 .arg("filename", &filename)))
+    }
+
+    /// Plan a migrate operation.
+    fn plan_migrate(input: &str, lower: &str) -> Result<Plan, String> {
+        let filename = Self::extract_filename(input)
+            .ok_or("could not determine filename to migrate")?;
+
+        let redundancy = Self::extract_redundancy_opt(lower);
+        let codec = Self::extract_codec(lower);
+
+        if redundancy.is_none() && codec.is_none() {
+            return Err(format!(
+                "could not determine what to migrate '{}' to -- say a redundancy (e.g. '5x') or a codec (e.g. 'codec yin-yang')",
+                filename
+            ));
+        }
+
+        let mut call = ToolCall::new(ToolName::MigrateFile)
+            .arg("filename", &filename);
+        if let Some(r) = redundancy {
+            call = call.arg("redundancy", &r.to_string());
+        }
+        if let Some(ref c) = codec {
+            call = call.arg("codec", c);
+        }
+
+        let desc = match (redundancy, &codec) {
+            (Some(r), Some(c)) => format!("Migrate '{}' to {}x redundancy and codec '{}'", filename, r, c),
+            (Some(r), None) => format!("Migrate '{}' to {}x redundancy", filename, r),
+            (None, Some(c)) => format!("Migrate '{}' to codec '{}'", filename, c),
+            (None, None) => unreachable!("checked above"),
+        };
+
+        Ok(Plan::new(&desc).step(call))
     }
 
     // -----------------------------------------------------------------------
@@ -268,6 +308,53 @@ impl Planner {
 
         // Default: 2 parity strands
         2
+    }
+
+    /// Like `extract_redundancy`, but returns `None` rather than defaulting
+    /// to 2 when no redundancy is mentioned -- `plan_migrate` needs to tell
+    /// "keep the current redundancy" (`None`) apart from "explicitly set it
+    /// to some value," which `extract_redundancy`'s always-has-a-default
+    /// shape can't express.
+    fn extract_redundancy_opt(lower: &str) -> Option<usize> {
+        for word in lower.split_whitespace() {
+            if word.ends_with('x') || word.ends_with("×") {
+                let num_str = word.trim_end_matches('x').trim_end_matches('×');
+                if let Ok(n) = num_str.parse::<usize>() {
+                    return Some(n);
+                }
+            }
+        }
+
+        let tokens: Vec<&str> = lower.split_whitespace().collect();
+        for (i, &token) in tokens.iter().enumerate() {
+            if (token == "redundancy" || token == "parity") && i + 1 < tokens.len() {
+                if let Ok(n) = tokens[i + 1].parse::<usize>() {
+                    return Some(n);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Extract a target codec name from input, e.g. "migrate x.bin to codec
+    /// yin-yang". A small alias table maps the friendlier names a person
+    /// would actually type ("ternary", "yinyang") onto the exact strings
+    /// `nucle_vfs::migrate::migrate_object` accepts
+    /// (`nucle_vfs::migrate::SUPPORTED_CODECS`) -- the raw CLI flag doesn't
+    /// do this aliasing, but a natural-language agent should be friendlier
+    /// than a flag, not just as strict.
+    fn extract_codec(lower: &str) -> Option<String> {
+        let tokens: Vec<&str> = lower.split_whitespace().collect();
+        let raw = tokens.iter().position(|&t| t == "codec")
+            .and_then(|i| tokens.get(i + 1))
+            .copied()?;
+
+        Some(match raw {
+            "ternary" | "ternary-rotating-cipher" => "ternary-rotating-cipher".to_string(),
+            "yin-yang" | "yinyang" | "yin_yang" => "yin-yang".to_string(),
+            other => other.to_string(),
+        })
     }
 
     /// Extract data content from input (everything after data-like keywords).
@@ -369,6 +456,44 @@ mod tests {
     #[test]
     fn test_plan_unknown() {
         assert!(Planner::plan("juggle bananas").is_err());
+    }
+
+    #[test]
+    fn test_plan_help_uses_the_help_tool_not_pool_status() {
+        // Regression guard for actions2.md's Step 2 bug fix: this used to
+        // silently call PoolStatus instead of showing real help text.
+        let plan = Planner::plan("help").unwrap();
+        assert_eq!(plan.steps[0].tool, ToolName::Help);
+    }
+
+    #[test]
+    fn test_plan_migrate_redundancy_only() {
+        let plan = Planner::plan("migrate readme.txt to 5x redundancy").unwrap();
+        assert_eq!(plan.steps[0].tool, ToolName::MigrateFile);
+        assert_eq!(plan.steps[0].get_arg("filename"), Some("readme.txt"));
+        assert_eq!(plan.steps[0].get_arg("redundancy"), Some("5"));
+        assert_eq!(plan.steps[0].get_arg("codec"), None);
+    }
+
+    #[test]
+    fn test_plan_migrate_codec_only_with_alias() {
+        let plan = Planner::plan("migrate readme.txt to codec ternary").unwrap();
+        assert_eq!(plan.steps[0].tool, ToolName::MigrateFile);
+        assert_eq!(plan.steps[0].get_arg("filename"), Some("readme.txt"));
+        assert_eq!(plan.steps[0].get_arg("codec"), Some("ternary-rotating-cipher"));
+        assert_eq!(plan.steps[0].get_arg("redundancy"), None);
+    }
+
+    #[test]
+    fn test_plan_migrate_redundancy_and_codec() {
+        let plan = Planner::plan("migrate readme.txt to codec yin-yang with 4x redundancy").unwrap();
+        assert_eq!(plan.steps[0].get_arg("codec"), Some("yin-yang"));
+        assert_eq!(plan.steps[0].get_arg("redundancy"), Some("4"));
+    }
+
+    #[test]
+    fn test_plan_migrate_with_no_target_is_an_error() {
+        assert!(Planner::plan("migrate readme.txt").is_err());
     }
 
     #[test]

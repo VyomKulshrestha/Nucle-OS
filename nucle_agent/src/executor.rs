@@ -8,7 +8,7 @@
 //! Plan → Executor → NucleOS (VFS) → Result
 //! ```
 
-use crate::tools::{ToolName, ToolCall, ToolResult};
+use crate::tools::{tools_help, ToolName, ToolCall, ToolResult};
 use crate::planner::{Plan, Planner};
 use nucle_vfs::syscall::NucleOS;
 use std::fmt;
@@ -88,6 +88,8 @@ impl Executor {
             ToolName::PoolStatus => Self::exec_status(os),
             ToolName::DeleteFile => Self::exec_delete(os, call),
             ToolName::ListFiles => Self::exec_list(os),
+            ToolName::MigrateFile => Self::exec_migrate(os, call),
+            ToolName::Help => Self::exec_help(),
         }
     }
 
@@ -185,6 +187,37 @@ impl Executor {
             ),
             Err(e) => ToolResult::err(&e),
         }
+    }
+
+    /// Execute migrate_file tool.
+    fn exec_migrate(os: &mut NucleOS, call: &ToolCall) -> ToolResult {
+        let filename = match call.require_arg("filename") {
+            Ok(f) => f,
+            Err(e) => return ToolResult::err(&e),
+        };
+
+        let redundancy: Option<usize> = call.get_arg("redundancy").and_then(|r| r.parse().ok());
+        let codec = call.get_arg("codec");
+
+        match nucle_vfs::migrate::migrate_object(os, filename, redundancy, codec) {
+            Ok(manifest) => ToolResult::ok_with_data(
+                &format!("Migrated '{}' successfully", filename),
+                &format!(
+                    "archive_id={}, codec={}, redundancy={}, profile={}",
+                    manifest.archive_id, manifest.codec, manifest.redundancy, manifest.profile
+                ),
+            ),
+            Err(e) => ToolResult::err(&e),
+        }
+    }
+
+    /// Execute help tool -- lists every tool and its parameters. Doesn't
+    /// touch the VFS at all, unlike every other tool, but goes through the
+    /// same Plan/Executor pipeline as everything else rather than a
+    /// separate short-circuit, since PoolStatus/ListFiles already establish
+    /// the precedent of a tool needing no arguments.
+    fn exec_help() -> ToolResult {
+        ToolResult::ok_with_data("Available tools", &tools_help())
     }
 
     /// Execute list_files tool.
@@ -299,6 +332,39 @@ mod tests {
         let report = Executor::run(&mut os, "status").unwrap();
         let display = format!("{}", report);
         assert!(display.contains("✓"));
+    }
+
+    #[test]
+    fn test_execute_help_lists_tools_not_pool_status() {
+        // Regression guard for actions2.md's Step 2: the "help" command
+        // used to silently execute PoolStatus instead of real help text.
+        let mut os = NucleOS::new(10);
+        let report = Executor::run(&mut os, "help").unwrap();
+        assert!(report.success);
+        assert_eq!(report.step_results[0].tool, "help");
+        let data = report.step_results[0].result.data.as_ref().unwrap();
+        assert!(data.contains("store_file"));
+        assert!(data.contains("migrate_file"));
+    }
+
+    #[test]
+    fn test_execute_migrate_redundancy() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("notes.txt", b"agent migrate test data", 2).unwrap();
+
+        let report = Executor::run(&mut os, "migrate notes.txt to 5x redundancy").unwrap();
+        assert!(report.success, "migrate failed: {:?}", report.step_results[0].result);
+
+        // The file must still be readable after migration.
+        let report = Executor::run(&mut os, "retrieve notes.txt").unwrap();
+        assert!(report.success);
+    }
+
+    #[test]
+    fn test_execute_migrate_nonexistent_file_fails() {
+        let mut os = NucleOS::new(10);
+        let report = Executor::run(&mut os, "migrate missing.txt to 3x redundancy").unwrap();
+        assert!(!report.success);
     }
 
     #[test]

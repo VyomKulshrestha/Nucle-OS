@@ -26,6 +26,8 @@ pub enum ToolName {
     PoolStatus,
     DeleteFile,
     ListFiles,
+    MigrateFile,
+    Help,
 }
 
 impl ToolName {
@@ -37,6 +39,8 @@ impl ToolName {
         ToolName::PoolStatus,
         ToolName::DeleteFile,
         ToolName::ListFiles,
+        ToolName::MigrateFile,
+        ToolName::Help,
     ];
 
     /// Tool name as a string.
@@ -48,6 +52,8 @@ impl ToolName {
             ToolName::PoolStatus => "pool_status",
             ToolName::DeleteFile => "delete_file",
             ToolName::ListFiles => "list_files",
+            ToolName::MigrateFile => "migrate_file",
+            ToolName::Help => "help",
         }
     }
 
@@ -60,6 +66,8 @@ impl ToolName {
             "pool_status" | "status" | "info" | "stats" => Some(ToolName::PoolStatus),
             "delete_file" | "delete" | "remove" | "rm" => Some(ToolName::DeleteFile),
             "list_files" | "list" | "ls" | "dir" => Some(ToolName::ListFiles),
+            "migrate_file" | "migrate" => Some(ToolName::MigrateFile),
+            "help" | "tools" | "commands" => Some(ToolName::Help),
             _ => None,
         }
     }
@@ -79,6 +87,10 @@ impl ToolName {
                 "Delete a file from DNA storage. Removes all strands, catalog entry, and search index.",
             ToolName::ListFiles =>
                 "List all files currently stored in the DNA pool with their metadata.",
+            ToolName::MigrateFile =>
+                "Re-encode a stored file under a new redundancy and/or codec, preserving its manifest history.",
+            ToolName::Help =>
+                "List every available tool and its parameters.",
         }
     }
 
@@ -102,6 +114,12 @@ impl ToolName {
                 ToolParam::required("filename", "Name of the file to delete"),
             ],
             ToolName::ListFiles => vec![],
+            ToolName::MigrateFile => vec![
+                ToolParam::required("filename", "Name of the file to migrate"),
+                ToolParam::optional("redundancy", "New number of RS parity strands (keeps current if omitted)"),
+                ToolParam::optional("codec", "New codec, e.g. ternary-rotating-cipher, yin-yang (keeps current if omitted)"),
+            ],
+            ToolName::Help => vec![],
         }
     }
 }
