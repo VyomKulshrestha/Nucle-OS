@@ -142,7 +142,7 @@ Abstracts all layers behind clean syscall-style interfaces:
 - `dna_stat(pool)` — pool statistics, health metrics
 - `dna_delete(name)` — mark strands for removal
 
-DNA storage needs a proper ABI. This layer provides it.
+DNA storage needs a proper ABI. This layer provides it. `NucleOS::open(pool_dir, max_files)`/`persist(pool_dir)` make a pool durable across separate CLI invocations (not just one process's own memory) — see [Pool storage location](#pool-storage-location) below.
 
 ### Layer 6 — Agent Interface (`nucle_agent`)
 
@@ -887,6 +887,18 @@ running the single file is enough.
 Every command also accepts a global `--json` flag (e.g. `nucle --json pool`)
 for machine-readable output.
 
+### Pool storage location
+
+`nucle store`/`retrieve`/`migrate`/`search`/`pool`/`agent` persist to a real
+pool directory, so `nucle store` followed by a *separate* `nucle retrieve`
+invocation genuinely works — not just within one process's own memory.
+Resolved in priority order: an explicit `--pool-dir <path>` flag, then the
+`NUCLEOS_POOL_DIR` environment variable, then a project-local `.nucleos/`
+directory next to wherever the command runs (created on first use, like
+`.git/` — already in this repo's own `.gitignore`). State is written
+atomically (a temp file, then renamed over the real path), so a process
+killed mid-write never corrupts previously-stored data.
+
 ```bash
 # Encode a file to DNA strands
 nucle encode myfile.txt -o myfile.dna
@@ -993,13 +1005,14 @@ nucle agent "pool status"
 | `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
 | `nucle_ecc` | 39 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, semantic search |
-| `nucle_vfs` | 50 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`) |
+| `nucle_vfs` | 55 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina/Nanopore noise roundtrips (a slow, realistic-scale Nanopore regression check is `#[ignore]`d; run it explicitly with `cargo test -p nucle_vfs -- --ignored`), and durable cross-process persistence (`NucleOS::open`/`persist`: a fresh directory behaves like `new`, a stored file survives a real reopen, search is correctly rebuilt from the restored catalog, a deleted file's primer is never reassigned after reopening, and a stray partial `.tmp` file is never loaded over a good `state.json`) |
 | `nucle_agent` | 35 | Tool defs, planner, executor, including natural-language `migrate` (redundancy/codec extraction with a friendlier-than-the-CLI codec alias table) and `help` (regression-guarded against a fixed bug where it silently ran `pool_status` instead) |
 | `nucle_lang` | 247 | Lexer (incl. `///` doc comments as real, distinct tokens, rejected with a clear parse error anywhere they can't attach), parser, biological checks, sequence literals, probabilistic pool typing, effects (incl. propagation through function calls, `if`/`for` branches, `?` short-circuits, and built-in `consensus_vote`/`protect` calls), compile-time `if`/`for` desugaring with comparison/boolean operators, `consensus_vote`/`protect` resolved as ordinary stdlib `FunctionTable` entries (arity/effects/"did you mean" parity with user functions), canonical formatter (`nucle fmt`, idempotence + parsed-program-equivalence over every shipped example, doc-comment-aware), `test`/`assert` test runner (`nucle test`: compile-time assertion evaluation shared with `if`, real per-test VFS execution, compile-error-vs-test-failure separation), Markdown doc generation from `///` comments (`nucle doc`), MIR optimizer, simulation backend, table-driven package registry (all 4 official packages), lock file checksums, hardware request collection (incl. read-only `Qc`/`Recovery` request kinds derived from `verify roundtrip`/`consensus_vote`, proven to never require `--confirm`), VFS lowering, function declarations/calls, source spans + stable error codes + "did you mean" suggestions, symbol table for tooling, `nucle check`/`nucle explain` integration tests, `Result<T, E>`/`?` (parsing, typeck validity rules, conservative effect-joining across a `?` short-circuit, and a golden-file regression suite proving zero behavior change for programs that use none of it), generics over `Pool<T>`'s profile (call-site unification, type-parameter conflict/unresolved detection, and a formatter regression test proving `noisy < 0.1`-style comparisons aren't mistaken for a generic angle-bracket list), closures/higher-order functions (real lexical capture, a genuinely higher-order call retrying twice on a caught failure, effect analysis correctly resolving a called closure's real body, the existing arity/type-mismatch/undeclared-function paths proven unaffected), a gap-closing pass over earlier `Result`/generics/pattern-matching/closures work (`Ok(...)`/`Err(...)` constructors and composability with nested `match`/`?`, explicit `::<Illumina>()` type arguments, real statement-form execution and real `File`/`Str`-typed parameter values inside function bodies, generic closures, a self-recursive closure actually terminating for real against a live VFS, and `nucle plan`/`nucle explain` narration reaching into a `let`-bound closure's own body), user-defined `enum`s + a general N-arm pattern-matching/exhaustiveness engine (one diagnostic code per new `E-ENUM-*`/`E-MATCH-*` failure mode, free arm order, a real user-flagged nested-match limitation fixed, `Result`/`Ok`/`Err` re-run unmodified through `result_backward_compat.rs`'s golden-file suite proving zero behavior change from the unification), and effect-annotated `Fn(...)` function types (the new `E-FN-EFFECT-ARG-MISMATCH` code, positive/negative/capture/forwarding scenarios, white-box tests proving a populated `fn_param_effects` table resolves an otherwise-unresolvable call to its declared ceiling, and a regression test for a separately-found, real bug where a top-level call to a `Void`-returning function with statement-form side effects never actually executed them) |
 | `nucle_hardware` | 29 | Confirmation gating (effectful/destructive rejection, count/message correctness, sync and async variants, and a dedicated proof that read-only `Qc`/`Recovery` requests never count as effectful), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation, and the job-handle/concurrency model (`submit()` returning before a real simulated delay elapses, multiple concurrent jobs finishing in well under their sequential-sum time, `Pending`/`Running`/`Complete` status transitions) |
+| `nucle-cli` | 3 | Cross-process pool persistence, spawning the real, compiled `nucle-cli` binary twice per test (`CARGO_BIN_EXE_nucle-cli`, not an in-memory roundtrip): `store` then `retrieve` in separate processes, a clean not-found error with no prior store, and a stray partial `.tmp` file never corrupting a later real invocation |
 | `nucle_lsp` | 11 | Word-at-cursor resolution, hover/definition lookup, and a real Content-Length-framed JSON-RPC integration test (diagnostics, hover, go-to-definition) cross-checked against `nucle check`'s own output |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **541 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **549 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
 
 ---
 

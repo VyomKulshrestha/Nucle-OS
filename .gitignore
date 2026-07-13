@@ -7,6 +7,10 @@
 *.dna
 recovered.txt
 
+# NucleOS's durable pool state (nucle store/retrieve/etc.'s default
+# project-local data directory, analogous to .git/)
+/.nucleos/
+
 # IDE
 .vscode/
 .idea/

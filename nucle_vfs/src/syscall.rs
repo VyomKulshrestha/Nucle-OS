@@ -102,6 +102,24 @@ fn simulate_with_provenance(
 }
 
 // ---------------------------------------------------------------------------
+// Durable persistence — see NucleOS::open/persist
+// ---------------------------------------------------------------------------
+
+/// Filename a pool's durable state is written under, inside its pool
+/// directory (see [`NucleOS::open`]/[`NucleOS::persist`]).
+pub const STATE_FILE_NAME: &str = "state.json";
+
+/// The only state that can't be deterministically reconstructed at
+/// `open()` time -- see `NucleOS::open`'s doc comment for why `primers`/
+/// `search`/`crispr`/noise settings aren't part of this.
+#[derive(Serialize, Deserialize)]
+struct PersistedState {
+    pool: DnaPool,
+    catalog: Catalog,
+    primers_used: usize,
+}
+
+// ---------------------------------------------------------------------------
 // NucleOS — the unified DNA storage OS
 // ---------------------------------------------------------------------------
 
@@ -168,6 +186,85 @@ impl NucleOS {
     pub fn with_crispr(mut self, config: CrisprConfig) -> Self {
         self.crispr = CrisprSimulator::new(config);
         self
+    }
+
+    // -----------------------------------------------------------------------
+    // open / persist — durable, cross-process state
+    // -----------------------------------------------------------------------
+
+    /// Opens a pool directory, loading whatever was persisted there by a
+    /// previous [`Self::persist`] call, or initializing fresh state if the
+    /// directory has no `state.json` yet (a brand-new pool). This is what
+    /// makes a `nucle store` in one process visible to a `nucle retrieve`
+    /// in a later, separate one — [`Self::new`] alone never touches disk.
+    ///
+    /// `primers`/`search`/`crispr`/`simulate_noise`/`noise_config` are never
+    /// persisted directly: `primers` regenerates identically from the same
+    /// deterministic seed given the same `max_files` (see [`Self::new`]),
+    /// and `search` is rebuilt by replaying every file already in the
+    /// restored `catalog` — only `pool`, `catalog`, and the primer-index
+    /// counter (`primers_used`, which must survive deletions to avoid
+    /// ever reassigning an in-use primer) are real, undiscoverable state.
+    pub fn open(pool_dir: &std::path::Path, max_files: usize) -> Result<Self, String> {
+        let state_path = pool_dir.join(STATE_FILE_NAME);
+        if !state_path.exists() {
+            return Ok(Self::new(max_files));
+        }
+
+        let json = std::fs::read_to_string(&state_path)
+            .map_err(|e| format!("failed to read pool state at '{}': {}", state_path.display(), e))?;
+        let persisted: PersistedState = serde_json::from_str(&json)
+            .map_err(|e| format!("failed to parse pool state at '{}': {}", state_path.display(), e))?;
+
+        let primers = PrimerLibrary::generate(max_files.max(10), 20, 42);
+        let mut search = SearchEngine::new(primers.clone());
+        for file in persisted.catalog.list() {
+            search.register_file(FileMeta {
+                file_id: file.file_id.clone(),
+                filename: file.filename.clone(),
+                size: file.size,
+                content_hash: file.content_hash.clone(),
+                primer_id: file.primer_id.clone(),
+                strand_count: file.data_strand_count + file.parity_strand_count,
+            });
+        }
+
+        Ok(Self {
+            pool: persisted.pool,
+            catalog: persisted.catalog,
+            primers,
+            search,
+            crispr: CrisprSimulator::new(CrisprConfig::ideal()),
+            simulate_noise: false,
+            noise_config: SimulationConfig::pristine(),
+            primers_used: persisted.primers_used,
+        })
+    }
+
+    /// Persists `pool`/`catalog`/the primer-index counter to `pool_dir`,
+    /// creating it if needed. Writes to a temporary file and `rename`s it
+    /// over the real path — an atomic swap on both Windows and Unix — so a
+    /// process killed mid-write never leaves a half-written `state.json`
+    /// behind; the last successfully persisted state is always intact.
+    pub fn persist(&self, pool_dir: &std::path::Path) -> Result<(), String> {
+        std::fs::create_dir_all(pool_dir)
+            .map_err(|e| format!("failed to create pool directory '{}': {}", pool_dir.display(), e))?;
+
+        let persisted = PersistedState {
+            pool: self.pool.clone(),
+            catalog: self.catalog.clone(),
+            primers_used: self.primers_used,
+        };
+        let json = serde_json::to_string_pretty(&persisted)
+            .map_err(|e| format!("failed to serialize pool state: {}", e))?;
+
+        let tmp_path = pool_dir.join(format!("{}.tmp", STATE_FILE_NAME));
+        std::fs::write(&tmp_path, &json)
+            .map_err(|e| format!("failed to write pool state to '{}': {}", tmp_path.display(), e))?;
+        std::fs::rename(&tmp_path, pool_dir.join(STATE_FILE_NAME))
+            .map_err(|e| format!("failed to finalize pool state: {}", e))?;
+
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -929,5 +1026,114 @@ mod tests {
         // Read verifies hash automatically
         let recovered = os.dna_read("hash.txt").unwrap();
         assert_eq!(recovered, data.to_vec());
+    }
+
+    // ── Durable persistence (open/persist) ──
+
+    /// A unique-per-test scratch pool directory so parallel test threads
+    /// never collide, matching the pattern already used by
+    /// `nucle_hardware`'s own file-based tests.
+    fn scratch_pool_dir(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("nucle_vfs_test_pool_{}_{}", name, std::process::id()))
+    }
+
+    #[test]
+    fn open_on_a_fresh_directory_is_equivalent_to_new() {
+        let dir = scratch_pool_dir("fresh");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let os = NucleOS::open(&dir, 10).unwrap();
+        assert_eq!(os.catalog.len(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_stored_and_persisted_is_readable_after_reopening() {
+        // The actual repro from actions2.md's Step 4: this must succeed
+        // across two genuinely separate NucleOS instances, not just one
+        // process's own memory.
+        let dir = scratch_pool_dir("roundtrip");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            let mut os = NucleOS::open(&dir, 10).unwrap();
+            os.dna_write("persisted.txt", b"durable data", 2).unwrap();
+            os.persist(&dir).unwrap();
+        }
+
+        // A brand-new NucleOS instance, as a later CLI invocation would be.
+        let mut reopened = NucleOS::open(&dir, 10).unwrap();
+        let recovered = reopened.dna_read("persisted.txt").unwrap();
+        assert_eq!(recovered, b"durable data".to_vec());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn search_is_rebuilt_from_the_restored_catalog() {
+        let dir = scratch_pool_dir("search_rebuild");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            let mut os = NucleOS::open(&dir, 10).unwrap();
+            os.dna_write("searchable_report.txt", b"quarterly numbers", 2).unwrap();
+            os.persist(&dir).unwrap();
+        }
+
+        let reopened = NucleOS::open(&dir, 10).unwrap();
+        let results = reopened.dna_search("name:searchable_report.txt", 5);
+        assert!(!results.is_empty(), "search must find a file stored before this process started");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn primers_used_survives_a_delete_so_a_primer_is_never_reassigned() {
+        // primers_used only ever increments (see dna_write); deleting a
+        // file must not roll it back, or a later write could reuse an
+        // already-in-use primer. Proven across a real reopen, not just
+        // within one process.
+        let dir = scratch_pool_dir("primer_counter");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let first_primer;
+        {
+            let mut os = NucleOS::open(&dir, 10).unwrap();
+            let r1 = os.dna_write("a.txt", b"first", 1).unwrap();
+            first_primer = r1.primer_id.clone();
+            os.dna_delete("a.txt").unwrap();
+            os.persist(&dir).unwrap();
+        }
+
+        let mut reopened = NucleOS::open(&dir, 10).unwrap();
+        let r2 = reopened.dna_write("b.txt", b"second", 1).unwrap();
+        assert_ne!(r2.primer_id, first_primer, "must not reassign a's primer to b after reopening");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persist_is_atomic_a_stray_tmp_file_is_never_loaded() {
+        // Simulates a process killed between writing the temp file and the
+        // rename that finalizes it: open() must still load the last good
+        // state.json, never a half-written .tmp.
+        let dir = scratch_pool_dir("atomic");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            let mut os = NucleOS::open(&dir, 10).unwrap();
+            os.dna_write("good.txt", b"last good state", 1).unwrap();
+            os.persist(&dir).unwrap();
+        }
+
+        // Simulate a crash mid-persist: a leftover, truncated temp file
+        // sitting next to the real, already-finalized state.json.
+        std::fs::write(dir.join(format!("{}.tmp", STATE_FILE_NAME)), b"{ not even valid json").unwrap();
+
+        let reopened = NucleOS::open(&dir, 10).unwrap();
+        assert!(reopened.catalog.get_by_name("good.txt").is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

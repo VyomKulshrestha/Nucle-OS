@@ -32,6 +32,12 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Directory the DNA storage pool persists to. Defaults to
+    /// NUCLEOS_POOL_DIR if set, else a project-local .nucleos/ directory
+    /// (created on first use, like .git/).
+    #[arg(long, global = true)]
+    pool_dir: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -310,15 +316,16 @@ enum HardwareSubcommand {
 
 fn main() {
     let cli = Cli::parse();
+    let pool_dir = resolve_pool_dir(cli.pool_dir.as_deref());
 
     match cli.command {
         Commands::Encode { file, output } => cmd_encode(&file, output.as_deref()),
         Commands::Decode { file, output, size } => cmd_decode(&file, output.as_deref(), size),
-        Commands::Store { file, redundancy } => cmd_store(&file, redundancy, cli.json),
-        Commands::Retrieve { name } => cmd_retrieve(&name, cli.json),
-        Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), cli.json),
-        Commands::Search { query, top_k } => cmd_search(&query, top_k, cli.json),
-        Commands::Pool => cmd_pool(cli.json),
+        Commands::Store { file, redundancy } => cmd_store(&file, redundancy, &pool_dir, cli.json),
+        Commands::Retrieve { name } => cmd_retrieve(&name, &pool_dir, cli.json),
+        Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), &pool_dir, cli.json),
+        Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, cli.json),
+        Commands::Pool => cmd_pool(&pool_dir, cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -338,7 +345,7 @@ fn main() {
         Commands::Package { action } => cmd_package(action, cli.json),
         Commands::Hardware { subcommand } => cmd_hardware(subcommand, cli.json),
         Commands::Doctor => cmd_doctor(cli.json),
-        Commands::Agent { command } => cmd_agent(&command.join(" ")),
+        Commands::Agent { command } => cmd_agent(&command.join(" "), &pool_dir),
         Commands::Tools => cmd_help(),
     }
 }
@@ -442,7 +449,45 @@ fn cmd_decode(file: &str, output: Option<&str>, size: usize) {
     }
 }
 
-fn cmd_store(file: &str, redundancy: usize, json: bool) {
+/// Resolves where a pool's durable state lives, in priority order: an
+/// explicit `--pool-dir` flag, then `NUCLEOS_POOL_DIR`, then a
+/// project-local `.nucleos/` directory next to wherever the command runs
+/// (created on first use, mirroring `.git/`) -- see `NucleOS::open`/
+/// `persist` for what actually gets written there.
+fn resolve_pool_dir(explicit: Option<&str>) -> std::path::PathBuf {
+    if let Some(path) = explicit {
+        return std::path::PathBuf::from(path);
+    }
+    if let Ok(path) = std::env::var("NUCLEOS_POOL_DIR") {
+        return std::path::PathBuf::from(path);
+    }
+    std::path::PathBuf::from(".nucleos")
+}
+
+/// Opens the pool at `pool_dir`, exiting with a clear error if it can't be
+/// read -- shared by every command that touches the real, durable pool.
+fn open_pool(pool_dir: &std::path::Path) -> NucleOS {
+    match NucleOS::open(pool_dir, 100) {
+        Ok(os) => os,
+        Err(e) => {
+            eprintln!("Failed to open pool at '{}': {}", pool_dir.display(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Persists `os` back to `pool_dir`, exiting with a clear error if it
+/// fails -- a persist failure means the operation that just ran (however
+/// successful in memory) won't actually be visible to a later invocation,
+/// so it's treated as seriously as the operation itself failing.
+fn persist_pool(os: &NucleOS, pool_dir: &std::path::Path) {
+    if let Err(e) = os.persist(pool_dir) {
+        eprintln!("Operation succeeded but failed to persist pool state to '{}': {}", pool_dir.display(), e);
+        std::process::exit(1);
+    }
+}
+
+fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, json: bool) {
     let data = match fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -456,9 +501,10 @@ fn cmd_store(file: &str, redundancy: usize, json: bool) {
         .and_then(|n| n.to_str())
         .unwrap_or(file);
 
-    let mut os = NucleOS::new(100);
+    let mut os = open_pool(pool_dir);
     match os.dna_write(filename, &data, redundancy) {
         Ok(result) => {
+            persist_pool(&os, pool_dir);
             if json {
                 println!("{}", serde_json::to_string_pretty(&result).unwrap());
             } else {
@@ -473,10 +519,13 @@ fn cmd_store(file: &str, redundancy: usize, json: bool) {
     }
 }
 
-fn cmd_retrieve(name: &str, json: bool) {
-    let mut os = NucleOS::new(100);
+fn cmd_retrieve(name: &str, pool_dir: &std::path::Path, json: bool) {
+    let mut os = open_pool(pool_dir);
     match os.dna_read(name) {
         Ok(data) => {
+            // dna_read updates the file's recovery manifest -- persist so
+            // that update (not just the original write) survives.
+            persist_pool(&os, pool_dir);
             let manifest_opt = os.catalog.get_by_name(name)
                 .and_then(|f| f.manifest.as_ref())
                 .and_then(|m| m.recovery_manifest.clone());
@@ -521,10 +570,11 @@ fn cmd_retrieve(name: &str, json: bool) {
     }
 }
 
-fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, json: bool) {
-    let mut os = NucleOS::new(100);
+fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, pool_dir: &std::path::Path, json: bool) {
+    let mut os = open_pool(pool_dir);
     match nucle_vfs::migrate::migrate_object(&mut os, name, redundancy, codec) {
         Ok(manifest) => {
+            persist_pool(&os, pool_dir);
             if json {
                 println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
             } else {
@@ -542,8 +592,8 @@ fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, json:
     }
 }
 
-fn cmd_search(query: &str, top_k: usize, json: bool) {
-    let os = NucleOS::new(100);
+fn cmd_search(query: &str, top_k: usize, pool_dir: &std::path::Path, json: bool) {
+    let os = open_pool(pool_dir);
     let results = os.dna_search(query, top_k);
     if json {
         println!("{}", serde_json::to_string_pretty(&results).unwrap());
@@ -559,8 +609,8 @@ fn cmd_search(query: &str, top_k: usize, json: bool) {
     }
 }
 
-fn cmd_pool(json: bool) {
-    let os = NucleOS::new(100);
+fn cmd_pool(pool_dir: &std::path::Path, json: bool) {
+    let os = open_pool(pool_dir);
     let status = os.dna_stat();
     if json {
         println!("{}", serde_json::to_string_pretty(&status).unwrap());
@@ -1815,9 +1865,10 @@ fn check_failure_examples_parse() -> DoctorCheck {
     DoctorCheck { name: "Failure-mode examples parse", ok: detail.is_empty(), skipped: false, detail }
 }
 
-/// Runs a real dna_write → dna_read roundtrip against an ephemeral in-memory
-/// NucleOS instance — NucleOS has no on-disk state, so this is the VFS
-/// pipeline's equivalent of a scratch read/write check.
+/// Runs a real dna_write → dna_read roundtrip against a scratch, in-memory
+/// NucleOS instance -- deliberately not the real pool directory (NucleOS::
+/// new, not open), so a doctor run never touches or pollutes real stored
+/// data with its throwaway probe file.
 fn check_vfs_roundtrip() -> DoctorCheck {
     let mut os = NucleOS::new(4);
     let probe = b"nucle doctor VFS roundtrip probe";
@@ -1882,7 +1933,7 @@ fn cmd_doctor(json: bool) {
     }
 }
 
-fn cmd_agent(command: &str) {
+fn cmd_agent(command: &str, pool_dir: &std::path::Path) {
     if command.is_empty() {
         println!("Usage: nucle agent <natural language command>");
         println!("\nExamples:");
@@ -1893,9 +1944,15 @@ fn cmd_agent(command: &str) {
         return;
     }
 
-    let mut os = NucleOS::new(100);
+    let mut os = open_pool(pool_dir);
     match Executor::run(&mut os, command) {
-        Ok(report) => println!("{}", report),
+        Ok(report) => {
+            // A single agent command could be any tool, including several
+            // that mutate (store/retrieve/delete/migrate) -- persist
+            // unconditionally rather than trying to guess from the report.
+            persist_pool(&os, pool_dir);
+            println!("{}", report);
+        }
         Err(e) => eprintln!("Agent error: {}", e),
     }
 }

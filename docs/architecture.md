@@ -853,17 +853,20 @@ fn dna_stat(pool: &DnaPool) -> Result<PoolStats>;
 fn dna_delete(name: &str) -> Result<()>;
 ```
 
+### Durable, cross-process persistence
+
+`NucleOS::new(max_files)` is still purely in-memory (used for short-lived/scratch instances — benchmarks, `nucle doctor`'s roundtrip probe). For a real, durable pool, `NucleOS::open(pool_dir, max_files)` loads whatever a prior `NucleOS::persist(pool_dir)` call wrote to `pool_dir/state.json` (or initializes fresh state if the directory is new), and `persist` writes back atomically (a temp file, then `fs::rename`d over the real path, so a process killed mid-write never corrupts the last good state). Only `pool`/`catalog`/the primer-index counter are actually persisted — `primers` regenerates identically from the same fixed seed given the same `max_files`, and `search` is rebuilt by replaying every file already in the restored catalog, so neither needs its own on-disk copy. `nucle_cli` resolves where a pool lives via (in priority order) an explicit `--pool-dir` flag, `NUCLEOS_POOL_DIR`, or a project-local `.nucleos/` directory created on first use (see `resolve_pool_dir`/`open_pool`/`persist_pool` in `nucle_cli/src/main.rs`). This is what makes `nucle store` in one process visible to a `nucle retrieve` in a later, separate one.
+
 ### Explicitly out of scope
 
-The VFS is a **session-scoped in-memory abstraction**, not a persistent filesystem. The following are deliberate non-goals for the current design:
+Beyond durable persistence (above), the following remain deliberate non-goals for the current design:
 
-- **Persistence across process restarts** — the pool exists only for the lifetime of the `NucleOS` instance. Serialisation to disk is left to the caller.
 - **Encryption** — data is stored as plaintext DNA. A production system would add an encryption layer between the VFS and the codec, but that's orthogonal to the storage stack.
 - **Access control / permissions** — no user model, no file ownership. Every caller has full read/write to the pool.
-- **Concurrent writes** — the pool is single-writer. Concurrent access requires external synchronisation.
-- **POSIX semantics** — no directories, no symlinks, no `seek()`. The API is flat key-value: name → blob.
+- **Concurrent writes** — the pool is single-writer per process; two processes writing to the same `pool_dir` at once can race (last `persist()` wins). Concurrent access requires external synchronisation.
+- **POSIX semantics** — no directories, no symlinks, no `seek()`. The API is flat key-value: name → blob, and two files with the same filename collide even if they'd logically live in different folders.
 
-These boundaries are intentional. The VFS owns the question "how do I store and retrieve a named blob in DNA?" — everything else belongs to layers above it.
+These boundaries are intentional. The VFS owns the question "how do I store and retrieve a named blob in DNA, durably?" — everything else belongs to layers above it.
 
 ## Hardware Bridge and Provider Boundaries
 
@@ -900,9 +903,11 @@ opaque status:
 - **Failure-mode examples parse** — same, but for `docs/examples/failures/`:
   those programs are supposed to fail *type checking* by design, so this
   only asserts they're still syntactically valid NucleScript.
-- **VFS write/read roundtrip** — since `NucleOS` holds no on-disk state, this
-  runs a real `dna_write`/`dna_read` roundtrip against an ephemeral in-memory
-  instance as the VFS pipeline's equivalent of a scratch read/write check.
+- **VFS write/read roundtrip** — runs a real `dna_write`/`dna_read`
+  roundtrip against a scratch, ephemeral in-memory instance (`NucleOS::new`,
+  deliberately not the real persistent pool) as the VFS pipeline's
+  equivalent of a scratch read/write check, without touching or polluting
+  real stored data with its probe file.
 
 A check that can't run at all from the current directory (e.g. a directory
 genuinely doesn't exist) is reported `skipped`, not `failed` — it degrades
