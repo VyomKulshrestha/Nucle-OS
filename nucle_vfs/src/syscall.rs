@@ -109,11 +109,27 @@ fn simulate_with_provenance(
 /// directory (see [`NucleOS::open`]/[`NucleOS::persist`]).
 pub const STATE_FILE_NAME: &str = "state.json";
 
+/// Advisory lock file `persist()` holds for its check-then-write sequence.
+/// The optimistic version check alone has a real TOCTOU race: two
+/// processes can both observe "no conflict" before either one's write
+/// reaches disk, and the second `rename()` would then silently clobber the
+/// first's already-persisted state (confirmed empirically -- a real,
+/// if rare, race in this project's own concurrency test before this lock
+/// was added). The lock doesn't replace the version check; it just makes
+/// check-then-write atomic with respect to any other process's persist().
+const LOCK_FILE_NAME: &str = ".lock";
+
 /// The only state that can't be deterministically reconstructed at
 /// `open()` time -- see `NucleOS::open`'s doc comment for why `primers`/
 /// `search`/`crispr`/noise settings aren't part of this.
+///
+/// `version` is an optimistic-concurrency counter, incremented on every
+/// successful `persist()` -- see `NucleOS::persist`'s doc comment for what
+/// it protects against.
 #[derive(Serialize, Deserialize)]
 struct PersistedState {
+    #[serde(default)]
+    version: u64,
     pool: DnaPool,
     catalog: Catalog,
     primers_used: usize,
@@ -149,6 +165,10 @@ pub struct NucleOS {
     pub noise_config: SimulationConfig,
     /// Number of primer pairs used so far.
     primers_used: usize,
+    /// The `PersistedState::version` this instance last loaded or wrote --
+    /// 0 for an instance that's never touched a pool directory. Used by
+    /// `persist()`'s optimistic-concurrency check; irrelevant otherwise.
+    loaded_version: u64,
 }
 
 impl NucleOS {
@@ -167,6 +187,7 @@ impl NucleOS {
             simulate_noise: false,
             noise_config: SimulationConfig::pristine(),
             primers_used: 0,
+            loaded_version: 0,
         }
     }
 
@@ -238,6 +259,7 @@ impl NucleOS {
             simulate_noise: false,
             noise_config: SimulationConfig::pristine(),
             primers_used: persisted.primers_used,
+            loaded_version: persisted.version,
         })
     }
 
@@ -246,11 +268,63 @@ impl NucleOS {
     /// over the real path — an atomic swap on both Windows and Unix — so a
     /// process killed mid-write never leaves a half-written `state.json`
     /// behind; the last successfully persisted state is always intact.
-    pub fn persist(&self, pool_dir: &std::path::Path) -> Result<(), String> {
+    ///
+    /// **Optimistic concurrency check, made atomic by a real file lock**:
+    /// before writing, re-reads whatever version is *currently* on disk.
+    /// If it's moved past the version this instance last loaded (or
+    /// wrote), some other process has persisted a newer state since —
+    /// writing now would silently discard that write, so this refuses
+    /// instead with a clear, retryable error. Two `open()`s against the
+    /// same directory racing is now a real scenario (pools are durable,
+    /// Step 4), where it wasn't when every process got its own empty,
+    /// throwaway state. On success, `self.loaded_version` advances, so a
+    /// second `persist()` call on the same instance (no intervening
+    /// external change) succeeds too, rather than conflicting with itself.
+    ///
+    /// The check-then-write above isn't safe on its own -- two processes
+    /// could both pass the check before either one's `rename()` lands,
+    /// and the second write would then silently clobber the first. An
+    /// exclusive lock on `pool_dir/.lock`, held for this whole sequence,
+    /// closes that window: whichever process gets the lock first runs its
+    /// entire check-and-write before the other even starts checking.
+    pub fn persist(&mut self, pool_dir: &std::path::Path) -> Result<(), String> {
         std::fs::create_dir_all(pool_dir)
             .map_err(|e| format!("failed to create pool directory '{}': {}", pool_dir.display(), e))?;
 
+        let lock_path = pool_dir.join(LOCK_FILE_NAME);
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|e| format!("failed to open pool lock file '{}': {}", lock_path.display(), e))?;
+        let mut file_lock = fd_lock::RwLock::new(lock_file);
+        let _guard = file_lock
+            .write()
+            .map_err(|e| format!("failed to acquire pool lock at '{}': {}", lock_path.display(), e))?;
+
+        let state_path = pool_dir.join(STATE_FILE_NAME);
+        if state_path.exists() {
+            let existing_json = std::fs::read_to_string(&state_path)
+                .map_err(|e| format!("failed to read pool state at '{}': {}", state_path.display(), e))?;
+            let existing: PersistedState = serde_json::from_str(&existing_json)
+                .map_err(|e| format!("failed to parse pool state at '{}': {}", state_path.display(), e))?;
+            if existing.version != self.loaded_version {
+                return Err(format!(
+                    "pool at '{}' was changed by another process since this one opened it \
+                     (on-disk version {}, expected {}) -- retry the command",
+                    pool_dir.display(), existing.version, self.loaded_version
+                ));
+            }
+        } else if self.loaded_version != 0 {
+            return Err(format!(
+                "pool state at '{}' is missing but this instance expected version {} -- retry the command",
+                pool_dir.display(), self.loaded_version
+            ));
+        }
+
+        let new_version = self.loaded_version + 1;
         let persisted = PersistedState {
+            version: new_version,
             pool: self.pool.clone(),
             catalog: self.catalog.clone(),
             primers_used: self.primers_used,
@@ -264,6 +338,7 @@ impl NucleOS {
         std::fs::rename(&tmp_path, pool_dir.join(STATE_FILE_NAME))
             .map_err(|e| format!("failed to finalize pool state: {}", e))?;
 
+        self.loaded_version = new_version;
         Ok(())
     }
 
@@ -1172,6 +1247,105 @@ mod tests {
 
         let reopened = NucleOS::open(&dir, 10).unwrap();
         assert!(reopened.catalog.get_by_name("good.txt").is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Optimistic concurrency (Step 6) ──
+
+    #[test]
+    fn a_stale_persist_after_a_concurrent_write_is_rejected_not_silently_lost() {
+        // Simulates two processes racing on the same pool: both open the
+        // same starting state, A persists first, then B -- still holding
+        // its now-stale view -- must be refused, not silently overwrite
+        // A's already-persisted write.
+        let dir = scratch_pool_dir("concurrency_conflict");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut os_a = NucleOS::open(&dir, 10).unwrap();
+        let mut os_b = NucleOS::open(&dir, 10).unwrap();
+
+        os_a.dna_write("a.txt", b"from process A", 1).unwrap();
+        os_a.persist(&dir).unwrap();
+
+        os_b.dna_write("b.txt", b"from process B", 1).unwrap();
+        let result = os_b.persist(&dir);
+        assert!(result.is_err(), "a stale persist must be rejected, not silently discard A's write");
+        assert!(result.unwrap_err().contains("retry"), "the error should be actionable");
+
+        // A's write must be intact; B's rejected attempt must not appear.
+        let reopened = NucleOS::open(&dir, 10).unwrap();
+        assert!(reopened.catalog.get_by_name("a.txt").is_some());
+        assert!(reopened.catalog.get_by_name("b.txt").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_concurrent_opens_of_a_brand_new_pool_the_second_persist_still_conflicts() {
+        // Edge case: both instances start from "no state.json yet"
+        // (loaded_version 0), not just from an already-persisted version.
+        let dir = scratch_pool_dir("concurrent_new_pool");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut os_a = NucleOS::open(&dir, 10).unwrap();
+        let mut os_b = NucleOS::open(&dir, 10).unwrap();
+
+        os_a.dna_write("a.txt", b"a", 1).unwrap();
+        os_a.persist(&dir).unwrap();
+
+        os_b.dna_write("b.txt", b"b", 1).unwrap();
+        assert!(os_b.persist(&dir).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sequential_persists_on_the_same_instance_both_succeed() {
+        // Guards against the version check conflicting with itself: after a
+        // successful persist, this same instance's own loaded_version must
+        // advance so a later persist (no external change in between) isn't
+        // treated as stale.
+        let dir = scratch_pool_dir("sequential_persist");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut os = NucleOS::open(&dir, 10).unwrap();
+        os.dna_write("first.txt", b"one", 1).unwrap();
+        os.persist(&dir).unwrap();
+
+        os.dna_write("second.txt", b"two", 1).unwrap();
+        os.persist(&dir).unwrap();
+
+        let reopened = NucleOS::open(&dir, 10).unwrap();
+        assert!(reopened.catalog.get_by_name("first.txt").is_some());
+        assert!(reopened.catalog.get_by_name("second.txt").is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_state_json_from_before_versioning_existed_still_loads() {
+        // Backward compatibility: a state.json written by an earlier
+        // release (Step 4/5, before the version field existed) has no
+        // "version" key at all -- #[serde(default)] must make it load as
+        // version 0, not fail to parse.
+        let dir = scratch_pool_dir("pre_versioning");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let pre_versioning_json = r#"{
+            "pool": {"strands": {}, "next_id": 0, "file_index": {}},
+            "catalog": {"files": {}, "name_index": {}, "primer_index": {}},
+            "primers_used": 0
+        }"#;
+        std::fs::write(dir.join(STATE_FILE_NAME), pre_versioning_json).unwrap();
+
+        let mut os = NucleOS::open(&dir, 10).unwrap();
+        os.dna_write("new.txt", b"first write under versioning", 1).unwrap();
+        os.persist(&dir).unwrap();
+
+        let reopened = NucleOS::open(&dir, 10).unwrap();
+        assert!(reopened.catalog.get_by_name("new.txt").is_some());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

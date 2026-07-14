@@ -487,7 +487,7 @@ fn open_pool(pool_dir: &std::path::Path) -> NucleOS {
 /// fails -- a persist failure means the operation that just ran (however
 /// successful in memory) won't actually be visible to a later invocation,
 /// so it's treated as seriously as the operation itself failing.
-fn persist_pool(os: &NucleOS, pool_dir: &std::path::Path) {
+fn persist_pool(os: &mut NucleOS, pool_dir: &std::path::Path) {
     if let Err(e) = os.persist(pool_dir) {
         eprintln!("Operation succeeded but failed to persist pool state to '{}': {}", pool_dir.display(), e);
         std::process::exit(1);
@@ -520,7 +520,7 @@ fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, json: bo
     let mut os = open_pool(pool_dir);
     match os.dna_write(filename, &data, redundancy) {
         Ok(result) => {
-            persist_pool(&os, pool_dir);
+            persist_pool(&mut os, pool_dir);
             if json {
                 println!("{}", serde_json::to_string_pretty(&result).unwrap());
             } else {
@@ -541,7 +541,7 @@ fn cmd_retrieve(name: &str, pool_dir: &std::path::Path, json: bool) {
         Ok(data) => {
             // dna_read updates the file's recovery manifest -- persist so
             // that update (not just the original write) survives.
-            persist_pool(&os, pool_dir);
+            persist_pool(&mut os, pool_dir);
             let manifest_opt = os.catalog.get_by_name(name)
                 .and_then(|f| f.manifest.as_ref())
                 .and_then(|m| m.recovery_manifest.clone());
@@ -590,7 +590,7 @@ fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, pool_
     let mut os = open_pool(pool_dir);
     match nucle_vfs::migrate::migrate_object(&mut os, name, redundancy, codec) {
         Ok(manifest) => {
-            persist_pool(&os, pool_dir);
+            persist_pool(&mut os, pool_dir);
             if json {
                 println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
             } else {
@@ -1987,7 +1987,7 @@ fn cmd_agent(command: &str, pool_dir: &std::path::Path) {
             // A single agent command could be any tool, including several
             // that mutate (store/retrieve/delete/migrate) -- persist
             // unconditionally rather than trying to guess from the report.
-            persist_pool(&os, pool_dir);
+            persist_pool(&mut os, pool_dir);
             println!("{}", report);
         }
         Err(e) => eprintln!("Agent error: {}", e),
