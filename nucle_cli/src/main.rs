@@ -105,6 +105,12 @@ enum Commands {
     #[command(name = "pool")]
     Pool,
 
+    /// List stored files, optionally filtered to a name prefix (e.g. "docs/")
+    List {
+        /// Only list files whose name starts with this prefix
+        prefix: Option<String>,
+    },
+
     /// Simulate synthesis/sequencing noise on data
     Simulate {
         /// Input file to simulate
@@ -326,6 +332,7 @@ fn main() {
         Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), &pool_dir, cli.json),
         Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, cli.json),
         Commands::Pool => cmd_pool(&pool_dir, cli.json),
+        Commands::List { prefix } => cmd_list(prefix.as_deref().unwrap_or(""), &pool_dir, cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -496,10 +503,19 @@ fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, json: bo
         }
     };
 
-    let filename = std::path::Path::new(file)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(file);
+    // A relative source path (e.g. "docs/readme.txt") is stored under that
+    // same path-like name, giving the pool's own flat namespace a
+    // directory-like structure -- "docs/readme.txt" and
+    // "downloads/readme.txt" don't collide, and `nucle list docs/` finds
+    // just the first. An absolute path strips to just the leaf name, since
+    // the local filesystem's own absolute structure isn't something a
+    // caller usually wants literally preserved in pool metadata.
+    let path = std::path::Path::new(file);
+    let filename: &str = if path.is_absolute() {
+        path.file_name().and_then(|n| n.to_str()).unwrap_or(file)
+    } else {
+        file
+    };
 
     let mut os = open_pool(pool_dir);
     match os.dna_write(filename, &data, redundancy) {
@@ -616,6 +632,27 @@ fn cmd_pool(pool_dir: &std::path::Path, json: bool) {
         println!("{}", serde_json::to_string_pretty(&status).unwrap());
     } else {
         println!("{}", status);
+    }
+}
+
+fn cmd_list(prefix: &str, pool_dir: &std::path::Path, json: bool) {
+    let os = open_pool(pool_dir);
+    let files = os.dna_list(prefix);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&files).unwrap());
+    } else if files.is_empty() {
+        if prefix.is_empty() {
+            println!("No files stored.");
+        } else {
+            println!("No files under '{}'.", prefix);
+        }
+    } else {
+        for f in &files {
+            println!(
+                "  {} ({} B, {}d+{}p strands, {:.1}×)",
+                f.filename, f.size, f.data_strands, f.parity_strands, f.redundancy
+            );
+        }
     }
 }
 
@@ -1967,6 +2004,7 @@ fn cmd_help() {
     println!("  nucle migrate <name> [-r redundancy]      Migrate a file to new storage params");
     println!("  nucle search <query> [-k top_k]           Search for files");
     println!("  nucle pool                                Show pool status");
+    println!("  nucle list [prefix]                       List stored files, optionally by name prefix");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");

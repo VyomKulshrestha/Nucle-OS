@@ -84,6 +84,16 @@ impl Catalog {
         self.files.values().collect()
     }
 
+    /// Lists files whose name starts with `prefix` (an empty prefix lists
+    /// everything). The catalog is still just a flat string → `DnaFile`
+    /// map -- names like `"docs/report.txt"` are ordinary keys, not a real
+    /// directory tree -- so this is prefix filtering, not tree traversal;
+    /// it's what makes that flat namespace still feel like directories
+    /// from the CLI (`nucle list docs/`).
+    pub fn list_prefixed(&self, prefix: &str) -> Vec<&DnaFile> {
+        self.files.values().filter(|f| f.filename.starts_with(prefix)).collect()
+    }
+
     /// Number of files.
     pub fn len(&self) -> usize {
         self.files.len()
@@ -194,6 +204,32 @@ mod tests {
     fn test_file_total_strands() {
         let file = make_file("f1", "test.txt", "P0000");
         assert_eq!(file.total_strands(), 14); // 10 data + 4 parity
+    }
+
+    #[test]
+    fn test_list_prefixed_filters_by_name_prefix() {
+        let mut catalog = Catalog::new();
+        catalog.register(make_file("f1", "docs/readme.txt", "P0000"));
+        catalog.register(make_file("f2", "downloads/readme.txt", "P0001"));
+        catalog.register(make_file("f3", "docs/notes.txt", "P0002"));
+
+        let docs = catalog.list_prefixed("docs/");
+        assert_eq!(docs.len(), 2);
+        assert!(docs.iter().all(|f| f.filename.starts_with("docs/")));
+
+        assert_eq!(catalog.list_prefixed("").len(), 3, "an empty prefix should list everything");
+        assert_eq!(catalog.list_prefixed("nonexistent/").len(), 0);
+    }
+
+    #[test]
+    fn test_same_leaf_name_in_different_prefixes_does_not_collide() {
+        let mut catalog = Catalog::new();
+        catalog.register(make_file("f1", "docs/readme.txt", "P0000"));
+        catalog.register(make_file("f2", "downloads/readme.txt", "P0001"));
+
+        assert_eq!(catalog.len(), 2);
+        assert!(catalog.get_by_name("docs/readme.txt").is_some());
+        assert!(catalog.get_by_name("downloads/readme.txt").is_some());
     }
 
     #[test]

@@ -864,7 +864,7 @@ Beyond durable persistence (above), the following remain deliberate non-goals fo
 - **Encryption** — data is stored as plaintext DNA. A production system would add an encryption layer between the VFS and the codec, but that's orthogonal to the storage stack.
 - **Access control / permissions** — no user model, no file ownership. Every caller has full read/write to the pool.
 - **Concurrent writes** — the pool is single-writer per process; two processes writing to the same `pool_dir` at once can race (last `persist()` wins). Concurrent access requires external synchronisation.
-- **POSIX semantics** — no directories, no symlinks, no `seek()`. The API is flat key-value: name → blob, and two files with the same filename collide even if they'd logically live in different folders.
+- **POSIX semantics** — no real directory tree, no symlinks, no `seek()`. The catalog is still a flat key-value map (name → blob), but names are ordinary strings that can look like paths (`"docs/report.txt"`) — `nucle store docs/readme.txt`/`nucle store downloads/readme.txt` from a relative path don't collide, and `Catalog::list_prefixed`/`nucle list <prefix>` filters by that prefix. This is prefix filtering over a flat map, not real tree traversal (no rename-a-directory, no recursive delete) — an absolute source path still strips to its bare leaf name, since that structure is local-filesystem noise, not an intentional namespace.
 
 These boundaries are intentional. The VFS owns the question "how do I store and retrieve a named blob in DNA, durably?" — everything else belongs to layers above it.
 

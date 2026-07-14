@@ -674,17 +674,16 @@ impl NucleOS {
             total_nucleotides: self.pool.total_nucleotides(),
             avg_strand_length: self.pool.avg_strand_length(),
             redundancy: self.pool.redundancy_ratio(),
-            files: self.catalog.list().iter().map(|f| FileInfo {
-                filename: f.filename.clone(),
-                size: f.size,
-                data_strands: f.data_strand_count,
-                parity_strands: f.parity_strand_count,
-                total_strands: f.total_strands(),
-                codec: f.codec.clone(),
-                redundancy: f.redundancy,
-                manifest: f.manifest.clone(),
-            }).collect(),
+            files: self.catalog.list().iter().map(|f| file_info(f)).collect(),
         }
+    }
+
+    /// Lists files whose name starts with `prefix` (an empty prefix lists
+    /// everything) -- a directory-listing-style view over the catalog's
+    /// flat, path-string namespace (e.g. `dna_list("docs/")` after storing
+    /// under names like `"docs/report.txt"`; see `Catalog::list_prefixed`).
+    pub fn dna_list(&self, prefix: &str) -> Vec<FileInfo> {
+        self.catalog.list_prefixed(prefix).iter().map(|f| file_info(f)).collect()
     }
 
     // -----------------------------------------------------------------------
@@ -770,6 +769,20 @@ pub struct FileInfo {
     pub codec: String,
     pub redundancy: f64,
     pub manifest: Option<StorageManifest>,
+}
+
+/// Shared by `dna_stat`/`dna_list` so both build a `FileInfo` the same way.
+fn file_info(f: &DnaFile) -> FileInfo {
+    FileInfo {
+        filename: f.filename.clone(),
+        size: f.size,
+        data_strands: f.data_strand_count,
+        parity_strands: f.parity_strand_count,
+        total_strands: f.total_strands(),
+        codec: f.codec.clone(),
+        redundancy: f.redundancy,
+        manifest: f.manifest.clone(),
+    }
 }
 
 /// Pool status report.
@@ -868,6 +881,32 @@ mod tests {
 
         let recovered = os.dna_read("ecc.txt").unwrap();
         assert_eq!(recovered, data.to_vec());
+    }
+
+    // ── Hierarchical, path-like names (Step 5) ──
+
+    #[test]
+    fn same_leaf_name_under_different_path_prefixes_does_not_collide() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("docs/readme.txt", b"the docs one", 1).unwrap();
+        os.dna_write("downloads/readme.txt", b"the downloads one", 1).unwrap();
+
+        assert_eq!(os.dna_read("docs/readme.txt").unwrap(), b"the docs one".to_vec());
+        assert_eq!(os.dna_read("downloads/readme.txt").unwrap(), b"the downloads one".to_vec());
+    }
+
+    #[test]
+    fn dna_list_filters_by_prefix() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("docs/readme.txt", b"a", 1).unwrap();
+        os.dna_write("docs/notes.txt", b"b", 1).unwrap();
+        os.dna_write("downloads/readme.txt", b"c", 1).unwrap();
+
+        let docs = os.dna_list("docs/");
+        assert_eq!(docs.len(), 2);
+        assert!(docs.iter().all(|f| f.filename.starts_with("docs/")));
+
+        assert_eq!(os.dna_list("").len(), 3);
     }
 
     // ── Binary data ──
