@@ -191,14 +191,14 @@ struct TypeChecker {
     /// signature, never an outer function's, even though the closure's
     /// checker otherwise inherits the outer scope's bindings for capture.
     enclosing_result_return: Option<(TypeExpr, TypeExpr)>,
-    /// User-declared `enum`s (Step 14), registered incrementally as
+    /// User-declared `enum`s, registered incrementally as
     /// `check_declaration_single` walks `Declaration::Enum` entries --
     /// same "declare before use" convention `pools`/`functions` already
     /// have. `Result<T, E>` is never an entry here; see `TypeExpr::Enum`'s
     /// own doc comment for why it stays its own privileged type.
     enums: HashMap<String, EnumDecl>,
     /// User-enum-typed `let` bindings AND function/closure *parameters*
-    /// (Step 14) -- parallel to `pool_bindings`/`result_bindings`, but
+    /// -- parallel to `pool_bindings`/`result_bindings`, but
     /// specifically for the case a parameter has no `LetDecl` of its own
     /// to register in `self.bindings` (which only ever holds real `let`
     /// declarations, so a `RecoveryPlan`-typed parameter would otherwise
@@ -211,7 +211,7 @@ struct TypeChecker {
 }
 
 /// One variant's name and (optional) payload type, in declaration order
-/// -- the "shape" a `match`'s scrutinee is checked against (Step 14),
+/// -- the "shape" a `match`'s scrutinee is checked against,
 /// whether that shape comes from the built-in Result pseudo-enum or a
 /// real user `EnumDecl`. See `TypeChecker::check_match`.
 struct VariantSignature {
@@ -388,9 +388,9 @@ impl TypeChecker {
     /// without inventing general field-access syntax) a probabilistic
     /// pool binding's name, which resolves to its inferred
     /// `error_rate_percent`. `context` (`"if"`/`"assert"`) only affects
-    /// error message wording -- both call sites share this one
-    /// evaluator, per Step 7's reuse of Step 4's comparison operators
-    /// rather than a separate assertion DSL.
+    /// error message wording -- both call sites share this one evaluator,
+    /// reusing the same comparison operators rather than a separate
+    /// assertion DSL.
     fn eval_numeric(&mut self, expr: &Expr, span: Span, context: &str) -> Option<f64> {
         match expr {
             Expr::Number(value) => Some(*value),
@@ -474,7 +474,7 @@ impl TypeChecker {
         self.pools.insert(pool.name.clone(), pool.clone());
     }
 
-    /// `enum Name { Variant1, Variant2(Type), ... }` (Step 14). `Result`
+    /// `enum Name { Variant1, Variant2(Type), ... }`. `Result`
     /// is reserved -- it's never an instance of this general mechanism,
     /// just uniformly *matchable* alongside one (see `check_match`).
     /// Whether a variant's own payload type (if it names another enum)
@@ -629,7 +629,7 @@ impl TypeChecker {
         }
 
         // `let x: EnumName = EnumName::Variant(<expr>)` / `EnumName::
-        // Variant` -- a direct user-enum construction (Step 14). Checked
+        // Variant` -- a direct user-enum construction. Checked
         // before the un-unwrapped Result path below for the same reason
         // `Ok`/`Err`/`Match`/`Closure` are: without this branch, neither
         // `infer_result_expr` nor `infer_expr` recognizes `Expr::
@@ -953,7 +953,7 @@ impl TypeChecker {
         self.enums.get(&enum_name).cloned().map(|decl| ScrutineeKind::UserEnum { decl })
     }
 
-    /// `match <scrutinee> { <arm>, ... }`'s validity (Step 14) --
+    /// `match <scrutinee> { <arm>, ... }`'s validity --
     /// generalizes the original Result-only, fixed-two-arm check to any
     /// number of arms over either Result's own two implicit variants
     /// (`Ok`/`Err`) or a user-declared `enum`'s real variant list.
@@ -1245,7 +1245,7 @@ impl TypeChecker {
         }
         // A direct (not variable-mediated) user-enum construction --
         // e.g. `Ok(MyEnum::Variant(x))` -- mirrors the Result-shaped case
-        // above for user enums (Step 14).
+        // above for user enums.
         if let Expr::EnumConstruct { enum_name, variant, payload } = expr {
             return self.check_enum_construct(enum_name, variant, payload.as_deref(), span);
         }
@@ -1356,7 +1356,7 @@ impl TypeChecker {
                         closure_checker.fn_param_effects.insert(param.name.clone(), effect.to_effect());
                     }
                 }
-                // A user-enum-typed parameter (Step 14) -- tracked
+                // A user-enum-typed parameter -- tracked
                 // separately from `bindings` (which only ever holds real
                 // `let` declarations) since a parameter has no `LetDecl`
                 // of its own. See `TypeChecker::enum_bindings`'s own doc
@@ -1935,7 +1935,7 @@ impl TypeChecker {
                         body_checker.fn_param_effects.insert(param.name.clone(), effect.to_effect());
                     }
                 }
-                // A user-enum-typed parameter (Step 14) -- see
+                // A user-enum-typed parameter -- see
                 // `TypeChecker::enum_bindings`'s own doc comment.
                 TypeExpr::Enum(enum_name) => {
                     body_checker.enum_bindings.insert(param.name.clone(), enum_name.clone());

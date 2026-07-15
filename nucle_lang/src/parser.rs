@@ -389,7 +389,7 @@ impl Parser {
         Ok(StrandDecl { name, sequence, span: self.span_since(start), doc })
     }
 
-    /// `enum Name { Variant1, Variant2(PayloadType), ... }` (Step 14).
+    /// `enum Name { Variant1, Variant2(PayloadType), ... }`.
     /// Each variant is a bare name (unit) or a name followed by exactly
     /// one parenthesized payload type -- see `ast::EnumVariant`'s own doc
     /// comment for why never more than one.
@@ -544,7 +544,7 @@ impl Parser {
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             // Any identifier not matching one of the built-in type
             // keywords above is presumed to name a user-declared `enum`
-            // (Step 14) -- the parser has no `self.enums` table to check
+            // -- the parser has no `self.enums` table to check
             // against (declarations aren't resolved until typeck), so a
             // genuinely undeclared/misspelled name here is deferred to
             // `E-ENUM-UNKNOWN` at type-check time rather than a parse
@@ -747,7 +747,7 @@ impl Parser {
             && matches!(self.tokens.get(self.index + 2).map(|t| &t.kind), Some(TokenKind::Ident(_)))
         {
             // `EnumName::Variant(payload)` / `EnumName::Variant` -- reuses
-            // the `::` token added for turbofish (Step 13). Unambiguous by
+            // the `::` token added for turbofish. Unambiguous by
             // one token of lookahead: turbofish is always `::` followed by
             // `<`, a variant reference is always `::` followed by an
             // identifier (see `Expr::EnumConstruct`'s doc comment).
@@ -819,7 +819,7 @@ impl Parser {
     }
 
     /// `match <scrutinee> { <arm>, ... }` -- the general pattern-matching
-    /// engine (Step 14). Any number of arms, any order (no longer fixed
+    /// engine. Any number of arms, any order (no longer fixed
     /// `Ok` then `Err`) -- `typeck::TypeChecker::check_match` validates
     /// exhaustiveness/duplicate-variant/wildcard-position against the
     /// scrutinee's own declared variant list (built-in Result, or a user

@@ -182,7 +182,7 @@ pub struct StrandDecl {
 }
 
 /// `enum Name { Variant1, Variant2(PayloadType), ... }` -- a user-defined
-/// sum type (Step 14). Unlike `Result<T, E>` (which stays its own
+/// sum type. Unlike `Result<T, E>` (which stays its own
 /// privileged `TypeExpr::Result`/`Expr::Ok`/`Expr::Err` machinery, never
 /// registered here), an `EnumDecl` is looked up by name from
 /// `typeck::TypeChecker::enums`, exactly the way `PoolDecl`/`FunctionDecl`
@@ -203,8 +203,8 @@ pub struct EnumDecl {
 
 /// One variant of a user-declared `enum`. At most one payload type --
 /// mirrors `Ok(T)`/`Err(E)`'s own shape exactly, deliberately not a tuple
-/// or struct-like multi-field variant (see the Step 14 plan's own scope
-/// discussion for why: every downstream consumer -- pattern binding,
+/// or struct-like multi-field variant (every downstream consumer --
+/// pattern binding,
 /// re-wrap construction, runtime `Value::EnumInstance` -- is written
 /// around "zero or one payload value per variant," and nothing in this
 /// language's actual domain needs more than that yet).
@@ -306,7 +306,7 @@ pub enum TypeExpr {
     /// accepted, still-standing limitation for anything that doesn't
     /// opt in.
     Fn(Vec<TypeExpr>, Box<TypeExpr>, Option<FnEffectAnnotation>),
-    /// Names a user-declared `enum` by name (Step 14), resolved against
+    /// Names a user-declared `enum` by name, resolved against
     /// `typeck::TypeChecker::enums` at type-check time
     /// (`E-ENUM-UNKNOWN` if it doesn't resolve). `Result<T, E>` is NOT
     /// represented this way -- it keeps its own dedicated
@@ -431,7 +431,7 @@ pub enum Expr {
     /// as `StoreExpr` has to `Operation::Store`.
     DeleteExpr(DeleteOp),
     /// `match <scrutinee> { <arm>, ... }` -- the general pattern-matching
-    /// engine (Step 14). `scrutinee` must resolve to either the built-in
+    /// engine. `scrutinee` must resolve to either the built-in
     /// `Result<T, E>` "pseudo-enum" (its two implicit variants are always
     /// exactly `Ok(T)`/`Err(E)`) or a user-declared `TypeExpr::Enum`
     /// looked up in `self.enums` -- see `typeck::TypeChecker::check_match`
@@ -490,8 +490,8 @@ pub enum Expr {
     Err(Box<Expr>),
     /// `EnumName::Variant(<expr>)` / `EnumName::Variant` (bare, for a unit
     /// variant) -- constructs an instance of a user-declared `enum`
-    /// (Step 14). Reuses the `::` token already added for
-    /// `name::<Illumina>(...)` turbofish calls (Step 13); disambiguated
+    ///. Reuses the `::` token already added for
+    /// `name::<Illumina>(...)` turbofish calls; disambiguated
     /// at parse time by what follows `::` (`<` means turbofish, an
     /// identifier means a variant name -- see
     /// `parser::parse_primary_expr`). Deliberately NOT how `Ok`/`Err` are
@@ -510,7 +510,7 @@ pub enum Expr {
     },
 }
 
-/// One arm of a general `match` (Step 14). `variant: None` marks a
+/// One arm of a general `match`. `variant: None` marks a
 /// wildcard `_` arm, which must be the last arm if present
 /// (`E-MATCH-ARM-AFTER-WILDCARD` otherwise) -- see `Expr::Match`'s doc
 /// comment.

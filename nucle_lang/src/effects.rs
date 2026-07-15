@@ -70,7 +70,7 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable,
         // an effect.
         Expr::Ok(inner) => expr_effect(inner, funcs, closures, fn_param_effects, resolving),
         Expr::Err(inner) => expr_effect(inner, funcs, closures, fn_param_effects, resolving),
-        // Constructing a user enum instance (Step 14) is inert the same
+        // Constructing a user enum instance is inert the same
         // way -- only its payload (if any) could have an effect.
         Expr::EnumConstruct { payload, .. } => payload.as_deref().map_or(Effect::Pure, |inner| expr_effect(inner, funcs, closures, fn_param_effects, resolving)),
         // The expression-position and statement-position forms of these
@@ -82,8 +82,8 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable,
         Expr::RetrieveExpr(op) => operation_effect(&Operation::Retrieve(op.clone())),
         Expr::DeleteExpr(op) => operation_effect(&Operation::Delete(op.clone())),
         // Joins the scrutinee and every arm's body unconditionally
-        // (Step 14 generalizes this from a fixed two-arm join to N arms),
-        // mirroring `Declaration::If`'s existing branch-join: this
+        // (generalized from a fixed two-arm join to N arms), mirroring
+        // `Declaration::If`'s existing branch-join: this
         // analysis has never modeled "this branch might not run" (an
         // `If`'s untaken branch already counts), so a `Destructive`
         // operation in any one arm still requires confirmation.
@@ -162,8 +162,8 @@ pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, closur
         Expr::RetrieveExpr(_) => true,
         Expr::DeleteExpr(op) => op.confirmed,
         // The scrutinee and every arm's body must already be confirmed
-        // (Step 14 generalizes this from a fixed two-arm AND to N arms)
-        // -- same conservative "every declaration in this join counts"
+        // (generalized from a fixed two-arm AND to N arms) -- same
+        // conservative "every declaration in this join counts"
         // reasoning as `expr_effect`'s `Match` arm above.
         Expr::Match { scrutinee, arms } => {
             expr_has_required_confirmation(scrutinee, funcs, closures, fn_param_effects, resolving)

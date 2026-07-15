@@ -1,4 +1,4 @@
-//! Step 14: user-defined enums and the general pattern-matching/
+//! User-defined enums and the general pattern-matching/
 //! exhaustiveness engine. Covers the full pipeline this feature touches
 //! -- parsing `enum`/`EnumName::Variant`/general N-arm `match`, type-
 //! checking (registration, construction validity, exhaustiveness/
@@ -68,8 +68,8 @@ fn enum_construct_parses_unit_and_payload_forms() {
 
 #[test]
 fn turbofish_still_parses_unambiguously_alongside_enum_construction() {
-    // `::` followed by `<` is turbofish (Step 13); `::` followed by an
-    // identifier is enum variant construction (Step 14) -- one token of
+    // `::` followed by `<` is turbofish; `::` followed by an
+    // identifier is enum variant construction -- one token of
     // lookahead disambiguates them with no ambiguity.
     let program = parse(
         "\
@@ -269,7 +269,7 @@ fn a_user_enum_variant_literally_named_ok_does_not_collide_with_real_result() {
 #[test]
 fn destructive_effect_in_a_non_first_arm_still_requires_confirmation() {
     // Generalizes the Result-only "join across every arm unconditionally"
-    // rule (Step 11) to N arms/variants: a `Destructive` operation in the
+    // rule to N arms/variants: a `Destructive` operation in the
     // *third* arm still counts, since this analysis never models "this
     // branch might not run".
     let program = parse(&format!(

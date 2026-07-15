@@ -99,10 +99,10 @@ pub fn compile_simulation(program: Program, type_report: TypeReport) -> Simulati
         }
     }
 
-    // Step 9 (`Result<T,E>`/`?`) additions never reach `MirOp` at all --
-    // they run through a real interpreter in `codegen.rs`/never touch
-    // MIR, since MIR has no notion of function bodies or control flow
-    // (see that module's doc comment). This backend narrates what a real
+    // `Result<T,E>`/`?` additions never reach `MirOp` at all -- they run
+    // through a real interpreter in `codegen.rs`/never touch MIR, since
+    // MIR has no notion of function bodies or control flow (see that
+    // module's doc comment). This backend narrates what a real
     // run WOULD do without ever touching hardware or a real VFS, so a
     // `store`/`delete` reached only through the new expression-position
     // syntax (directly, or through a call to a `Result`-returning
@@ -180,7 +180,7 @@ fn narrate_result_expr(
         // already inside could produce a step to narrate.
         Expr::Ok(inner) => narrate_result_expr(inner, pools, funcs, closures, steps, calling),
         Expr::Err(inner) => narrate_result_expr(inner, pools, funcs, closures, steps, calling),
-        // Constructing a user enum instance (Step 14) is inert the same
+        // Constructing a user enum instance is inert the same
         // way -- explicit, not left to the trailing wildcard below, since
         // a missed arm here would silently swallow a nested operation
         // (e.g. `MyEnum::Fallback(store "x" into pool)`) with no compile
@@ -206,10 +206,9 @@ fn narrate_result_expr(
         }
         // The narrator can't know at plan-time which arm would actually
         // run, so -- like effects/confirmation above it -- it narrates
-        // the scrutinee and every arm unconditionally (Step 14
-        // generalizes this from a fixed two-arm walk to N arms):
-        // describing everything that could possibly run, not guessing
-        // which will.
+        // the scrutinee and every arm unconditionally (generalized from a
+        // fixed two-arm walk to N arms): describing everything that could
+        // possibly run, not guessing which will.
         Expr::Match { scrutinee, arms } => {
             narrate_result_expr(scrutinee, pools, funcs, closures, steps, calling);
             for arm in arms {

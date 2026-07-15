@@ -9,7 +9,7 @@
 //!     per-declaration dispatch now instead of a standalone loop.
 //!   - The new interpreter (`eval_expr`/`exec_function_body`/
 //!     `call_user_function`, `value::Value`/`value::EvalOutcome`) is what
-//!     makes `Result<T, E>`/`?` (Step 9) real: it runs directly off the
+//!     makes `Result<T, E>`/`?` real: it runs directly off the
 //!     already-desugared `Program`, never through `middle::MirOp` at
 //!     all -- MIR still has zero notion of control flow or function
 //!     bodies, and stays that way. A user-defined function's body is
@@ -117,8 +117,8 @@ pub fn compile_program(program: Program, type_report: TypeReport) -> CompiledPla
 /// restructured to walk declarations directly -- copied verbatim (same
 /// `.map_err(...)?` calls, same abort-the-whole-run-on-first-failure
 /// semantics, same `steps.push(...)` messages), not rewritten, so a
-/// program using none of Step 9's new syntax produces byte-identical
-/// output (see `nucle_lang/tests/result_backward_compat.rs`).
+/// program using none of `Result<T, E>`/`?`'s new syntax produces
+/// byte-identical output (see `nucle_lang/tests/result_backward_compat.rs`).
 fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &mut Vec<String>) -> Result<(), String> {
     match call {
         VfsCall::Store { file, pool, codec, redundancy, simulate, coverage, profile, verify_roundtrip } => {
@@ -330,7 +330,7 @@ fn eval_expr(
         // Evaluates the scrutinee, then dispatches by variant name to
         // whichever arm matches (or the wildcard, if present) via
         // `run_match_arm` -- uniformly for `Value::Result(Ok/Err)` and a
-        // user `Value::EnumInstance` (Step 14). Unlike `Try`, this never
+        // user `Value::EnumInstance`. Unlike `Try`, this never
         // turns an `Err` into a short-circuit, since every arm is an
         // ordinary (not propagating) code path. `env` itself is never
         // mutated, so a pattern binding can't leak into the surrounding

@@ -138,7 +138,7 @@ pub fn lower_program(program: &Program) -> MirProgram {
             // builds and lowers a dedicated virtual program per test), not
             // as a side effect of lowering the whole file for `nucle run`.
             // `enum` declarations have no VFS-lowerable content of their
-            // own (Step 14) -- same reasoning as `Strand`/`Sequence`
+            // own -- same reasoning as `Strand`/`Sequence`
             // below.
             Declaration::Import(_)
             | Declaration::Strand(_)

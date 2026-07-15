@@ -52,7 +52,7 @@ pub enum Value {
         body: Vec<Declaration>,
         captured_env: HashMap<String, Value>,
     },
-    /// A user-declared `enum`'s runtime instance (Step 14). Deliberately
+    /// A user-declared `enum`'s runtime instance. Deliberately
     /// NOT how `Result` itself is represented (see `Value::Result` above)
     /// -- keeping them separate means the large amount of existing
     /// runtime code that already matches `Value::Result(Ok(_)/Err(_))`
