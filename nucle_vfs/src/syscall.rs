@@ -181,6 +181,12 @@ pub struct NucleOS {
     /// unlimited (today's behavior, unchanged unless explicitly set via
     /// `set_max_nucleotides`). Checked in `dna_write_with_codec`.
     max_nucleotides: Option<usize>,
+    /// Where this instance's `audit.log` lives, or `None` for an ephemeral
+    /// in-memory instance (`NucleOS::new`) that was never opened against a
+    /// real pool directory — such instances (benchmarks, `nucle doctor`'s
+    /// roundtrip probe) don't have anywhere durable to log to, and aren't
+    /// real user activity worth an audit trail anyway. Set by `open()`.
+    pool_dir: Option<std::path::PathBuf>,
 }
 
 impl NucleOS {
@@ -201,6 +207,7 @@ impl NucleOS {
             primers_used: 0,
             loaded_version: 0,
             max_nucleotides: None,
+            pool_dir: None,
         }
     }
 
@@ -256,7 +263,9 @@ impl NucleOS {
     pub fn open(pool_dir: &std::path::Path, max_files: usize) -> Result<Self, String> {
         let state_path = pool_dir.join(STATE_FILE_NAME);
         if !state_path.exists() {
-            return Ok(Self::new(max_files));
+            let mut os = Self::new(max_files);
+            os.pool_dir = Some(pool_dir.to_path_buf());
+            return Ok(os);
         }
 
         let json = std::fs::read_to_string(&state_path)
@@ -288,7 +297,23 @@ impl NucleOS {
             primers_used: persisted.primers_used,
             loaded_version: persisted.version,
             max_nucleotides: persisted.max_nucleotides,
+            pool_dir: Some(pool_dir.to_path_buf()),
         })
+    }
+
+    /// Best-effort audit-log append for `pool_dir`, a no-op for an
+    /// ephemeral instance that was never `open()`ed against a real
+    /// directory. A failure to write the audit entry is deliberately
+    /// swallowed rather than surfaced as an error from `dna_write`/
+    /// `dna_read`/`dna_delete`: it's an observability trail, not a
+    /// data-durability guarantee like `persist()` -- losing one audit line
+    /// doesn't lose the file data the operation itself already committed
+    /// (or refused) on its own terms.
+    fn record_audit(&self, operation: &str, filename: &str, archive_id: Option<String>, success: bool, detail: String) {
+        if let Some(dir) = &self.pool_dir {
+            let event = crate::audit::AuditEvent::new(operation, filename, archive_id, success, detail);
+            let _ = crate::audit::append(dir, &event);
+        }
     }
 
     /// Persists `pool`/`catalog`/the primer-index counter to `pool_dir`,
@@ -399,6 +424,26 @@ impl NucleOS {
     ///
     /// `redundancy`: number of RS parity strands (0 = no ECC).
     pub fn dna_write_with_codec(
+        &mut self,
+        filename: &str,
+        data: &[u8],
+        redundancy: usize,
+        codec_kind: CodecKind,
+    ) -> Result<WriteResult, String> {
+        let result = self.dna_write_with_codec_impl(filename, data, redundancy, codec_kind);
+        let archive_id = result.as_ref().ok().map(|r| r.file_id.clone());
+        let detail = match &result {
+            Ok(r) => format!(
+                "stored {} bytes across {} strands ({} data + {} parity)",
+                data.len(), r.total_strand_count, r.data_strand_count, r.parity_strand_count
+            ),
+            Err(e) => e.clone(),
+        };
+        self.record_audit("write", filename, archive_id, result.is_ok(), detail);
+        result
+    }
+
+    fn dna_write_with_codec_impl(
         &mut self,
         filename: &str,
         data: &[u8],
@@ -638,6 +683,21 @@ impl NucleOS {
     /// 4. **ECC**: RS decode to recover any missing strands
     /// 5. **Codec**: decode DNA → binary data
     pub fn dna_read(&mut self, filename: &str) -> Result<Vec<u8>, String> {
+        // Looked up before the real read so a failure (corruption, missing
+        // strands) still logs the archive_id the read was actually for --
+        // this lookup can't be affected by anything dna_read_impl does,
+        // since a read never removes or renames a catalog entry.
+        let archive_id = self.catalog.get_by_name(filename).map(|f| f.file_id.clone());
+        let result = self.dna_read_impl(filename);
+        let detail = match &result {
+            Ok(bytes) => format!("read {} bytes", bytes.len()),
+            Err(e) => e.clone(),
+        };
+        self.record_audit("read", filename, archive_id, result.is_ok(), detail);
+        result
+    }
+
+    fn dna_read_impl(&mut self, filename: &str) -> Result<Vec<u8>, String> {
         // ── Layer 5: VFS ── look up file
         // Cloned (not borrowed) so the catalog can be mutably re-borrowed
         // below to persist the recovery manifest onto this object's entry.
@@ -818,6 +878,20 @@ impl NucleOS {
 
     /// Delete a file from DNA storage. Removes strands, catalog entry, and search index.
     pub fn dna_delete(&mut self, filename: &str) -> Result<DeleteResult, String> {
+        // Looked up before the real delete: once dna_delete_impl succeeds,
+        // the catalog entry (and its file_id) is gone, so this is the only
+        // point the archive_id is still available to attach to the event.
+        let archive_id = self.catalog.get_by_name(filename).map(|f| f.file_id.clone());
+        let result = self.dna_delete_impl(filename);
+        let detail = match &result {
+            Ok(r) => format!("removed {} strands", r.strands_removed),
+            Err(e) => e.clone(),
+        };
+        self.record_audit("delete", filename, archive_id, result.is_ok(), detail);
+        result
+    }
+
+    fn dna_delete_impl(&mut self, filename: &str) -> Result<DeleteResult, String> {
         let dna_file = self.catalog.get_by_name(filename)
             .ok_or(format!("file '{}' not found", filename))?;
         let file_id = dna_file.file_id.clone();
@@ -1009,7 +1083,7 @@ mod tests {
         assert_eq!(recovered, data.to_vec());
     }
 
-    // ── Capacity limits (Step 7) ──
+    // ── Capacity limits ──
 
     #[test]
     fn unlimited_by_default_matches_todays_behavior() {
@@ -1079,7 +1153,87 @@ mod tests {
         assert!(os.dna_write("now_fine.bin", &vec![0u8; 5000], 2).is_ok());
     }
 
-    // ── Hierarchical, path-like names (Step 5) ──
+    // ── System-wide audit log ──
+
+    #[test]
+    fn an_ephemeral_new_instance_never_touched_a_pool_dir_logs_nothing() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("a.txt", b"data", 0).unwrap();
+        os.dna_read("a.txt").unwrap();
+        os.dna_delete("a.txt").unwrap();
+        // No pool_dir was ever set, so there's nowhere real to have logged
+        // to -- this just proves record_audit's no-op path doesn't panic
+        // or otherwise misbehave for the common in-memory-only case.
+    }
+
+    #[test]
+    fn a_successful_write_read_and_delete_each_append_one_event() {
+        let dir = scratch_pool_dir("audit_happy_path");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut os = NucleOS::open(&dir, 10).unwrap();
+        os.dna_write("a.txt", b"hello audit log", 0).unwrap();
+        os.dna_read("a.txt").unwrap();
+        os.dna_delete("a.txt").unwrap();
+
+        let events = crate::audit::read_events(&dir).unwrap();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].operation, "write");
+        assert!(events[0].success);
+        assert!(events[0].archive_id.is_some());
+        assert_eq!(events[1].operation, "read");
+        assert!(events[1].success);
+        assert_eq!(events[2].operation, "delete");
+        assert!(events[2].success);
+        // The delete event -- and its archive_id -- is the file's only
+        // remaining trace once the catalog entry itself is gone.
+        assert_eq!(events[2].archive_id, events[0].archive_id);
+        assert!(os.catalog.get_by_name("a.txt").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_operation_still_appends_an_event() {
+        let dir = scratch_pool_dir("audit_failure_path");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut os = NucleOS::open(&dir, 10).unwrap();
+        assert!(os.dna_read("does_not_exist.txt").is_err());
+
+        let events = crate::audit::read_events(&dir).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].operation, "read");
+        assert!(!events[0].success);
+        assert!(events[0].archive_id.is_none());
+        assert!(events[0].detail.contains("not found"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_migration_logs_as_a_read_delete_write_trail() {
+        let dir = scratch_pool_dir("audit_migration");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut os = NucleOS::open(&dir, 10).unwrap();
+        os.dna_write("m.txt", b"migrate me", 1).unwrap();
+        crate::migrate::migrate_object(&mut os, "m.txt", Some(3), None).unwrap();
+
+        let events = crate::audit::read_events(&dir).unwrap();
+        // 1 initial write, then migrate's own read + delete + write.
+        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events.iter().map(|e| e.operation.as_str()).collect::<Vec<_>>(),
+            vec!["write", "read", "delete", "write"]
+        );
+        assert!(events.iter().all(|e| e.success));
+        assert!(events.iter().all(|e| e.filename == "m.txt"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Hierarchical, path-like names ──
 
     #[test]
     fn same_leaf_name_under_different_path_prefixes_does_not_collide() {
@@ -1372,7 +1526,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // ── Optimistic concurrency (Step 6) ──
+    // ── Optimistic concurrency ──
 
     #[test]
     fn a_stale_persist_after_a_concurrent_write_is_rejected_not_silently_lost() {
@@ -1447,9 +1601,9 @@ mod tests {
     #[test]
     fn a_state_json_from_before_versioning_existed_still_loads() {
         // Backward compatibility: a state.json written by an earlier
-        // release (Step 4/5, before the version field existed) has no
-        // "version" key at all -- #[serde(default)] must make it load as
-        // version 0, not fail to parse.
+        // release (before the version field existed) has no "version" key
+        // at all -- #[serde(default)] must make it load as version 0, not
+        // fail to parse.
         let dir = scratch_pool_dir("pre_versioning");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

@@ -120,6 +120,14 @@ enum Commands {
         unlimited: bool,
     },
 
+    /// Show the pool's audit log -- every store/retrieve/delete event,
+    /// including failed ones, oldest first
+    Audit {
+        /// Only show the last N events (omit to show the whole log)
+        #[arg(long)]
+        tail: Option<usize>,
+    },
+
     /// Simulate synthesis/sequencing noise on data
     Simulate {
         /// Input file to simulate
@@ -343,6 +351,7 @@ fn main() {
         Commands::Pool => cmd_pool(&pool_dir, cli.json),
         Commands::List { prefix } => cmd_list(prefix.as_deref().unwrap_or(""), &pool_dir, cli.json),
         Commands::Capacity { max_nucleotides, unlimited } => cmd_capacity(max_nucleotides, unlimited, &pool_dir, cli.json),
+        Commands::Audit { tail } => cmd_audit(tail, &pool_dir, cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -691,6 +700,39 @@ fn cmd_capacity(max_nucleotides: Option<usize>, unlimited: bool, pool_dir: &std:
         match limit {
             Some(max) => println!("Capacity: {} / {} nucleotides used", used, max),
             None => println!("Capacity: {} nucleotides used (unlimited)", used),
+        }
+    }
+}
+
+fn cmd_audit(tail: Option<usize>, pool_dir: &std::path::Path, json: bool) {
+    let events = match nucle_vfs::audit::read_events(pool_dir) {
+        Ok(events) => events,
+        Err(e) => {
+            eprintln!("Failed to read audit log at '{}': {}", pool_dir.display(), e);
+            std::process::exit(1);
+        }
+    };
+
+    let shown: Vec<_> = match tail {
+        Some(n) => {
+            let start = events.len().saturating_sub(n);
+            events[start..].to_vec()
+        }
+        None => events,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&shown).unwrap());
+    } else if shown.is_empty() {
+        println!("No audit events recorded yet.");
+    } else {
+        for e in &shown {
+            let status = if e.success { "OK" } else { "FAILED" };
+            let archive = e.archive_id.as_deref().unwrap_or("-");
+            println!(
+                "  [{}] {:<6} {:<8} {} ({}) -- {}",
+                e.timestamp, status, e.operation, e.filename, archive, e.detail
+            );
         }
     }
 }
@@ -2045,6 +2087,7 @@ fn cmd_help() {
     println!("  nucle pool                                Show pool status");
     println!("  nucle list [prefix]                       List stored files, optionally by name prefix");
     println!("  nucle capacity [max] [--unlimited]        Show or set the pool's capacity limit");
+    println!("  nucle audit [--tail N]                     Show the pool's audit log");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");

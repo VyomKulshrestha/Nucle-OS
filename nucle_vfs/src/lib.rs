@@ -15,3 +15,4 @@ pub mod file;
 pub mod catalog;
 pub mod syscall;
 pub mod migrate;
+pub mod audit;
