@@ -111,6 +111,15 @@ enum Commands {
         prefix: Option<String>,
     },
 
+    /// Show or set the pool's capacity limit (in total nucleotides)
+    Capacity {
+        /// New capacity limit to set. Omit to just show the current limit and usage.
+        max_nucleotides: Option<usize>,
+        /// Clear the capacity limit (unlimited growth) -- takes precedence over max_nucleotides
+        #[arg(long)]
+        unlimited: bool,
+    },
+
     /// Simulate synthesis/sequencing noise on data
     Simulate {
         /// Input file to simulate
@@ -333,6 +342,7 @@ fn main() {
         Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, cli.json),
         Commands::Pool => cmd_pool(&pool_dir, cli.json),
         Commands::List { prefix } => cmd_list(prefix.as_deref().unwrap_or(""), &pool_dir, cli.json),
+        Commands::Capacity { max_nucleotides, unlimited } => cmd_capacity(max_nucleotides, unlimited, &pool_dir, cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -652,6 +662,35 @@ fn cmd_list(prefix: &str, pool_dir: &std::path::Path, json: bool) {
                 "  {} ({} B, {}d+{}p strands, {:.1}×)",
                 f.filename, f.size, f.data_strands, f.parity_strands, f.redundancy
             );
+        }
+    }
+}
+
+fn cmd_capacity(max_nucleotides: Option<usize>, unlimited: bool, pool_dir: &std::path::Path, json: bool) {
+    let mut os = open_pool(pool_dir);
+
+    // Any explicit setting request (either --unlimited or a value)
+    // persists the new configuration; omitting both just reports status.
+    if unlimited {
+        os.set_max_nucleotides(None);
+        persist_pool(&mut os, pool_dir);
+    } else if let Some(max) = max_nucleotides {
+        os.set_max_nucleotides(Some(max));
+        persist_pool(&mut os, pool_dir);
+    }
+
+    let used = os.dna_stat().total_nucleotides;
+    let limit = os.max_nucleotides();
+    if json {
+        let json_val = serde_json::json!({
+            "max_nucleotides": limit,
+            "used_nucleotides": used,
+        });
+        println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
+    } else {
+        match limit {
+            Some(max) => println!("Capacity: {} / {} nucleotides used", used, max),
+            None => println!("Capacity: {} nucleotides used (unlimited)", used),
         }
     }
 }
@@ -2005,6 +2044,7 @@ fn cmd_help() {
     println!("  nucle search <query> [-k top_k]           Search for files");
     println!("  nucle pool                                Show pool status");
     println!("  nucle list [prefix]                       List stored files, optionally by name prefix");
+    println!("  nucle capacity [max] [--unlimited]        Show or set the pool's capacity limit");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");

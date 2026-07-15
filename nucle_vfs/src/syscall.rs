@@ -126,6 +126,12 @@ const LOCK_FILE_NAME: &str = ".lock";
 /// `version` is an optimistic-concurrency counter, incremented on every
 /// successful `persist()` -- see `NucleOS::persist`'s doc comment for what
 /// it protects against.
+///
+/// `max_nucleotides` is a pool-level setting (see `NucleOS::
+/// set_max_nucleotides`), not a per-invocation flag, so it has to persist
+/// alongside the data it limits -- otherwise a `--max-pool-size` given on
+/// one `nucle store` call would silently stop applying the moment a later,
+/// unrelated command opened the same pool without repeating it.
 #[derive(Serialize, Deserialize)]
 struct PersistedState {
     #[serde(default)]
@@ -133,6 +139,8 @@ struct PersistedState {
     pool: DnaPool,
     catalog: Catalog,
     primers_used: usize,
+    #[serde(default)]
+    max_nucleotides: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +177,10 @@ pub struct NucleOS {
     /// 0 for an instance that's never touched a pool directory. Used by
     /// `persist()`'s optimistic-concurrency check; irrelevant otherwise.
     loaded_version: u64,
+    /// Maximum total nucleotides this pool may hold, or `None` for
+    /// unlimited (today's behavior, unchanged unless explicitly set via
+    /// `set_max_nucleotides`). Checked in `dna_write_with_codec`.
+    max_nucleotides: Option<usize>,
 }
 
 impl NucleOS {
@@ -188,6 +200,7 @@ impl NucleOS {
             noise_config: SimulationConfig::pristine(),
             primers_used: 0,
             loaded_version: 0,
+            max_nucleotides: None,
         }
     }
 
@@ -207,6 +220,20 @@ impl NucleOS {
     pub fn with_crispr(mut self, config: CrisprConfig) -> Self {
         self.crispr = CrisprSimulator::new(config);
         self
+    }
+
+    /// The pool's configured capacity limit in total nucleotides, or
+    /// `None` for unlimited.
+    pub fn max_nucleotides(&self) -> Option<usize> {
+        self.max_nucleotides
+    }
+
+    /// Sets (or, with `None`, clears) this pool's capacity limit. This is
+    /// pool-level configuration, not a per-write setting -- call
+    /// `persist()` afterward for it to actually stick and apply to later
+    /// invocations against the same `pool_dir`.
+    pub fn set_max_nucleotides(&mut self, max_nucleotides: Option<usize>) {
+        self.max_nucleotides = max_nucleotides;
     }
 
     // -----------------------------------------------------------------------
@@ -260,6 +287,7 @@ impl NucleOS {
             noise_config: SimulationConfig::pristine(),
             primers_used: persisted.primers_used,
             loaded_version: persisted.version,
+            max_nucleotides: persisted.max_nucleotides,
         })
     }
 
@@ -328,6 +356,7 @@ impl NucleOS {
             pool: self.pool.clone(),
             catalog: self.catalog.clone(),
             primers_used: self.primers_used,
+            max_nucleotides: self.max_nucleotides,
         };
         let json = serde_json::to_string_pretty(&persisted)
             .map_err(|e| format!("failed to serialize pool state: {}", e))?;
@@ -476,6 +505,28 @@ impl NucleOS {
         id_hasher.update(&created_at.to_be_bytes());
         let id_hash = id_hasher.finalize();
         let file_id = format!("archive-{}", &id_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>()[..16]);
+
+        // ── Capacity check ── refuse before touching the pool at all if a
+        // limit is set and this file's real, final strand set (post-codec,
+        // post-ECC, post-noise-simulation -- the exact nucleotide count
+        // that would actually be stored) would exceed it. Checked here
+        // rather than against an upfront estimate from `data.len()`: the
+        // codec/ECC/noise work above is pure, in-memory, and has no effect
+        // on the persisted pool by itself, so there's no real cost to
+        // computing the exact figure first -- only the actual insertion
+        // below is the thing capacity is protecting.
+        if let Some(max) = self.max_nucleotides {
+            let incoming: usize = final_data.iter().map(|s| s.len()).sum::<usize>()
+                + final_parity.iter().map(|s| s.len()).sum::<usize>();
+            let used = self.pool.total_nucleotides();
+            if used + incoming > max {
+                return Err(format!(
+                    "pool capacity exceeded: storing '{}' needs {} more nucleotides, \
+                     but only {} of {} remain ({} already used)",
+                    filename, incoming, max.saturating_sub(used), max, used
+                ));
+            }
+        }
 
         // ── Layer 5: VFS ── store in pool
         for (i, (strand, &source_index)) in final_data.iter().zip(final_data_sources.iter()).enumerate() {
@@ -956,6 +1007,76 @@ mod tests {
 
         let recovered = os.dna_read("ecc.txt").unwrap();
         assert_eq!(recovered, data.to_vec());
+    }
+
+    // ── Capacity limits (Step 7) ──
+
+    #[test]
+    fn unlimited_by_default_matches_todays_behavior() {
+        let mut os = NucleOS::new(10);
+        assert_eq!(os.max_nucleotides(), None);
+        // A reasonably large write still succeeds with no limit configured.
+        assert!(os.dna_write("big.bin", &vec![0u8; 5000], 2).is_ok());
+    }
+
+    #[test]
+    fn a_write_that_would_exceed_capacity_is_refused_before_touching_the_pool() {
+        let mut os = NucleOS::new(10);
+        os.set_max_nucleotides(Some(100));
+        let before = os.pool.total_nucleotides();
+
+        let result = os.dna_write("too_big.bin", &vec![0u8; 5000], 2);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("capacity exceeded"));
+
+        // Nothing was added to the pool, and no catalog entry exists --
+        // the refusal must be all-or-nothing, not a partial write.
+        assert_eq!(os.pool.total_nucleotides(), before);
+        assert!(os.catalog.get_by_name("too_big.bin").is_none());
+    }
+
+    #[test]
+    fn a_write_that_fits_within_capacity_still_succeeds() {
+        let mut os = NucleOS::new(10);
+        // Establish real headroom by measuring one write's actual cost, so
+        // this test doesn't hardcode a nucleotide count that could drift
+        // if the codec's own encoding ratio ever changes.
+        let mut probe = NucleOS::new(10);
+        probe.dna_write("probe.bin", b"small file", 1).unwrap();
+        let one_files_nucleotides = probe.pool.total_nucleotides();
+
+        os.set_max_nucleotides(Some(one_files_nucleotides * 3));
+        assert!(os.dna_write("fits.bin", b"small file", 1).is_ok());
+    }
+
+    #[test]
+    fn set_max_nucleotides_persists_and_is_enforced_after_reopening() {
+        let dir = scratch_pool_dir("capacity_persists");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            let mut os = NucleOS::open(&dir, 10).unwrap();
+            os.set_max_nucleotides(Some(50));
+            os.persist(&dir).unwrap();
+        }
+
+        let mut reopened = NucleOS::open(&dir, 10).unwrap();
+        assert_eq!(reopened.max_nucleotides(), Some(50));
+        let result = reopened.dna_write("too_big.bin", &vec![0u8; 5000], 2);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("capacity exceeded"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_the_capacity_limit_removes_the_restriction() {
+        let mut os = NucleOS::new(10);
+        os.set_max_nucleotides(Some(1));
+        assert!(os.dna_write("blocked.bin", &vec![0u8; 5000], 2).is_err());
+
+        os.set_max_nucleotides(None);
+        assert!(os.dna_write("now_fine.bin", &vec![0u8; 5000], 2).is_ok());
     }
 
     // ── Hierarchical, path-like names (Step 5) ──
