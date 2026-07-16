@@ -47,6 +47,14 @@ struct Cli {
     #[arg(long, global = true)]
     pool_key: Option<String>,
 
+    /// Scope every command to a named tenant's own, fully isolated pool
+    /// (a subdirectory of the resolved pool directory). Defaults to
+    /// NUCLEOS_TENANT if set. Omit for today's single-tenant behavior,
+    /// unchanged. An explicit identifier, not tied to the OS user --
+    /// see `nucle tenants` to list which tenants already have data.
+    #[arg(long, global = true)]
+    tenant: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -184,6 +192,13 @@ enum Commands {
         #[arg(long, default_value = "127.0.0.1")]
         bind: String,
     },
+
+    /// List tenants that already have data under the resolved pool
+    /// directory (i.e. subdirectories of its `tenants/` folder). Ignores
+    /// --tenant/NUCLEOS_TENANT itself, since this command's job is to
+    /// enumerate tenants, not operate inside one.
+    #[command(name = "tenants")]
+    Tenants,
 
     /// Simulate synthesis/sequencing noise on data
     Simulate {
@@ -396,7 +411,14 @@ enum HardwareSubcommand {
 
 fn main() {
     let cli = Cli::parse();
-    let pool_dir = resolve_pool_dir(cli.pool_dir.as_deref());
+    let tenant = resolve_tenant(cli.tenant.as_deref());
+    if let Some(t) = &tenant {
+        if let Err(e) = validate_tenant_name(t) {
+            eprintln!("Invalid --tenant/NUCLEOS_TENANT value: {}", e);
+            std::process::exit(1);
+        }
+    }
+    let pool_dir = resolve_pool_dir(cli.pool_dir.as_deref(), tenant.as_deref());
     let passphrase = resolve_passphrase(cli.pool_key.as_deref());
 
     match cli.command {
@@ -415,6 +437,7 @@ fn main() {
         Commands::DecryptPool => cmd_decrypt_pool(&pool_dir, passphrase.as_deref(), cli.json),
         Commands::Scan { prefix } => cmd_scan(prefix.as_deref().unwrap_or(""), &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Serve { port, bind } => cmd_serve(&bind, port, &pool_dir, passphrase.as_deref()),
+        Commands::Tenants => cmd_tenants(&resolve_base_pool_dir(cli.pool_dir.as_deref()), cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -538,12 +561,13 @@ fn cmd_decode(file: &str, output: Option<&str>, size: usize) {
     }
 }
 
-/// Resolves where a pool's durable state lives, in priority order: an
-/// explicit `--pool-dir` flag, then `NUCLEOS_POOL_DIR`, then a
-/// project-local `.nucleos/` directory next to wherever the command runs
-/// (created on first use, mirroring `.git/`) -- see `NucleOS::open`/
-/// `persist` for what actually gets written there.
-fn resolve_pool_dir(explicit: Option<&str>) -> std::path::PathBuf {
+/// Resolves the *base* pool directory, in priority order: an explicit
+/// `--pool-dir` flag, then `NUCLEOS_POOL_DIR`, then a project-local
+/// `.nucleos/` directory next to wherever the command runs (created on
+/// first use, mirroring `.git/`). This is the untenanted root -- see
+/// `resolve_pool_dir` for the tenant-aware path every command actually
+/// uses, and `NucleOS::open`/`persist` for what gets written there.
+fn resolve_base_pool_dir(explicit: Option<&str>) -> std::path::PathBuf {
     if let Some(path) = explicit {
         return std::path::PathBuf::from(path);
     }
@@ -551,6 +575,47 @@ fn resolve_pool_dir(explicit: Option<&str>) -> std::path::PathBuf {
         return std::path::PathBuf::from(path);
     }
     std::path::PathBuf::from(".nucleos")
+}
+
+/// Resolves the pool directory a command actually operates against:
+/// `resolve_base_pool_dir`, with `tenants/<tenant>` appended when a
+/// tenant is given. `None` (the default) is byte-for-byte today's
+/// pre-tenancy behavior -- every existing pool keeps working exactly as
+/// before, unchanged, for anyone who never passes `--tenant`. Each
+/// tenant's subdirectory is a wholly independent pool (its own
+/// `state.json`/`audit.log`/`key.json`/`config.json`) -- real isolation
+/// via separate storage, not row-level filtering over one shared pool,
+/// so there's nothing for a filtering bug to leak across tenants with.
+fn resolve_pool_dir(explicit: Option<&str>, tenant: Option<&str>) -> std::path::PathBuf {
+    let base = resolve_base_pool_dir(explicit);
+    match tenant {
+        Some(t) => base.join("tenants").join(t),
+        None => base,
+    }
+}
+
+/// Resolves the tenant to scope every command to, in priority order: an
+/// explicit `--tenant` flag, then `NUCLEOS_TENANT`. `None` (the default)
+/// means today's single-tenant behavior.
+fn resolve_tenant(explicit: Option<&str>) -> Option<String> {
+    explicit.map(|s| s.to_string()).or_else(|| std::env::var("NUCLEOS_TENANT").ok())
+}
+
+/// Rejects a tenant name that would escape `tenants/<name>` as a literal
+/// path segment (a path separator, or `.`/`..`) or that's simply empty --
+/// this becomes a real directory component, so a careless value here is
+/// a path-traversal footgun, not just a cosmetic concern.
+fn validate_tenant_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("tenant name cannot be empty".to_string());
+    }
+    if name == "." || name == ".." {
+        return Err(format!("'{}' is not a valid tenant name", name));
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err("tenant name cannot contain a path separator".to_string());
+    }
+    Ok(())
 }
 
 /// Resolves the passphrase for an encrypted pool, in priority order: an
@@ -979,6 +1044,34 @@ fn metrics_response(
         }
         "/" => tiny_http::Response::from_string("NucleOS metrics exporter -- see /metrics\n"),
         _ => tiny_http::Response::from_string("Not Found\n").with_status_code(404),
+    }
+}
+
+/// Lists tenant names under `base_pool_dir/tenants/` -- the *untenanted*
+/// base directory, not whatever `--tenant` resolved to, since this
+/// command's whole job is enumerating tenants rather than operating
+/// inside one. A `tenants/` directory that doesn't exist yet just means
+/// zero tenants so far, not an error.
+fn cmd_tenants(base_pool_dir: &std::path::Path, json: bool) {
+    let tenants_dir = base_pool_dir.join("tenants");
+    let mut names: Vec<String> = match std::fs::read_dir(&tenants_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    names.sort();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&names).unwrap());
+    } else if names.is_empty() {
+        println!("No tenants found under '{}'.", tenants_dir.display());
+    } else {
+        for name in &names {
+            println!("  {}", name);
+        }
     }
 }
 
@@ -2365,6 +2458,8 @@ fn cmd_help() {
     println!("  nucle decrypt-pool                        Disable encryption at rest (needs --pool-key)");
     println!("  nucle scan [prefix]                       Proactively scan for silent corruption");
     println!("  nucle serve [--port N] [--bind ADDR]      Serve Prometheus metrics at /metrics");
+    println!("  nucle tenants                              List tenants with existing data");
+    println!("  (global) --tenant <name>                  Scope any command to an isolated tenant pool");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");
