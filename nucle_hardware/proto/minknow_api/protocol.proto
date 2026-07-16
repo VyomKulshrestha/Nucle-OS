@@ -1,0 +1,1708 @@
+syntax="proto3";
+
+package minknow_api.protocol;
+
+option java_package = "com.nanoporetech.minknow_api";
+option objc_class_prefix = "MKAPI";
+option go_package ="github.com/nanoporetech/minknow_api/go/gen/protocol";
+
+import "minknow_api/acquisition.proto";
+import "minknow_api/analysis_workflows.proto";
+import "minknow_api/basecaller.proto";
+import "minknow_api/device.proto";
+import "minknow_api/protocol_settings.proto";
+import "minknow_api/rpc_options.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+service ProtocolService {
+    // Initiates a python instance that runs the script specified by the `path` argument.
+    // `list_protocols` will give back a list of protocol scripts that can be started by this call
+    rpc start_protocol (StartProtocolRequest) returns (StartProtocolResponse) {}
+
+    // Stop a running protocol
+    //
+    // If `protocol_run_id` is supplied, stops that protocol if it is currently running.
+    // Otherwise, if no `protocol_run_id` is supplied, stops the protocol that is currently in
+    // progress.
+    //
+    // The call will fail with `INVALID_ARGUMENT` if:
+    //	- An invalid `protocol_run_id` is supplied (i.e. one which does not exist on the current
+    //    position)
+    //
+    // The call will fail with `FAILED_PRECONDITION` if:
+    //	- There is no protocol in progress
+    //	- A valid `protocol_run_id` is supplied that does not match the `protocol_run_id` of the
+    //    protocol in progress.
+    //
+    rpc stop_protocol (StopProtocolRequest) returns (StopProtocolResponse) {}
+
+    // Request the protocol to pause.
+    //
+    // This will return an error unless the ProtocolRunInfo has the `can_pause` field set to true.
+    // It will have no effect if the protocol is already paused or pausing.
+    //
+    // If `protocol_run_id` is supplied, pauses that protocol if it is currently running.
+    // Otherwise, if no `protocol_run_id` is supplied, pauses the protocol that is currently in
+    // progress.
+    //
+    // The call will fail with `INVALID_ARGUMENT` if:
+    //	- An invalid `protocol_run_id` is supplied (i.e. one which does not exist on the current
+    //    position)
+    //
+    // The call will fail with `FAILED_PRECONDITION` if:
+    //	- There is no protocol in progress
+    //	- A valid `protocol_run_id` is supplied that does not match the `protocol_run_id` of the
+    //    protocol in progress.
+    //
+    // Since 4.4.
+    rpc pause_protocol (PauseProtocolRequest) returns (PauseProtocolResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // Request the protocol to resume.
+    //
+    // This will return an error unless the ProtocolRunInfo has the `can_pause` field set to true.
+    // It will have no effect if the protocol is not paused or pausing.
+    //
+    // If `protocol_run_id` is supplied, resumes that protocol if it is currently running.
+    // Otherwise, if no `protocol_run_id` is supplied, resumes the protocol that is currently in
+    // progress.
+    //
+    // The call will fail with `INVALID_ARGUMENT` if:
+    //	- An invalid `protocol_run_id` is supplied (i.e. one which does not exist on the current
+    //    position)
+    //
+    // The call will fail with `FAILED_PRECONDITION` if:
+    //	- There is no protocol in progress
+    //	- A valid `protocol_run_id` is supplied that does not match the `protocol_run_id` of the
+    //    protocol in progress.
+    //
+    // Since 4.4.
+    rpc resume_protocol (ResumeProtocolRequest) returns (ResumeProtocolResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // Request the protocol to perform a mux scan.
+    //
+    // This will return an error unless the ProtocolRunInfo has the `can_trigger_mux_scan` field set
+    // to true. It will have no effect if the protocol is already running or preparing for a mux
+    // scan.
+    //
+    // Since 4.4.
+    rpc trigger_mux_scan (TriggerMuxScanRequest) returns (TriggerMuxScanResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // Wait for a protocol run to finish.
+    //
+    // The call blocks until the run with the given run ID has finished (or returns immediately if
+    // it had already finished) and returns information about the protocol run.
+    //
+    // If no run has been started with the provided run ID (or no run ID is given), an error is
+    // returned.
+    //
+    // If NOTIFY_BEFORE_TERMINATION is specified for state, the protocol end time is an estimate, including
+    // the allowed timeout.
+    //
+    // Since 1.10
+    rpc wait_for_finished (WaitForFinishedRequest) returns (ProtocolRunInfo) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Gets information about a protocol run.
+    //
+    // If no run ID is provided, information about the most recently started protocol run is
+    // provided.
+    //
+    // Since 1.10
+    rpc get_run_info (GetRunInfoRequest) returns (ProtocolRunInfo) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // List previously started protocol run ids (including any current protocol), in order of starting.
+    //
+    // The returned object can be used to find protocol information with get_run_info.
+    //
+    // Since 1.11
+    rpc list_protocol_runs (ListProtocolRunsRequest) returns (ListProtocolRunsResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Returns the name and run id of the currently running protocol.
+    //
+    // Will fail with FAILED_PRECONDITION if there is no protocol running
+    //
+    // Since 1.11
+    rpc get_current_protocol_run (GetCurrentProtocolRunRequest) returns (ProtocolRunInfo) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Returns current protocol run info and streams any changes to the current protocol
+    //
+    // This call can be made even if there is no current protocol running. In this case, the next streamed
+    // response will be the start of a new protocol instance and you will receive updates for that protocol
+    // until it finishes
+    //
+    // If a protocol finishes this stream will still continue to run and you will be notified when a new protocol starts
+    //
+    // Since 1.12
+    rpc watch_current_protocol_run (WatchCurrentProtocolRunRequest) returns (stream ProtocolRunInfo) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Gives back a list that contains info about each possible protocol script minknow is aware of.
+    // This will most likely be used to retrieve a suitable protocol script that can be passed on to `start_protocol`
+    //
+    // Since 1.10
+    rpc list_protocols (ListProtocolsRequest) returns (ListProtocolsResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // Returns string-to-string map of the context tags
+    //
+    // Since 1.11
+    rpc get_context_info (GetContextInfoRequest) returns (GetContextInfoResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Store context tags as arbitrary string-to-string map
+    //
+    // Since 1.11
+    rpc set_context_info (SetContextInfoRequest) returns (SetContextInfoResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // Value set by protocol scripts to define the purpose of the script. Gets this value
+    //
+    // Since 1.11
+    rpc get_protocol_purpose (GetProtocolPurposeRequest) returns (GetProtocolPurposeResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Sets the protocol purpose. See also get_protocol_purpose
+    //
+    // Since 1.11
+    rpc set_protocol_purpose (SetProtocolPurposeRequest) returns (SetProtocolPurposeResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // List all used protocol group ids used in any previous protocol on the box.
+    //
+    // Since 3.2
+    rpc list_protocol_group_ids(ListProtocolGroupIdsRequest) returns (ListProtocolGroupIdsResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Run a hardware check on the connected flow cell.
+    //
+    // Throws an error if there is no flow cell connected.
+    //
+    // Since 4.3
+    rpc begin_hardware_check(BeginHardwareCheckRequest) returns (BeginHardwareCheckResponse) {
+        option (experimental) = true;
+    }
+
+    // Run platform qc on the connected flow cell
+    //
+    // Throws an error if there is no flow cell connected.
+    //
+    // Since 4.3
+    rpc begin_platform_qc(BeginPlatformQcRequest) returns (BeginPlatformQcResponse) {
+        option (experimental) = true;
+    }
+
+    // Run protocol on the connected flow cell
+    //
+    // The protocol must be described by a toml file. The request identifies the
+    // protocol and supplies overrides to the default protocol-settings described
+    // in the toml file, in addition it provides user-info for the experiment.
+    //
+    // Throws an error if there is no flow cell connected.
+    //
+    // Since 5.0
+    rpc begin_protocol(BeginProtocolRequest) returns (BeginProtocolResponse) {
+        option (experimental) = true;
+    }
+
+    rpc set_platform_qc_result(SetPlatformQcResultRequest) returns (SetPlatformQcResultResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // Set the hardware check result
+    //
+    // Should be called to set the status to `Started` at the start of any hardware check script
+    // Should be called again to set the final status when a hardware check script finishes
+    //
+    // If a script finishes, and the hardware check status is `Started`, then MinKNOW will set the
+    // status to `Failed: ScriptError`.  (The hardware check script should have updated the status
+    // when the hardware check finished; failure to do so indicates that the script failed).
+    //
+    // The call will fail with `INVALID_ARGUMENT` if:
+    // - HardwareCheckStatus is NOT `Failed`, and `HardwareCheckFailureReason` is NOT `NoError`
+    // - HardwareCheckStatus is `Failed` and `HardwareCheckFailureReason` is `NoError`
+    // - HardwareCheckStatus is not a valid value (None, Started, Succeeded or Failed)
+    // - The supplied `protocol_run_id` does not correspond to an existing protocol
+    //
+    // The call will fail with `FAILED_PRECONDITION` if:
+    // - The supplied `protocol_run_id` does not correspond to an in-progress protocol
+    // - Hardware check status are not moved through in order:
+    //      None -> Started -> Succeeded/Failed
+    //
+    rpc set_hardware_check_result(SetHardwareCheckResultRequest) returns (SetHardwareCheckResultResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // Associated a post processing analysis process, and schedule it to run once the protocol is complete.
+    //
+    // If the protocol is already complete, the post processing analysis is executed immediately.
+    //
+    // Since 4.4
+    rpc associate_post_processing_analysis_for_protocol(AssociatePostProcessingAnalysisRequest) returns (AssociatePostProcessingAnalysisResponse) {}
+
+    // Clears history data for specified protocol(s)
+    //
+    // History data includes protocol protocol info, acquisition info and statistics.
+    //
+    // Also clears any persistence data that has been written to disk for those protocols -- this
+    // data will not be available after a restart.
+    //
+    // Does NOT clear experiment results (POD5, fastq, sequencing_summary, etc)
+    //
+    // Since 4.4
+    //
+    rpc clear_protocol_history_data(ClearProtocolHistoryDataRequest) returns (ClearProtocolHistoryDataResponse) {}
+
+    // This RPC should only be used by the protocol script.
+    //
+    // The protocol script can call this to opt in to protocol phase management. It can report the
+    // phase it is currently in, and handle requests to change phase.
+    //
+    // Only one call to this RPC is possible at once. Ending the call will reset the phase to
+    // PHASE_UNKNOWN and clear any set capabilities.
+    //
+    // Since 4.4.
+    rpc protocol_phase_management (stream ProtocolPhaseManagementRequest)
+                          returns (stream ProtocolPhaseManagementResponse) {}
+
+    // Generate a run report and return the report data.
+    //
+    // If the protocol selected for report generation is already complete the report is a completed report, otherwise
+    // the report will be from the in progress protocol.
+    //
+    // Since 5.0
+    rpc generate_run_report(GenerateRunReportRequest) returns (stream GenerateRunReportResponse) {
+        option idempotency_level = IDEMPOTENT;
+    }
+
+    // Inform listeners of this rpc when historic protocol/acquisition data is being cleared.
+    //
+    // Since 6.7
+    rpc watch_clearing_historic_data(WatchClearingHistoricDataRequest) returns (stream ClearedHistoricData) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Flag that the current protocol can be restarted from this point onwards.
+    //
+    // This state can be queried in the ProtocolRunInfo. This API is only valid to call while the sequencing script is running.
+    //
+    // Since 6.7.
+    rpc set_protocol_script_restartable(SetProtocolRestartableRequest) returns (SetProtocolRestartableResponse) {}
+
+}
+
+message BarcodeUserData {
+    // Linting ignored for historical reasons.
+    // buf:lint:ignore ENUM_VALUE_UPPER_SNAKE_CASE
+    enum SampleType {
+        // The barcode sample is a real sample being tested.
+        test_sample = 0;
+
+        // The barcode sample is a control which is expected to result in positive identification.
+        positive_control = 1;
+
+        // The barcode sample is a control which is expected to result in negative identification.
+        negative_control = 2;
+
+        // Intended to show that a result has not occurred due to contamination.
+        no_template_control = 3;
+
+        // Separate positive controls for when kits expect 2.
+        positive_control_1 = 4;
+
+        // Separate positive controls for when kits expect 2.
+        positive_control_2 = 5;
+    }
+
+    // Barcode name the user data applies to, eg: "barcode02".
+    //
+    // Acts as the external barcode name `barcode_name_internal` is
+    // also set for dual barcoding
+    string barcode_name = 1 [(may_contain_user_data) = false];
+
+    // The internal barcode name if using dual barcode
+    string barcode_name_internal = 5 [(may_contain_user_data) = false];
+
+    // Lamp barcode id the user data applies to, eg: "FIP04"
+    //
+    // DEPRECATED 6.0: Lamp support has been removed and this value will always be empty.
+    string lamp_barcode_id = 2 [(may_contain_user_data) = false];
+
+    // User defined string alias for the barcode.
+    string alias = 3 [(may_contain_user_data) = true];
+
+    // Sample type grouping for the barcode.
+    SampleType type = 4;
+
+    // Extra context per barcode
+    map<string, string> passenger_info = 6 [(may_contain_user_data) = true];
+}
+
+message KitInfo {
+    // The sequencing kit used to select the protocol e.g. "SQK-LSK108"
+    string sequencing_kit = 1 [(may_contain_user_data) = false];
+
+    // The expansion barcoding kits that the protocol supports e.g. "EXP-NBD104"
+    repeated string barcode_expansion_kits = 2 [(may_contain_user_data) = false];
+}
+
+message ProtocolRunUserInfo {
+    // The group which the experiment should be held in.
+    //
+    // note: This value could be unset if a user did not specify a group_id when starting the protocol.
+    google.protobuf.StringValue protocol_group_id = 1 [(may_contain_user_data) = true];
+
+    // sample_id created by the user
+    google.protobuf.StringValue sample_id = 2 [(may_contain_user_data) = true];
+
+    // Ordinarily, data is split into separate top-level per-protocol directories
+    //
+    // If `pool_output` is set to true, the splitting into per-protocol directories happens
+    // at the bottom level instead.  This in turn means that the output files for protocols with
+    // the same `protocol_group_id` and `sample_id` are stored next to each other, in
+    // subdirectories under the output type directory
+    //
+    // (The precise configuration is controlled by the `protocol_output_pattern` and
+    // `pooled_protocol_output_pattern` user configuration values)
+    //
+    bool pool_output = 7;
+
+    // User supplied info for barcodes
+    repeated BarcodeUserData barcode_user_info = 3;
+
+    // user_specified_flow_cell_id created by the user
+    google.protobuf.StringValue user_specified_flow_cell_id = 4 [(may_contain_user_data) = true];
+
+    // user_specified_product_code created by the user
+    google.protobuf.StringValue user_specified_product_code = 5 [(may_contain_user_data) = true];
+
+    // Kit information the user requested
+    KitInfo kit_info = 6;
+}
+
+message OffloadLocationInfo {
+    // Data offload locations to use to store protocol data, specified using their `location_id`.
+    //
+    // Valid `location_id`s can be retrieved using mooneye.offload_manager.list_offload_locations()
+    //
+    // If any `offload_location_ids` are specified, then:
+    //   - Data is not stored locally
+    //   - `offload_location_path` must NOT be set (or must be set to an empty value)
+    //      - The `offload_location_ids` indicate that data should be offloaded, rather than
+    //        stored locally; the `offload_location_path` is used to set a local storage location.
+    //      - If both are set, an error is returned
+    //
+    // This requires a running instance of Mooneye
+    //
+    // Since 5.0.
+    repeated string offload_location_ids = 1;
+
+    // Local, e.g., internal / external drive, paths to where the protocol output will be stored.
+    //
+    // This setting overrides the default output locations (as set through configuration files
+    // and/or the instance service).
+    //
+    // If `offload_location_path` is set to a non-empty value, then:
+    //  -  `offload_location_ids` MUST be empty
+    //      - The `offload_location_ids` indicate that data should be offloaded, rather than
+    //        stored locally; the `offload_location_path` is used to set a local storage location.
+    //      - If both are set, an error is returned
+    //
+    // This does not require a running instance of Mooneye
+    //
+    // Since 5.0
+    string offload_location_path = 2;
+}
+
+message StartProtocolRequest {
+    reserved 6; // passenger_info
+
+    // The identifier of the protocol, as provided by list_protocols().
+    string identifier = 1 [(rpc_required) = true];
+
+    // The arguments to pass to the protocol.
+    repeated string args = 2;
+
+    // User input describing the protocol.
+    ProtocolRunUserInfo user_info = 3;
+
+    // Information about data offload locations to use to store data
+    //
+    // Since 5.0.
+    OffloadLocationInfo offload_location_info = 4;
+
+    // Initial Target Run-Until Criteria to use when starting an acquisition for this protocol.
+    // These can be updated during the acquisition using the Run-Until API.
+    //
+    // Since 5.3
+    acquisition.TargetRunUntilCriteria target_run_until_criteria = 5;
+
+    // Workflow request that should be started when the protocol is started
+    analysis_workflows.AnalysisWorkflowRequest analysis_workflow_request = 7;
+}
+
+message StartProtocolResponse {
+    // UUID generated when the protocol is started, to uniquely represent this protocol instance
+    string run_id = 1;
+}
+
+message StopProtocolRequest {
+	// The protocol run id of the protocol to stop
+	//
+	// If empty, stops the currently running protocol (if any)
+	// Otherwise, stops the specified protocol if it is currently in progress
+	//
+	// Since 6.4
+	string protocol_run_id = 2;
+
+    // Specify how any running acquisition should
+    // be handled when stopping the protocol.
+    //
+    // Protocol state will enter PROTOCOL_WAITING_FOR_ACQUISITION whilst any running
+    // acquisition is finished.
+    //
+    // If a script ends on its own any analysis that was started is stopped, and it
+    // is allowed to catchup. If the caller wants to end catchup they can call stop_protocol
+    // to end catchup.
+    //
+    // Since 1.15
+    acquisition.StopRequest.DataAction data_action_on_stop = 1;
+}
+
+message StopProtocolResponse {
+}
+
+message PauseProtocolRequest {
+    // The protocol run id of the protocol to pause
+	//
+	// If empty, pause the currently running protocol (if any)
+	// Otherwise, pauses the specified protocol if it is currently in progress
+	//
+	// Since 6.4
+	string protocol_run_id = 1;
+}
+message PauseProtocolResponse {
+}
+message ResumeProtocolRequest {
+    // The protocol run id of the protocol to resume
+	//
+	// If empty, resumes the currently running protocol (if any)
+	// Otherwise, resumes the specified protocol if it is currently in progress
+	//
+	// Since 6.4
+	string protocol_run_id = 1;
+}
+message ResumeProtocolResponse {
+}
+message TriggerMuxScanRequest {
+}
+message TriggerMuxScanResponse {
+}
+
+message ListProtocolsRequest {
+    // If this is false, then will try to use the cached value of the protocol list where possible
+    // (still subject to changes in flow cell).
+    // If this is true, then will force a reload of the protocol list
+    //
+    // Defaults to false
+    bool force_reload = 1;
+}
+
+message ProtocolInfo {
+    message TagValue {
+        oneof tag_value {
+            string string_value = 1 [(may_contain_user_data) = true];
+            bool bool_value = 2;
+            int64 int_value = 3;
+            double double_value = 4;
+            string array_value = 5;
+            string object_value = 6;
+        }
+    }
+    message TagExtractionResult {
+        bool success = 1;
+        string error_report = 2 [(may_contain_user_data) = false];
+    }
+
+    string identifier = 1 [(may_contain_user_data) = true];
+    map<string,TagValue> tags = 2 [(may_contain_user_data) = true];
+    string name = 3 [(may_contain_user_data) = true];
+    TagExtractionResult tag_extraction_result = 4;
+}
+
+message ListProtocolsResponse {
+    repeated ProtocolInfo protocols = 1;
+}
+
+message WaitForFinishedRequest {
+    enum NotificationState {
+        // Request return just after the protocol has terminated, including any acquisition periods completing, as
+        // well as any analysis workflow scheduled to run after acquisition.
+        NOTIFY_ON_TERMINATION = 0;
+
+        // Request return prior to the script being terminated.
+        // note: will try to return 5s before killing the protocol script.
+        NOTIFY_BEFORE_TERMINATION = 1;
+
+        // Notify as the protocol script finishes, not waiting for any in progress acquisition to complete.
+        NOTIFY_ON_SCRIPT_TERMINATION = 2;
+
+        // Will return when basecalling has complete and all output files have been written
+        //
+        // This is only relevant if there is an analysis workflow that is scheduled to be run after the writing has
+        // completed. If there is no analysis workflow, then this option is the same as NOTIFY_ON_TERMINATION
+        NOTIFY_ON_WRITING_COMPLETE = 3;
+    };
+
+    // Only consider a specific protocol run.
+    string run_id = 1 [(rpc_required) = true];
+
+    // Control what to wait for.
+    //
+    // Specifying NOTIFY_BEFORE_TERMINATION allows a caller to be notified the script will be ended _soon_,
+    // and do final work to end cleanly.
+    //
+    // Since 1.11
+    NotificationState state = 2;
+
+    // Timeout to wait for finished, if the timeout expires before the protocol is complete (in the state requested)
+    // then the response returns.
+    //
+    // By default the timeout will wait forever.
+    //
+    // Since 1.15
+    float timeout = 3;
+}
+
+message GetRunInfoRequest {
+    // The protocol run to get information about.
+    string run_id = 1;
+}
+
+// buf:lint:ignore ENUM_NO_ALLOW_ALIAS
+enum ProtocolState {
+    option allow_alias = true;
+
+    // The protocol is still running.
+    PROTOCOL_RUNNING = 0;
+
+    // The protocol is waiting for the device to reach temperature
+    //
+    // Since 1.15
+    PROTOCOL_WAITING_FOR_TEMPERATURE = 4;
+
+    // Occurs when data protocol has stopped (either from a explicit rpc request or the script naturally ended)
+    // and data is still being processed (basecalling is still in catchup and processing reads).
+    PROTOCOL_WAITING_FOR_ACQUISITION = 5;
+
+    // The protocol finished on its own and did not report an error.
+    //
+    // This is determined by the protocol process exiting with a zero exit code.
+    PROTOCOL_COMPLETED = 1;
+
+    // The protocol was terminated by the user.
+    PROTOCOL_STOPPED_BY_USER = 2;
+
+    // The protocol is waiting for system resources to become available.
+    PROTOCOL_WAITING_FOR_RESOURCE = 10;
+
+    // The protocol finished on its own and reported an error.
+    //
+    // This is determined by the protocol process exiting with a non-zero exit code or because of a
+    // signal. Often, this will be because an exception was raised in the Python code and not
+    // caught, but could also indicate that the Python process crashed or was killed by some
+    // mechanism other than by MinKNOW.
+    PROTOCOL_FINISHED_WITH_ERROR = 3;
+
+    // The protocol was terminated because the sequencing device encountered an error.
+    PROTOCOL_FINISHED_WITH_DEVICE_ERROR = 6;
+
+    // The protocol was terminated because MinKNOW could not send telemetry to start acquisition.
+    PROTOCOL_FINISHED_UNABLE_TO_SEND_TELEMETRY = 7;
+
+    // The protocol was terminated because the flow cell was disconnected
+    PROTOCOL_FINISHED_WITH_FLOW_CELL_DISCONNECT = 8;
+
+    // The protocol was terminated because the device was disconnected
+    PROTOCOL_FINISHED_WITH_DEVICE_DISCONNECT = 9;
+
+    // Enums 20-120 are "reserved" for any new script exit codes we may want to forward
+
+    // The protocol has reported an error during calibration
+    PROTOCOL_FINISHED_WITH_ERROR_CALIBRATION = 20;              // Exit with code 20
+
+    // Setting basecall settings failed (Bad config etc)
+    PROTOCOL_FINISHED_WITH_ERROR_BASECALL_SETTINGS = 21;        // Exit with code 21
+
+    // OND requires us to reach temperature and fail if not
+    PROTOCOL_FINISHED_WITH_ERROR_TEMPERATURE_REQUIRED = 22;     // Exit with code 22
+
+    // The protocol was terminated due to insufficient disk space
+    PROTOCOL_FINISHED_WITH_ERROR_NO_DISK_SPACE = 23;            // Exit with code 23
+
+    // The protocol was terminated due to an out of range temperature issue (too high or too low)
+    // Since 6.7
+    PROTOCOL_FINISHED_WITH_ERROR_TEMPERATURE_OUT_OF_RANGE = 25; // Exit with code 25
+    // DEPRECATED: 6.7 - use PROTOCOL_FINISHED_WITH_ERROR_TEMPERATURE_OUT_OF_RANGE instead.
+    PROTOCOL_FINISHED_WITH_ERROR_TEMPERATURE_HIGH = 25;         // Exit with code 25
+
+    // The protocol was terminated due to an issue with
+    // communications with the basecaller
+    // Since 5.9
+    PROTOCOL_FINISHED_WITH_ERROR_BASECALLER_COMMUNICATION = 26; // Exit with code 26
+
+    // There is no flowecll available to run acquisition.
+    // Since 6.0
+    PROTOCOL_FINISHED_WITH_NO_FLOWCELL_FOR_ACQUISITION = 27; // Exit with code 27
+
+    // The basecaller did not respond to a request before timeout.
+    // Since 6.0
+    PROTOCOL_FINISHED_WITH_ERROR_BASECALLER_UNAVAILABLE = 28;   // Exit with code 24
+}
+
+enum ProtocolPhase {
+    // The protocol has not reported what phase it is in.
+    PHASE_UNKNOWN = 0;
+
+    // The protocol is calibrating, or performing other initialisation tasks.
+    PHASE_INITIALISING = 1;
+
+    // The protocol is sequencing.
+    PHASE_SEQUENCING = 2;
+
+    // The protocol is setting up to perform a mux scan.
+    PHASE_PREPARING_FOR_MUX_SCAN = 3;
+
+    // The protocol is performing a mux scan. This checks whether to switch channels to different
+    // wells (muxes) in order to improve and maintain sequencing performance.
+    PHASE_MUX_SCAN = 4;
+
+    // The protocol is paused.
+    //
+    // When the protocol is resumed, it is likely to enter the PHASE_RESUMING state before moving to
+    // another state (such as PHASE_SEQUENCING).
+    PHASE_PAUSED = 5;
+
+    // The protocol is in the process of pausing.
+    //
+    // It should move into PHASE_PAUSED within a short time.
+    PHASE_PAUSING = 6;
+
+    // The protocol is paused due to high temperature
+    //
+    // The user will have to confirm if they want to proceed with sequencing before resuming
+    PHASE_BAD_TEMPERATURE_AUTOMATIC_PAUSE = 8;
+
+    // The protocol is paused by MinKNOW after detecting a missing flow cell.
+    //
+    // This can occur in either of the following two scenarios:
+    // 1) the user has physically detached the flow cell from the device
+    // 2) an electrostatic causing the flow cell to momentarily disappear
+    // In both cases MinKNOW will attempt to automatic resume the protocol. In the
+    // first scenario, the user may also explicitly resume the protocol after re-inserting the flow cell.
+    PHASE_FLOWCELL_DISCONNECT_AUTOMATIC_PAUSE = 10;
+
+    // The protocol is paused by MinKNOW after detecting a different flow cell
+    // from the one used to start the protocol.
+    //
+    // This phase will typically be entered after the user explicitly detaches a flow cell
+    // then attempts to resume the protocol with a different flow cell inserted.
+    PHASE_FLOWCELL_MISMATCH_AUTOMATIC_PAUSE = 11;
+
+    // The protocol is paused by MinKNOW after detecting an error in the data transfer from the ASIC.
+    //
+    // MinKNOW will attempt to automatically resume the protocol. If unable to resume the protocol
+    // MinKNOW will transition to the 'STOPPED_DEVICE_ERROR' state.
+    PHASE_DEVICE_ERROR_AUTOMATIC_PAUSE = 12;
+
+    // The protocol is paused by MinKNOW due to insufficient disk space.
+    //
+    // MinKNOW will monitor the disk space and attempt to automatically resume the protocol. The user
+    // may also explicitly resume the protocol after freeing some disk space.
+    PHASE_LOW_DISK_SPACE_AUTOMATIC_PAUSE =  13;
+
+    // The protocol is in the process of resuming from a paused state.
+    //
+    // It should move into another phase, such as PHASE_SEQUENCING or PHASE_PREPARING_FOR_MUX_SCAN,
+    // in a short time.
+    PHASE_RESUMING = 7;
+
+    // When the protocol is completed
+    PHASE_COMPLETED = 9;
+}
+
+message RequestOrigin {
+    // 'User' based changes will typically come from calls made by the UI
+    // such as 'stop_protocol'
+    message User {
+        // If available then provide any identity information MinKNOW
+        // has about the client that made the RPC request
+        string identity = 1 [(may_contain_user_data) = true];
+    }
+    // A request from minknow will usually come in the form of something ending
+    // naturally, or an error occurring where minknow has to take action
+    message MinKNOW {
+        // Optional further details on the cause of the request
+        string cause = 1 [(may_contain_user_data) = true];
+    }
+    // The protocol script/bream is mainly responsible for making changes via
+    // protocol_phase_management
+    message ProtocolPhaseManagement {}
+    // A request made by the run until script due to certain criteria being met
+    message RunUntil {
+        // What criteria caused the state change
+        string criteria = 1 [(may_contain_user_data) = true];
+    }
+
+    oneof origin {
+        User user = 1;
+        MinKNOW minknow = 2;
+        ProtocolPhaseManagement protocol_phase_management = 3;
+        RunUntil run_until = 4;
+    }
+}
+
+message ProtocolPhaseSnapshot {
+    // The new protocol phase when the phase request happened
+    ProtocolPhase phase = 1;
+
+    // UTC timestamp of when the protocol phase changed was requested
+    google.protobuf.Timestamp timestamp = 2;
+
+    // Who requested the phase change
+    //
+    // Candidates:
+    //  ProtocolPhaseMangement: Through protocol_phase_management API
+    //  MinKNOW: When the protocol ends and the phase is marked PHASE_COMPLETED
+    RequestOrigin origin = 3;
+}
+
+message AssociatedPostProcessingAnalysis {
+    // Id of analysis if this has been triggered (otherwise empty).
+    string started_id = 1 [(may_contain_user_data) = false];
+
+    // Start request for analysis
+    basecaller.StartRequest start_request = 2;
+
+    enum State {
+        // Analysis request queued for starting later
+        QUEUED = 0;
+
+        // Workflow successfully started
+        STARTED = 1;
+
+        // Trying to start the workflow resulted in an error
+        FAILED_TO_START = 2;
+    }
+
+    State state = 3;
+}
+
+message PlatformQcResult {
+    // The flow cell id that the pqc was performed for
+    string flow_cell_id = 1 [(may_contain_user_data) = false];
+
+    // Whether the flow cell passed the platform qc check
+    bool passed = 2;
+
+    // Total number of pores that were found on the flow cell, across all muxes.
+    uint32 total_pore_count = 3;
+}
+
+message HardwareCheckTemperatureResults {
+    // Linting ignored for historical reasons.
+    // buf:lint:ignore ENUM_VALUE_UPPER_SNAKE_CASE
+    enum HardwareCheckTemperatureFailureReason {
+        // Not a hardware check protocol, or
+        // Hardware check has not failed
+        NoError = 0;
+
+        // Hardware check failed for a reason that is not otherwise specified
+        Unknown = 1;
+
+        // The hardware check script failed, and was unable to set the HardwareCheckFailureReason
+        // to a more specific value
+        ScriptError = 2;
+
+        // Temperature test failed
+        // Mean heatsink temperature not within temperature tolerance range
+        TemperatureTooLow = 3;
+
+        TemperatureTooHigh= 4;
+    }
+
+    // `failure_reason` is guaranteed to be:
+    //  - `NoError` if `status` is NOT `Failed`
+    //  - NOT `NoError` if `status` is `Failed`
+    //
+    HardwareCheckTemperatureFailureReason failure_reason = 1;
+
+    // Target temperature to maintain during temperature test
+    float target_temperature = 2;
+
+    // Mean achieved temperature during temperature test
+    float mean_heatsink_temperature = 3;
+
+    // allowed temperature tolerance range
+    float temperature_tolerance = 4;
+}
+
+message HardwareCheckCalibrationResults {
+    // Linting ignored for historical reasons.
+    // buf:lint:ignore ENUM_VALUE_UPPER_SNAKE_CASE
+    enum HardwareCheckCalibrationFailureReason {
+        // Not a hardware check protocol, or
+        // Hardware check has not failed
+        NoError = 0;
+
+        // Hardware check failed for a reason that is not otherwise specified
+        Unknown = 1;
+
+        // The hardware check script failed, and was unable to set the HardwareCheckFailureReason
+        // to a more specific value
+        ScriptError = 2;
+
+        // Calibration test failed
+        CalibrationFailed = 3;
+
+    }
+
+    // `failure_reason` is guaranteed to be:
+    //  - `NoError` if `status` is NOT `Failed`
+    //  - NOT `NoError` if `status` is `Failed`
+    //
+    HardwareCheckCalibrationFailureReason failure_reason = 1;
+
+}
+
+message HardwareCheckResult {
+    // Linting ignored for historical reasons.
+    // buf:lint:ignore ENUM_VALUE_UPPER_SNAKE_CASE
+    enum HardwareCheckStatus {
+        // Not a hardware check protocol
+        NONE = 0;
+
+        // Hardware check has been started, but has not yet completed
+        Started = 1;
+
+        // Hardware check succeeded
+        Succeeded = 2;
+
+        // Hardware check failed
+        // See HardwareCheckFailureReason for the reason
+        Failed = 3;
+
+        // Hardware check was cancelled before completion
+        Cancelled = 4;
+    }
+
+    // Linting ignored for historical reasons.
+    // buf:lint:ignore ENUM_VALUE_UPPER_SNAKE_CASE
+    enum HardwareCheckFailureReason {
+        // Not a hardware check protocol, or
+        // Hardware check has not failed
+        NoError = 0;
+
+        // Hardware check failed for a reason that is not otherwise specified
+        Unknown = 1;
+
+        // The hardware check script failed, and was unable to set the HardwareCheckFailureReason
+        // to a more specific value
+        ScriptError = 2;
+
+        // Script ran but the result was failed
+        CheckFailed = 3;
+    }
+
+    HardwareCheckStatus status = 1;
+
+    // `failure_reason` is guaranteed to be:
+    //  - `NoError` if `status` is NOT `Failed`
+    //  - NOT `NoError` if `status` is `Failed`
+    //
+    HardwareCheckFailureReason failure_reason = 2;
+
+    // Results data for calibration test
+    HardwareCheckCalibrationResults calibration_results = 3;
+
+    // Results data for temperature test
+    HardwareCheckTemperatureResults temperature_results = 4;
+}
+
+message ExternalOffload {
+    // The `id`s associated with active external data offloads associated with the protocol
+    // The offload status can be queried using `mooneye.offload_manager.watch_offloads()``
+    repeated string offload_ids = 1 [(may_contain_user_data) = false];
+
+    // An adapted version of mooneye.OffloadLocation
+    //
+    // Since 6.5
+    message OffloadLocation {
+        // unique id of this offload location (uuid)
+        google.protobuf.StringValue id = 1 [(may_contain_user_data) = false];
+
+        // name of this offload location
+        string name = 2 [(may_contain_user_data) = true];
+
+        // Path of directory to offload to
+        // Each worker actually offloads to a unique directory generated at path
+        // which is "OffloadLocation.path / OffloadWorker.id"
+        // path is s3 bucket if LocationType.S3
+        string path = 3 [(may_contain_user_data) = true];
+
+        // NOTE: needs to be kept up-to-date with
+        // mooneye_api/offload_manager.proto enum LocationType
+        // and ProtocolRecordTypes.cpp convert_location_type() reflected to match
+        //
+        // Defines type of offload location
+        enum LocationType {
+            // Local folder path, e.g. /data/my_local_offload_folder
+            LOCATION_TYPE_LOCAL = 0;
+            // SCP (SSH), e.g. 10.160.81.28:/data/my_ssh_offload_folder
+            LOCATION_TYPE_NETWORK = 1;
+            // S3 (or api-compatible service), e.g. s3://ont-exd-int-s3-euwest1-minknow-uploads
+            LOCATION_TYPE_S3 = 2;
+            // Mounted USB drive path, e.g. /data/devices/Sabrent-SSD-p1/my_usb_offload_folder
+            LOCATION_TYPE_LOCAL_MOUNTED_USB_DRIVE = 3;
+            // Mounted network (NFS/SMB) drive path, e.g. /data/network/rex-nas2-data/my_nfs_offload_folder
+            LOCATION_TYPE_LOCAL_MOUNTED_NETWORK_DRIVE = 4;
+        }
+
+        // location type
+        LocationType location_type = 4;
+    }
+
+    // mooneye offload location information
+    repeated OffloadLocation offload_locations = 2;
+}
+
+// From instance.proto
+//
+// Since 5.6
+message GetVersionInfoResponse {
+    message MinknowVersion {
+        int32 major = 1;
+        int32 minor = 2;
+        int32 patch = 3;
+        string full = 4 [(may_contain_user_data) = false];
+    }
+
+    // What minknow version is installed. Split into major, minor and patch versions
+    // Also includes the full version as a string, which contain the major, minor and patch numbers
+    // as well as if the version is pre-release version (~pre), whether it is a release candidate (~rc#)
+    // or whether it is a variant version (i.e. for conferences) (-variant). For non-release builds it also
+    // includes the hash of the commit it is based on, and whether the working copy is different from that has (-dirty)
+    MinknowVersion minknow = 1;
+
+    // The version of Bream that is installed.
+    //
+    // An invalid installation will cause this to return "0.0.0".
+    //
+    // Prior to 5.0, this field was called "protocols".
+    //
+    // Since 5.0
+    string bream = 2 [(may_contain_user_data) = false];
+
+    // Describes the distribution that this MinKNOW installation is part of, usually
+    // this will be the Metapackage version number/identity, this will be "unknown"
+    // if the distribution-version hasn't been set. This information is also communicated
+    // in the Manager's DaemonMessage in daemon.proto
+    string distribution_version = 3 [(may_contain_user_data) = false];
+
+    enum DistributionStatus {
+        UNKNOWN  = 0; // The distribution status is unknown or can not be determined
+        STABLE   = 1; // Released software in that same configuration in which
+                      // it was distributed.
+        UNSTABLE = 2; // Pre-release or release-candidate software that has not
+                      // been fully tested, but has not been modified from how it
+                      // was distributed.
+        MODIFIED = 3; // Some or all components have been replaced after distribution
+    }
+    // Indicates if the MinKNOW distribution including components such as Bream
+    // are stable, unstable or have been modified.
+    DistributionStatus distribution_status = 4;
+
+    // The version of the protocol configuration files that is installed.
+    //
+    // An invalid installation will cause this to return "0.0.0".
+    //
+    // Prior to 5.0, this field was called "configuration".
+    //
+    // Since 5.0
+    string protocol_configuration = 5 [(may_contain_user_data) = false];
+
+    enum InstallationType {
+        // For internal release. production.proto will be enabled for this type
+        ONT = 0;
+
+        // For customer releases
+        NC = 1;
+
+        // For production release. production.proto will be enabled for this type
+        PROD = 2;
+
+        // For Q releases (nanopore long term support release)
+        Q_RELEASE = 3;
+
+        // Oxford Nanopore Diagnostic
+        OND_RELEASE = 4;
+    }
+
+    // The installation type of MinKNOW.
+    //
+    // The installation type may affect the available features, or the update process.
+    //
+    // Since 4.1
+    InstallationType installation_type = 6;
+
+    // Version of the basecaller MinKNOW was packaged against.
+    //
+    // Since 5.0
+    // This field has been updated since 6.0
+    reserved 7; // guppy_build_version
+    string basecaller_build_version = 9 [(may_contain_user_data) = false];
+
+    // Version of the basecaller MinKNOW is running with.
+    //
+    // Since 5.0
+    // This field has been updated since 6.0
+    reserved 8; // guppy_connected_version
+    string basecaller_connected_version = 10 [(may_contain_user_data) = false];
+}
+
+message AnalysisWorkflowInfo {
+    // The request that started the analysis workflow
+    analysis_workflows.AnalysisWorkflowRequest request = 1;
+
+    // The workflow id of the started analysis workflow.
+    //
+    // May be empty if the workflow was unable to start
+    string workflow_id = 2 [(may_contain_user_data) = false];
+
+    // Human-readable name of the workflow.
+    string workflow_name = 3 [(may_contain_user_data) = true];
+
+    // What version the analysis workflow is running
+    string workflow_version = 4 [(may_contain_user_data) = false];
+
+    enum Status {
+        // The default state if nothing has been set. Typically will never be set
+        UNKNOWN = 0;
+
+        // When a workflow is waiting to start
+        //
+        // This can be due to waiting for sequencing (including basecalling) to
+        // finish or waiting for more resources on the system to free up so that the
+        // workflow can run without issues
+        QUEUED = 6;
+
+        // When the analysis workflow has been started and is currently running
+        RUNNING = 1;
+
+        // The workflow has completed successfully
+        //
+        // NB: This just means that the workflow ran to completion, and doesn't reflect the
+        // final result of the workflow
+        COMPLETED = 2;
+
+        // The workflow was stopped prematurely by the user
+        STOPPED_BY_USER = 3;
+
+        // The workflow was stopped due to an error that the workflow could not recover from
+        STOPPED_WITH_ERROR = 4;
+
+        // The workflow failed to start entirely
+        //
+        // This can happen if MinKNOW fails to make a connection to the analysis workflow server
+        FAILED_TO_START = 5;
+    }
+
+    // Current status of the workflow.
+    Status workflow_status = 5;
+
+     // If 'workflow_status' is STOPPED_WITH_ERROR, then this field will be populated with
+     // a human readable error message describing why the workflow was stopped.
+     //
+     // For any other status, it is empty.
+    string workflow_stop_reason = 6 [(may_contain_user_data) = false];
+
+    // The main report(s) for the analysis workflow
+    //
+    // Indicates that the report(s) are able to be retrieved from the Reception server
+    repeated string report_names = 7 [(may_contain_user_data) = true];
+}
+
+message ProtocolRunInfo {
+    reserved 10; // epi2me workflows
+
+    // The unique identifier assigned to this run.
+    //
+    // This is guaranteed to be made of ASCII characters, and at most 40 characters. It is globally
+    // unique across all protocols runs on all MinKNOW instances.
+    string run_id = 1 [(may_contain_user_data) = false];
+
+    // The identifier of the protocol, as passed to start_protocol().
+    string protocol_id = 2 [(may_contain_user_data) = false];
+
+    // The arguments passed to start_protocol().
+    repeated string args = 3 [(may_contain_user_data) = true];
+
+    // Any settings changed from the defaults specified in the protocol's .toml file.
+    //
+    // These settings were passed as part of begin_protocol()
+    map<string, protocol_settings.ProtocolSetting.ProtocolSettingValue> settings = 25 [(may_contain_user_data) = true];
+
+    // Output location for protocol data (eg. reads).
+    //
+    // If data offload is being used, this is the offload source directory.  Any files written to
+    // this location will be output alongside the rest of the experiment data
+    //
+    // Since 1.16.
+    string output_path = 11 [(may_contain_user_data) = true];
+
+    // Output location to report to the user
+    //
+    // This is the location at which files will eventually be written.
+    //
+    // This path will be present, but empty, when writing to user-specified offload locations, as
+    // there isn't a "local output path" when offload is used.
+    //
+    // For backwards compatibility, if this this field is not present, then `output_path` can be
+    // reported to the user instead.
+    //
+    // Since 5.9
+    optional string reported_output_path = 24 [(may_contain_user_data) = true];
+
+    // Indicates the current state of the protocol run.
+    ProtocolState state = 4;
+
+    // The phase of the protocol.
+    //
+    // This is the state reported by the protocol. If the protocol has not reported any state, it
+    // will be PHASE_UNKNOWN. Completed protocols also report PHASE_UNKNOWN.
+    //
+    // Note that clients should handle unexpected values of this field gracefully. This can happen
+    // if new phases are added but the client is still using an older version of the API
+    // specification.
+    //
+    // Since 4.4.
+    //
+    // DEPRECATED 6.1: Use phase_history instead
+    ProtocolPhase phase = 16;
+
+    // The last time the phase changed.
+    //
+    // This can be used to determine how long the protocol has been in the current phase.
+    //
+    // NB: This will not be set if the phase is PHASE_UNKNOWN.
+    //
+    // Since 4.4.
+    //
+    // DEPRECATED 6.1: Use phase_history instead
+    google.protobuf.Timestamp last_phase_change = 17;
+
+    // The phase history of the protocol
+    //
+    // Describes all phases that the protocol went through, with timestamps at each stage
+    // to track how long it had taken between each phase
+    //
+    // Since 6.1
+    repeated ProtocolPhaseSnapshot phase_history = 28;
+
+    // Whether the protocol can be paused.
+    //
+    // Not all protocols can be paused, and cannot be paused in all phases.
+    //
+    // Note that if this is true and the phase is PHASE_PAUSING or PHASE_PAUSED, pausing will not
+    // actually do anything.
+    //
+    // Since 4.4.
+    bool can_pause = 18;
+
+    // Whether a mux scan can be triggered for the protocol.
+    //
+    // Since 4.4.
+    bool can_trigger_mux_scan = 19;
+
+    // When the protocol was started (UTC).
+    google.protobuf.Timestamp start_time = 5;
+
+    // When the protocol script terminated (UTC).
+    //
+    // Unset if the protocol script is still running.
+    //
+    // Note that the protocol may still run until final acquisition completes.
+    google.protobuf.Timestamp script_end_time = 9;
+
+    // When the protocol terminated (UTC), indicating both the
+    // protocol script and the final acquisition were completed.
+    //
+    // Unset if the protocol is still running.
+    google.protobuf.Timestamp end_time = 6;
+
+    // Who is responsible for stopping the protocol
+    //
+    // Candidates:
+    //  MinKNOW:     Any error that causes the protocol to stop
+    //  UI:          Through stop_protocol API
+    //  RunUntil:    Through stop criteria
+    RequestOrigin stop_origin = 23;
+
+    // A list of acquisition periods started whilst this protocol was running.
+    //
+    repeated string acquisition_run_ids = 7 [(may_contain_user_data) = false];
+
+    // User specified information associated with the protocol at start time.
+    //
+    // Since 1.11.
+    ProtocolRunUserInfo user_info = 8;
+
+    // Information about the device a protocol was started with
+    //
+    // Since 3.4
+    device.GetDeviceInfoResponse device = 12;
+
+    // Information about the flow cell a protocol was started with
+    //
+    // Since 3.4
+    device.GetFlowCellInfoResponse flow_cell = 13;
+
+    // Meta-info about the protocol
+    //
+    // Since 3.8
+    ProtocolInfo meta_info = 14;
+
+    // List of scheduled post processing analysis tasks
+    repeated AssociatedPostProcessingAnalysis associated_post_processing_analysis = 15;
+
+    // The analysis workflow (if any) associated with the protocol
+    AnalysisWorkflowInfo analysis_workflow = 27;
+
+    // Platform QC result. Set by bream by calling `set_platform_qc_result()`.
+    // Possible to not be set (e.g. not a pqc run)
+    PlatformQcResult pqc_result = 20;
+
+    // Hardware check result.  Set by bream calling `set_hardware_check_result()`.
+    // Not set if not a hardware check protocol
+    HardwareCheckResult hardware_check_result = 26;
+
+    // Contains information about external data offloads associated with this protocol
+    //
+    // Since 5.0
+    ExternalOffload external_offload = 21;
+
+    // For storing version numbers to output to run report
+    //
+    // Since 5.6
+    GetVersionInfoResponse software_versions = 22;
+
+    // Can this protocol be restarted if the script exits with an error.
+    //
+    // Since 6.7
+    bool is_protocol_script_restartable = 29;
+}
+
+message FilteringInfo {
+    message PlatformQcFilter {
+        optional string flow_cell_id = 1;
+    }
+
+    // Filter by runs that have platform QC results
+    //
+    // Just initialising this message is enough to filter out runs with
+    // platform QC results from ones that don't
+    //
+    // Further filtering on the platform QC results can be applied by using
+    // the fields within PlatformQcFilter
+    PlatformQcFilter pqc_filter = 1;
+
+    // Flow cell ID for any given protocol run must match this _exactly_ to pass filtering.
+    // Note that this is intended to be position-agnostic, so doesn't include the position
+    // identifier.
+    // Will be checked against both the 'original' ID and the user-specified ID.
+    // If either one matches, this will pass filtering.
+    optional string flow_cell_id = 9;
+
+    message HardwareCheckFilter {
+        // Set to true to only return hardware check results that have a status of
+        // `SUCCEEDED` or `FAILED`.
+        optional bool only_succeeded_or_failed = 1;
+    }
+
+    // Filter by runs that have hardware check results
+    //
+    // Initialising this message means that only runs with a hardware check result will be
+    // returned
+    //
+    HardwareCheckFilter hardware_check_filter = 4;
+
+    // Filter runs by a specific protocol_group_id
+    optional string protocol_group_id = 2;
+
+    // Filter by start time of the run.  If the start time falls within the
+    // specified time period, then the run will be included.
+    //
+    // If no start_time is specified, then this will match all runs
+    // before the specified end time.
+    //
+    // If no end_time is specified, then this will match all runs
+    // later than the specified start time.
+    //
+    // Since 5.5.
+
+    message TimeFilter {
+        google.protobuf.Timestamp start_range = 1;
+        google.protobuf.Timestamp end_range = 2;
+    }
+
+    TimeFilter experiment_start_time = 3;
+
+    // Restrict the number of returned run_ids. If unset returns all run_ids.
+    optional int32 count = 5;
+
+    // Defines which run ID index to offset by for the run_ids that are returned.
+    //
+    // If count is set and offset is unset or zero then the dataset containing the
+    // first run_id[0] to run_id[count] is returned.
+    //
+    // If offset is set to a value that is beyond the bounds of the dataset then
+    // the last valid set of run_ids are returned that satisfies the specified count.
+    optional int32 offset = 6;
+
+    enum OrderBy {
+        START_TIME = 0;
+    }
+
+    // Default of START_TIME
+    optional OrderBy order_by = 7;
+
+    enum OrderDirection {
+        DESCENDING = 0;
+        ASCENDING = 1;
+    }
+
+    // Default of DESCENDING
+    optional OrderDirection order_direction = 8;
+}
+
+message ListProtocolRunsRequest {
+    FilteringInfo filter_info = 1;
+}
+
+message ListProtocolRunsResponse {
+    repeated string run_ids = 1;
+
+    // The total number of stored run_ids
+    int32 total_count = 2;
+
+    // The offset of the first returned run_id, when ordered according to the criteria in the
+    // request
+    int32 offset = 3;
+}
+
+message GetCurrentProtocolRunRequest {
+
+}
+
+message GetCurrentProtocolRunResponse {
+    ProtocolRunInfo run_info = 3;
+}
+
+message WatchCurrentProtocolRunRequest {
+
+}
+
+message GetContextInfoRequest {
+
+}
+
+message GetContextInfoResponse {
+    map<string, string> context_info = 1;
+}
+
+message SetContextInfoRequest {
+    map<string, string> context_info = 1;
+}
+
+message SetContextInfoResponse {
+
+}
+
+message GetProtocolPurposeRequest {
+
+}
+
+message GetProtocolPurposeResponse {
+    string purpose = 1;
+}
+
+message SetProtocolPurposeRequest {
+    string purpose = 1;
+}
+
+message SetProtocolPurposeResponse {
+
+}
+
+// timestamp for the last activity for experiment ordering
+// since 5.6
+message ProtocolGroupIdInfo {
+    string protocol_group_id = 1;
+
+    // Most recent start time for the protocol group id
+    //
+    google.protobuf.Timestamp start_time = 2;
+
+    // Whether the protocol group has its data pooled or not
+    // See `pool_output` in `ProtocolRunUserInfo` for more info
+    // since 6.7
+    bool pooled_output = 3;
+}
+
+message ListProtocolGroupIdsRequest {
+    FilteringInfo filter_info = 1;
+}
+
+message ListProtocolGroupIdsResponse {
+    reserved "protocol_group_ids";
+    reserved 1;
+
+    // A list of the most recent start time for each
+    // protocol group id on this instance of minknow.
+    //
+    // guaranteed to be ordered by most recent start time
+    // since 5.6
+    //
+    repeated ProtocolGroupIdInfo protocol_group_ids_info = 2;
+}
+
+message BeginHardwareCheckRequest {}
+
+message BeginHardwareCheckResponse {
+    // UUID generated when the protocol is started, to uniquely represent this protocol instance
+    string run_id = 1;
+}
+
+message BeginPlatformQcRequest {
+
+}
+
+message BeginPlatformQcResponse {
+    // UUID generated when the protocol is started, to uniquely represent this protocol instance
+    string run_id = 1;
+}
+
+message BeginProtocolRequest {
+    reserved 7; // passenger_info
+
+    oneof protocol_identifier {
+        // Specify the protocol with a string containing all the protocol's identifying components, eg:
+        // "sequencing/sequencing_MIN106_DNA:FLO-MIN106:SQK-RPB004"
+        string identifier = 1;
+
+        // Specify the protocol providing the identifying components individually, all components are optional.
+        // Exactly one protocol should match the given components otherwise and error will be returned
+        protocol_settings.ProtocolIdentifierComponents components = 2;
+    }
+
+    // User info options for the protocol
+    ProtocolRunUserInfo user_info = 3;
+
+    // Information about data offload locations to use to store data
+    //
+    // Since 5.0.
+    OffloadLocationInfo offload_location_info = 5;
+
+    // Initial Target Run-Until Criteria to use when starting an acquisition for this protocol.
+    // These can be updated during the acquisition using the Run-Until API.
+    //
+    // Since 5.3
+    acquisition.TargetRunUntilCriteria target_run_until_criteria = 6;
+
+    // Any settings changed from the defaults specified in the protocol's .toml file.
+    map<string, protocol_settings.ProtocolSetting.ProtocolSettingValue> settings = 4;
+
+    // Workflow request that should be started when the protocol is started
+    analysis_workflows.AnalysisWorkflowRequest analysis_workflow_request = 8;
+
+    // Simulation source for playback device data, either an hdf file or directory for use with arrow playback files.
+    //
+    // Since 6.2
+    string simulation_source = 9;
+}
+
+message BeginProtocolResponse {
+    // UUID generated when the protocol is started, to uniquely represent this protocol instance
+    string run_id = 1;
+}
+
+message SetPlatformQcResultRequest {
+    // The protocol_run_id that was given when the pqc run was started
+    string protocol_run_id = 1;
+
+    PlatformQcResult pqc_result = 2;
+}
+
+message SetPlatformQcResultResponse {
+
+}
+
+message SetHardwareCheckResultRequest {
+    // The protocol_run_id that was given when the hardware check run was started
+    string protocol_run_id = 1;
+
+    HardwareCheckResult result = 2;
+}
+
+message SetHardwareCheckResultResponse {
+
+}
+
+message AssociatePostProcessingAnalysisRequest {
+    // Protocol id to associate analysis with:
+    string run_id = 1;
+
+    basecaller.StartRequest start_request = 2;
+}
+
+message AssociatePostProcessingAnalysisResponse {
+    // Id of the basecaller.proto post processing task that was triggered, if the post processing analysis was executed immediately (protocol was finished).
+    string id = 1;
+}
+
+message ClearProtocolHistoryDataRequest {
+    repeated string protocol_ids = 1;
+}
+
+message ClearProtocolHistoryDataResponse {}
+
+enum Action {
+    // No action is requested.
+    ACTION_NONE = 0;
+    // The protocol should pause.
+    //
+    // This will only be sent if the can_pause capability has been set to true by a request
+    // in the current call to protocol_phase_management().
+    //
+    // If the protocol is already pausing or paused, this message should be ignored.
+    // Otherwise, the protocol should immediately respond with a ProtocolPhaseManagementRequest
+    // that sets the phase to PHASE_PAUSING or PHASE_PAUSED.
+    ACTION_PAUSE = 1;
+    // The protocol should resume.
+    //
+    // This will only be sent if the can_pause capability has been set to true by a request
+    // in the current call to protocol_phase_management().
+    //
+    // Since 6.5, this message will not be sent unless the protocol is in PHASE_PAUSED. A
+    // resume request received while the protocol is still pausing will be held back until
+    // the protocol has changed the phase to PHASE_PAUSED.
+    //
+    // The protocol should immediately respond with a ProtocolPhaseManagementRequest
+    // that sets the phase appropriated (eg: to PHASE_RESUMING).
+    ACTION_RESUME = 2;
+    // The protocol should trigger a mux scan.
+    //
+    // This will only be sent if the can_trigger_mux_scan capability has been set to true by a
+    // request in the current call to protocol_phase_management().
+    //
+    // If the protocol is already performing (or preparing for) a mux scan, this message should be
+    // ignored. Otherwise, the protocol should immediately respond with a
+    // ProtocolPhaseManagementRequest that sets the phase to PHASE_PREPARING_FOR_MUX_SCAN or
+    // PHASE_MUX_SCAN.
+    ACTION_TRIGGER_MUX_SCAN = 3;
+}
+
+message ProtocolPhaseManagementRequest {
+    message Capabilities {
+        // Indicate that the protocol will respond to pause and resume requests.
+        bool can_pause = 1;
+        // Indicate that the protocol will respond to mux scan requests.
+        bool can_trigger_mux_scan = 2;
+    }
+    // Update the set of capabilities (messages that will be responded to by the protocol).
+    Capabilities set_capabilities = 1;
+
+    // Update the protocol phase.
+    //
+    // Leave empty (ie: PHASE_UNKNOWN) to keep the previous phase.
+    ProtocolPhase phase = 2;
+}
+
+message ProtocolPhaseManagementResponse {
+    // Requests that the protocol changes phase.
+    //
+    // The client should never receive an action type (other than possibly ACTION_NONE) that it has
+    // not explicitly opted into via the `ProtocolPhaseManagementRequest.set_capabilities` field.
+    //
+    // If this is set to ACTION_NONE, the message should be ignored (this is for future
+    // compatibility).
+    Action action = 1;
+}
+
+message GenerateRunReportRequest {
+    // The protocol_run_id to generate a report for.
+    string protocol_run_id = 1;
+
+    // Optionally return the input data used to generate the report. This input data is
+    // represented as the data seen in report_data.proto
+    bool include_input_data = 2;
+}
+
+message GenerateRunReportResponse {
+    // Protocol ID the run report is for.
+    string protocol_run_id = 1;
+
+    // A section of the run report data (note the api to return this data may stream back several sections).
+    string report_data = 2;
+
+    // How many further characters of data remain after this message (excluding of this message).
+    int32 remaining_length = 3;
+
+    // If include_input_data was set, this will be a section of that data
+    // (note the api to return this data may stream back several sections).
+    string input_data = 4;
+
+    // If include_input_data was set, how many further characters of input data remain
+    // after this message (excluding of this message).
+    int32 remaining_input_length = 5;
+}
+
+message WatchClearingHistoricDataRequest {}
+
+message ClearedHistoricData {
+    repeated string protocol_ids = 1;
+    repeated string acquisition_ids = 2;
+}
+
+message SetProtocolRestartableRequest {
+    // Protocol ID to flag as restartable.
+    //
+    // This protocol must currently be active.
+    string protocol_run_id = 1;
+
+    // Set the protocol script as restartable.
+    bool is_restartable = 2;
+}
+
+message SetProtocolRestartableResponse {
+}

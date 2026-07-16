@@ -1,0 +1,111 @@
+syntax="proto3";
+
+package minknow_api.protocol_settings;
+
+option java_package = "com.nanoporetech.minknow_api";
+option objc_class_prefix = "MKAPI";
+option go_package ="github.com/nanoporetech/minknow_api/go/gen/protocol_settings";
+
+import "minknow_api/analysis_configuration.proto";
+import "minknow_api/rpc_options.proto";
+
+message ProtocolIdentifierComponents {
+    enum Location {
+        ANY = 0;
+        SYSTEM_SCRIPTS = 1;
+        USER_SCRIPTS = 2;
+    };
+    // If not specified, will default to "ANY"
+    Location location = 1;
+    // one of "custom", "sequencing", "control", "ctc", "platform qc" or "flowcell_plugin"
+    string experiment_type = 2;
+    // Name (or path) of the protocol, without the .toml extension eg: "sequencing/sequencing_MIN106_DNA" this is relative to the
+    // system or user protocol directory
+    string name = 3;
+    // eg: "FLO-MIN106"
+    string flow_cell_product_code = 4;
+    // eg: "SQK-RPB004"
+    string kit = 5;
+}
+
+message ProtocolSetting {
+    enum Category {
+        reserved "RUN_OPTIONS";
+        reserved 1;
+        reserved "OUTPUT"; // was renamed to DATA_OUTPUT
+        reserved 3;
+
+        OTHER = 0;
+        BASECALLING = 2;
+        MISCELLANEOUS = 4;
+        ADAPTIVE_SAMPLING = 5;
+        BARCODING = 6;
+        ALIGNMENT = 7;
+        DATA_OUTPUT = 8; // new DATA.
+        FILTERING = 9;
+    };
+
+    enum Unit {
+        UNITLESS = 0;
+
+        // strings
+        UTF8_STRING = 1;
+        ASCII_STRING = 2;
+        PATH = 3;
+        URL = 4;
+        PRIVATE_STRING = 5; // eg: password, or identifying data, something that should be obscured on the screen
+        CHOICE = 6; // choose one of the strings described in choices
+        MULTI_CHOICE = 7; // choose any number of the strings described in choices.
+
+        // numbers
+        SECOND = 8;
+        HOUR = 9;
+        BASE = 10;
+        KBASE = 11;
+        MBASE = 12;
+        GBASE = 13;
+        MILLIVOLT = 14;
+    };
+
+    message ProtocolSettingValue {
+        message MultiString{
+            repeated string values = 1;
+        }
+        message MultiInteger {
+            repeated int64 values = 1;
+        }
+
+        oneof protocol_setting_value {
+            string string_value = 1;
+            double float_value = 2;
+            int64 integer_value = 3;
+            bool bool_value = 4;
+            analysis_configuration.WriterConfiguration.ChannelConfiguration channels_value = 5;
+            MultiString multi_string_value = 6;
+            MultiInteger multi_integer_value = 7;
+        }
+    }
+
+    Category category = 1;
+
+    // Identifier is the unique primary-key for referring to protocol-settings,
+    // dependencies refer to other settings via their identifier.
+    string identifier = 2 [(rpc_required) = true];
+
+    reserved "display_name";
+    reserved 3;
+    reserved "help";
+    reserved 16;
+
+    Unit unit = 5;
+    ProtocolSettingValue default_value = 6;
+
+    reserved "constraints";
+    reserved 7;
+    reserved "dependencies";
+    reserved 8;
+    reserved "visibility";
+    reserved 9;
+    reserved "choices";
+    reserved 17;
+}

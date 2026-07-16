@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package minknow_api.read_end_reason;
+
+option java_package = "com.nanoporetech.minknow_api";
+option objc_class_prefix = "MKAPI";
+option go_package = "github.com/nanoporetech/minknow_api/go/gen/read_end_reason";
+
+// Linting ignored for historical reasons.
+// buf:lint:ignore ENUM_VALUE_UPPER_SNAKE_CASE
+enum ReadEndReason {
+    All = 0;
+    // The read end reason is unknown (should never be encountered in practice).
+    Unknown = 1;
+    // The read is still in progress.
+    Partial = 2;
+    // The channel configuration (eg: mux or test current) was changed.
+    MuxChange = 3;
+    // An unblock was requested via the device.unblock RPC.
+    UnblockMuxChange = 4;
+    // The signal level rose, and the read breaker interpreted this as the end of a read.
+    SignalPositive = 5;
+    // The signal level dropped, and the read breaker interpreted this as the end of a read.
+    SignalNegative = 6;
+    // An unblock was requested via the data.get_live_reads RPC.
+    DataServiceUnblockMuxChange = 7;
+    // The dynamic analysis configuration changed.
+    AnalysisConfigChange = 8;
+    // There was a break in the stream of data from the device.
+    DeviceDataError = 9;
+    // An explicit request to break the read was made via RPC.
+    ApiRequest = 10;
+    // The protocol was paused
+    Paused = 11;
+};

@@ -392,9 +392,12 @@ enum HardwareSubcommand {
         output: String,
         /// Provider to submit the batch to: 'file-export' (default), 'mock',
         /// or 'mock-delayed' (simulates real hardware latency on a
-        /// background thread — see --simulated-delay-ms). Vendor names (e.g.
-        /// 'twist') are accepted but no vendor-specific adapter exists yet,
-        /// so they fall back to file-export.
+        /// background thread — see --simulated-delay-ms). Real vendor
+        /// adapters (nucle_hardware::{twist,idt,illumina,nanopore}) exist as
+        /// library Providers but aren't wired up to this flag yet -- each
+        /// needs its own vendor-specific credential flags/env vars, a CLI
+        /// UX decision left for when that's actually needed. Vendor names
+        /// passed here are accepted but fall back to file-export.
         #[arg(short, long, default_value = "file-export")]
         provider: String,
         /// Required whenever the batch contains a Synthesis, Sequencing, or
@@ -2061,7 +2064,7 @@ fn export_single(source: &str, output: &str, provider: &str, confirm: bool, simu
         }
         other => {
             eprintln!(
-                "Note: no vendor adapter implemented for provider '{}' yet; falling back to file-export.",
+                "Note: provider '{}' isn't wired up to this CLI flag yet (its nucle_hardware library adapter needs vendor credentials this flag can't pass); falling back to file-export.",
                 other
             );
             let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(output));
@@ -2173,7 +2176,7 @@ fn export_multiple(sources: &[String], output: &str, provider: &str, confirm: bo
             other => {
                 if !warned_fallback {
                     eprintln!(
-                        "Note: no vendor adapter implemented for provider '{}' yet; falling back to file-export.",
+                        "Note: provider '{}' isn't wired up to this CLI flag yet (its nucle_hardware library adapter needs vendor credentials this flag can't pass); falling back to file-export.",
                         other
                     );
                     warned_fallback = true;
