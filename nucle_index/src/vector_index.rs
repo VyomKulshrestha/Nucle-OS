@@ -1,13 +1,23 @@
-//! # Vector Similarity Index
+//! # Metadata Similarity Index
 //!
-//! A simple vector embedding store for file metadata, enabling
-//! semantic-style search over the DNA storage pool.
+//! A simple vector store for file *metadata*, enabling similarity-ranked
+//! search over the DNA storage pool.
 //!
-//! Each file is represented as a fixed-length embedding vector
-//! derived from its metadata (name, size, type, content hash).
-//! Queries compute cosine similarity to find the most relevant files.
+//! Each file is represented as a fixed-length vector derived from
+//! hand-engineered features of its metadata (filename characters,
+//! log-scaled size, content-hash bytes, file-type one-hot) — not a
+//! learned/neural embedding. Queries compute cosine similarity over
+//! these same feature slots to rank files. This means it's honestly a
+//! *structural* similarity measure (obviously similar files — same
+//! type, similar size, similar name — score higher), not a semantic
+//! one: it can't understand what a file's content is *about* the way a
+//! real embedding model would, because it never looks at file content
+//! at all, only metadata.
 //!
 //! This is a lightweight in-memory index — no external ML dependencies.
+//! `embed_query` (below) documents itself as simulating what a real
+//! embedding model would produce, which is exactly the gap between what
+//! this index does today and what "semantic search" would require.
 
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;

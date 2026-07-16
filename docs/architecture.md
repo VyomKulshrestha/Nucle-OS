@@ -841,6 +841,23 @@ Query → [Vector Index] → [Primer Resolution] → [CRISPR-sim Amplification] 
 - CRISPR simulation models selective amplification
 - Cross-talk modeling accounts for non-specific amplification
 
+**Honest naming: this is metadata similarity, not semantic search.**
+`nucle_index::vector_index` represents each file as a fixed-length vector
+of hand-engineered features (filename characters, log-scaled size,
+content-hash bytes, file-type one-hot) and ranks by cosine similarity
+over those slots — real, complete, and well-tested for what it does
+(obviously similar files score higher), but it's not a learned/neural
+embedding and never looks at file *content*, only metadata. It can't
+understand "find my large document about DNA" the way a real embedding
+model would. `embed_query`'s own doc comment already says it "simulates
+what an embedding model would produce" — which is exactly the gap: a
+real embedding, whether a local model or an external API call, would be
+a genuine architecture change (a new, meaningful dependency either way),
+not a small fix, and hasn't been built. Until then, every "semantic
+search" reference in code comments/docs/CLI help text has been reworded
+to "metadata similarity" so nobody mistakes hand-engineered feature
+matching for content understanding.
+
 ## VFS Abstraction
 
 The VFS layer presents DNA storage as a device:

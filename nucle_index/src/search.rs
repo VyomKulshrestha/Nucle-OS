@@ -1,11 +1,16 @@
-//! # Semantic Search Interface
+//! # Metadata Similarity Search Interface
 //!
 //! Unified search pipeline that combines:
 //! - **Exact match**: filename and metadata lookups
-//! - **Vector similarity**: semantic search via embeddings
+//! - **Metadata similarity**: ranks files by similarity over hand-engineered
+//!   feature vectors (filename characters, size, content-hash bytes, file
+//!   type) — not a learned/neural embedding, so it can't understand a
+//!   query's *meaning* the way a real embedding model would; it only
+//!   scores structural/metadata resemblance (see `vector_index`'s own doc
+//!   comment for the exact features)
 //! - **Primer resolution**: translates search results to DNA addresses
 //!
-//! Query flow: query → parse → vector lookup → primer resolution → ranked results
+//! Query flow: query → parse → similarity lookup → primer resolution → ranked results
 
 use crate::primer::{PrimerPair, PrimerLibrary};
 use crate::vector_index::{VectorIndex, SearchResult as VectorResult, embed_file_metadata, embed_query};
@@ -40,7 +45,9 @@ impl SearchQuery {
     /// - `type:txt` — filter by file extension
     /// - `size:>1000` — minimum size filter
     /// - `size:<1000000` — maximum size filter
-    /// - Everything else is treated as a semantic search term
+    /// - Everything else is treated as a metadata-similarity search term
+    ///   (compared structurally, not by meaning — see this module's own
+    ///   doc comment)
     pub fn parse(raw: &str) -> Self {
         let mut query = Self {
             raw: raw.to_string(),
@@ -69,7 +76,10 @@ impl SearchQuery {
         query
     }
 
-    /// Get the semantic portion of the query (everything that isn't a filter).
+    /// Get the non-filter portion of the query — the part compared via
+    /// metadata similarity, not by meaning (despite the method's name;
+    /// see this module's own doc comment for why "semantic" would oversell
+    /// what this actually does).
     pub fn semantic_terms(&self) -> String {
         self.raw
             .split_whitespace()
@@ -265,19 +275,19 @@ impl SearchEngine {
 
     /// Search for files matching a query string.
     ///
-    /// Combines vector similarity with metadata filtering.
+    /// Combines metadata-similarity ranking with metadata filtering.
     pub fn search(&self, query_str: &str, top_k: usize) -> Vec<SearchResult> {
         let query = SearchQuery::parse(query_str);
 
-        // Get semantic terms for vector search
+        // Get the non-filter terms for similarity ranking
         let semantic = query.semantic_terms();
         let use_vector = !semantic.is_empty();
 
-        // Vector search
+        // Similarity ranking over metadata feature vectors
         let vector_results: Vec<VectorResult> = if use_vector {
             self.index.search_by_query(&semantic, top_k * 2)
         } else {
-            // No semantic query — rank all files equally
+            // No similarity terms given — rank all files equally
             self.registry.list().iter().map(|m| VectorResult {
                 file_id: m.file_id.clone(),
                 score: 1.0,

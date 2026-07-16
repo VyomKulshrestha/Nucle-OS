@@ -6,7 +6,7 @@
 //! Tools:
 //! - `store_file` — encode and store data in DNA
 //! - `retrieve_file` — read data back from DNA
-//! - `search_files` — semantic file search
+//! - `search_files` — metadata-similarity file search
 //! - `pool_status` — get storage pool statistics
 //! - `delete_file` — remove a file from storage
 //! - `list_files` — list all stored files
@@ -80,7 +80,7 @@ impl ToolName {
             ToolName::RetrieveFile =>
                 "Retrieve a file from DNA storage. Uses CRISPR to select strands, applies ECC recovery, and decodes.",
             ToolName::SearchFiles =>
-                "Search for files by name, type, size, or semantic query. Returns ranked results.",
+                "Search for files by name, type, size, or a metadata-similarity query (ranked by structural resemblance, not meaning). Returns ranked results.",
             ToolName::PoolStatus =>
                 "Get DNA storage pool statistics: file count, strand count, nucleotides, redundancy.",
             ToolName::DeleteFile =>
