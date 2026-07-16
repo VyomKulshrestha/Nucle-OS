@@ -24,7 +24,7 @@ NucleScript diagnostics:
 NucleScript diagnostics:
 23:5: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
 
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
@@ -39,7 +39,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-1ae8, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-42ac, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -50,7 +50,7 @@ NucleScript diagnostics:
 8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
 8:1: warning [E-STORE-CRITICAL-LOW-REDUNDANCY]: store 'sample_a.txt' is tagged critical but uses only 1x redundancy
 
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
@@ -65,7 +65,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-1ae8, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-42ac, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -90,7 +90,7 @@ execution failed: file 'old_archive.bin' not found
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   patient_records_2026.csv (ID: archive-7c64, 109 B, 4d+4p strands, 2.0×)
+║   patient_records_2026.csv (ID: archive-a027, 109 B, 4d+4p strands, 2.0×)
 ╚══════════════════════════════════════╝
 
 --- Recovery Manifest: patient_records_2026.csv ---
@@ -107,9 +107,9 @@ Positions w/ errors: 0 of 4
 NucleScript diagnostics:
 8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
 
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
 ✓ retrieve from archive where : 1 match(es)
-  - 1.000  sample_a.txt  31 bytes
+  - 1.000  sample_a.txt  30 bytes
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
@@ -124,7 +124,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-1ae8, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-42ac, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -134,8 +134,8 @@ NucleScript diagnostics:
 8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
 12:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_b.txt' has Synthesis effect; use simulate store for no-hardware execution
 
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
-✓ store into archive: Stored 'sample_b.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0001)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_b.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0001)
 - retrieve from archive where name:README: no matches
 
 ╔══════════════════════════════════════╗
@@ -151,8 +151,8 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_b.txt (ID: archive-6f52, 31 B, 2d+4p strands, 3.0×)
-║   sample_a.txt (ID: archive-1ae8, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-42ac, 30 B, 2d+4p strands, 3.0×)
+║   sample_b.txt (ID: archive-574f, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -162,7 +162,7 @@ NucleScript diagnostics:
 2:1: warning [E-POOL-LOW-REDUNDANCY]: pool 'field_pool' has 1x redundancy; critical files should use at least 2x
 8:1: warning [E-STORE-UNSATISFIABLE-RECOVERY]: expect recovery > 99.5% is statistically unsatisfiable for Nanopore at 1x coverage
 
-✓ store into field_pool: Stored 'sample_a.txt' (31 bytes → 2 data + 8 parity = 10 strands, 5.00× redundancy, primer=P0000)
+✓ store into field_pool: Stored 'sample_a.txt' (30 bytes → 2 data + 8 parity = 10 strands, 5.00× redundancy, primer=P0000)
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
@@ -177,13 +177,13 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-7c7f, 31 B, 2d+8p strands, 5.0×)
+║   sample_a.txt (ID: archive-eb77, 30 B, 2d+8p strands, 5.0×)
 ╚══════════════════════════════════════╝
 
 
 === END nanopore_recovery_warning.nsl ===
 === pipeline_backup.nsl === OK
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
 ✓ verify roundtrip: 'sample_a.txt' recovered exactly
 
 ╔══════════════════════════════════════╗
@@ -199,7 +199,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-1ae8, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-42ac, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 --- Recovery Manifest: sample_a.txt ---
@@ -254,9 +254,9 @@ Positions w/ errors: 0 of 2
 NucleScript diagnostics:
 8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
 
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
 ✓ retrieve from archive where tag:medical size<10485760: 1 match(es)
-  - 0.044  sample_a.txt  31 bytes
+  - 0.043  sample_a.txt  30 bytes
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
@@ -271,7 +271,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-1ae8, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-42ac, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -296,7 +296,7 @@ NucleScript diagnostics:
 
 === END sequence_literals.nsl ===
 === simulate_store.nsl === OK
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
@@ -311,7 +311,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-ccf2, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-b78e, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -320,7 +320,7 @@ NucleScript diagnostics:
 NucleScript diagnostics:
 8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
 
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 2 data + 4 parity = 6 strands, 3.00× redundancy, primer=P0000)
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
@@ -335,7 +335,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-1ae8, 31 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-4094, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -491,7 +491,7 @@ type check failed:
 NucleScript diagnostics:
 8:1: warning [E-STORE-SYNTHESIS-WITHOUT-SIMULATE]: store 'sample_a.txt' has Synthesis effect; use simulate store for no-hardware execution
 
-✓ store into archive: Stored 'sample_a.txt' (31 bytes → 1 data + 3 parity = 4 strands, 4.00× redundancy, primer=P0000)
+✓ store into archive: Stored 'sample_a.txt' (30 bytes → 1 data + 3 parity = 4 strands, 4.00× redundancy, primer=P0000)
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
@@ -500,13 +500,13 @@ NucleScript diagnostics:
 ║ Total strands:       4               ║
 ║ Data strands:        1               ║
 ║ Parity strands:      3               ║
-║ Nucleotides:      2084               ║
-║ Avg strand len:    521 nt            ║
+║ Nucleotides:      2032               ║
+║ Avg strand len:    508 nt            ║
 ║ Redundancy:      4.00×              ║
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-dfbf, 31 B, 1d+3p strands, 4.0×)
+║   sample_a.txt (ID: archive-b33c, 30 B, 1d+3p strands, 4.0×)
 ╚══════════════════════════════════════╝
 
 
