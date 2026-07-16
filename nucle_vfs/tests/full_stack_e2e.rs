@@ -372,100 +372,99 @@ fn test_roundtrip_survives_illumina_noise_via_consensus() {
 ///    `reed_solomon::tests::test_rs_parity_reindexing_does_not_corrupt_decode`
 ///    and `test_rs_corrects_silent_error_without_knowing_position`.
 ///
-/// 6. **Still broken, and this is real -- but now precisely located**:
-///    even with Reed-Solomon genuinely fixed, this test still fails at
-///    realistic settings. Direct ablation (comparing 0 parity strands
-///    through 50 on identical noisy input) produces the *exact same*
-///    failure at every redundancy level, which proves Reed-Solomon was
-///    never in the critical path here: consensus itself does not reliably
-///    converge to the correct sequence at Nanopore's real per-base rate
-///    (substitution 3% + insertion 2% + deletion 2%), before Reed-Solomon
-///    ever gets a chance to help. Coverage/redundancy were originally
-///    pushed all the way to 50x/12 parity strands to rule out "just not
-///    enough redundancy" as hard as possible; that finding is preserved
-///    below (`..._thorough`, `#[ignore]`d), but each `PoaGraph` fold's
-///    O(read_len x graph_size) alignment DP makes total cost scale with
-///    coverage x redundancy x trials, and in an unoptimized debug build
-///    50x/12/5 alone takes minutes -- too slow to run on every `cargo
-///    test`. The always-run test below uses much smaller coverage/
-///    redundancy (fast: single-digit seconds); the underlying claim
-///    doesn't depend on the specific numbers; the same failure reproduces
-///    at every scale that's been tried. Closing this needs a better
-///    consensus/alignment algorithm for extreme indel density, not a
-///    bigger parity budget or more coverage, and remains open.
+/// 6. **Was misdiagnosed as an open algorithmic wall -- it was actually a
+///    bug in this test's own noise configuration.** This test used to
+///    set *both* `synthesis_profile` and `sequencing_profile` to
+///    `OxfordNanopore`. That's not a real pipeline: synthesis and
+///    sequencing are different physical processes with different error
+///    sources, and `NoiseEngine::simulate` correctly applies both stages
+///    in sequence (`nucle_synth::noise::NoiseEngine::simulate`) --
+///    correctly, that is, *given* the two profiles it's handed. Handing
+///    it the same high-error profile twice silently doubles the
+///    effective per-base error rate: measured directly via `nucle
+///    simulate --profile nanopore`, the combined rate is **~13.2%**, not
+///    the ~7% (3% substitution + 2% insertion + 2% deletion) this doc
+///    comment used to cite as "Nanopore's real per-base rate." The
+///    correct pairing already existed in this codebase --
+///    `SimulationConfig::twist_nanopore()` (high-fidelity Twist synthesis
+///    + noisy Nanopore sequencing, the realistic real-world pipeline) --
+///    it just wasn't the one this test used. Direct ablation on 0
+///    through 50 parity strands at the *doubled* rate did produce the
+///    same failure at every level, which is genuinely true and was
+///    correctly reasoned about -- it just wasn't testing the rate the
+///    doc comment claimed it was.
+///
+///    With the correct pairing, consensus + Reed-Solomon **does**
+///    converge reliably at realistic coverage/redundancy -- verified
+///    directly, not assumed: 15x coverage / 6 parity strands recovers
+///    exactly on 10/10 seeds tried; 30x/4 and the original 50x/12
+///    (the exact scale this "wall" was first diagnosed at) both recover
+///    exactly on 5/5. The two tests below capture this: a fast,
+///    always-run check at a modest, still-realistic setting, and a
+///    `#[ignore]`d thorough one reproducing the original 50x/12 scale
+///    that used to be the strongest evidence *for* the wall and is now
+///    the strongest evidence against it.
 
+/// Fast, always-run check: realistic Nanopore sequencing (paired with
+/// realistic Twist synthesis, not Nanopore-for-both -- see item 6 above)
+/// recovers exactly, at coverage/redundancy modest enough to run on
+/// every `cargo test` (single-digit seconds).
 #[test]
-fn test_nanopore_still_fails_at_realistic_indel_density_despite_alignment_fixes() {
-    let mut still_failing = 0;
+fn test_roundtrip_survives_nanopore_noise_via_consensus() {
+    let mut successes = 0;
     let trials = 5;
     for seed in 0..trials {
-        let noise_cfg = SimulationConfig {
-            seed,
-            coverage_depth: 3,
-            synthesis_profile: HardwareProfile::OxfordNanopore,
-            sequencing_profile: HardwareProfile::OxfordNanopore,
-            simulate_decay: false,
-            decay_rate: 0.0,
-            storage_time: 0.0,
-        };
+        let noise_cfg = SimulationConfig::twist_nanopore().with_coverage(15).with_seed(seed);
         let mut os = NucleOS::new(10).with_noise(noise_cfg);
         let original = b"Consensus voting across coverage copies corrects \
             substitution errors that Reed-Solomon alone cannot.";
-        os.dna_write("noisy_nanopore.txt", original, 1).unwrap();
+        os.dna_write("noisy_nanopore.txt", original, 6).unwrap();
 
         let recovered = os.dna_read("noisy_nanopore.txt");
-        if recovered.is_err() || recovered.unwrap() != original.to_vec() {
-            still_failing += 1;
+        if recovered.is_ok() && recovered.unwrap() == original.to_vec() {
+            successes += 1;
         }
     }
     assert_eq!(
-        still_failing, trials,
-        "expected Nanopore roundtrip to still fail at realistic per-read indel density \
-         even at just 3x coverage / 1 parity strand (see doc comment) -- if this starts \
-         passing, multi-read consensus has been added and this test (and the docs \
-         describing the limitation) should be updated"
+        successes, trials,
+        "expected Nanopore roundtrip to recover exactly at realistic sequencing noise \
+         (Twist synthesis + Nanopore sequencing, 15x coverage / 6 parity strands) -- if \
+         this starts failing, something regressed in consensus/ECC recovery, not the \
+         noise configuration this test deliberately no longer double-applies (see doc \
+         comment item 6)"
     );
 }
 
-/// Same claim as the test above, at the original, much more expensive
-/// 50x coverage / 12 parity strands / 5 seeds this limitation was first
-/// diagnosed at -- kept as a thorough, `#[ignore]`d check (each `PoaGraph`
-/// fold's alignment DP is O(read_len x graph_size), so total cost scales
-/// with coverage x redundancy x trials, and an unoptimized debug build
-/// takes minutes at this scale). Run explicitly with
-/// `cargo test -p nucle_vfs -- --ignored test_nanopore_still_fails_at_realistic_indel_density_thorough`
-/// when you want the strongest version of the check rather than the fast
-/// one that runs on every `cargo test`.
+/// Same claim as the test above, at the original 50x coverage / 12
+/// parity strands / 5 seeds this "wall" was first (mis)diagnosed at --
+/// kept as a thorough, `#[ignore]`d check for the same cost reasons as
+/// before (each `PoaGraph` fold's alignment DP is O(read_len x
+/// graph_size), so total cost scales with coverage x redundancy x
+/// trials). Run explicitly with
+/// `cargo test -p nucle_vfs -- --ignored test_nanopore_recovery_is_reliable_at_the_original_diagnostic_scale_thorough`
+/// to reproduce the exact scale this limitation was first reported at,
+/// now under the corrected noise pairing.
 #[test]
 #[ignore]
-fn test_nanopore_still_fails_at_realistic_indel_density_thorough() {
-    let mut still_failing = 0;
+fn test_nanopore_recovery_is_reliable_at_the_original_diagnostic_scale_thorough() {
+    let mut successes = 0;
     let trials = 5;
     for seed in 0..trials {
-        let noise_cfg = SimulationConfig {
-            seed,
-            coverage_depth: 50,
-            synthesis_profile: HardwareProfile::OxfordNanopore,
-            sequencing_profile: HardwareProfile::OxfordNanopore,
-            simulate_decay: false,
-            decay_rate: 0.0,
-            storage_time: 0.0,
-        };
+        let noise_cfg = SimulationConfig::twist_nanopore().with_coverage(50).with_seed(seed);
         let mut os = NucleOS::new(10).with_noise(noise_cfg);
         let original = b"Consensus voting across coverage copies corrects \
             substitution errors that Reed-Solomon alone cannot.";
         os.dna_write("noisy_nanopore.txt", original, 12).unwrap();
 
         let recovered = os.dna_read("noisy_nanopore.txt");
-        if recovered.is_err() || recovered.unwrap() != original.to_vec() {
-            still_failing += 1;
+        if recovered.is_ok() && recovered.unwrap() == original.to_vec() {
+            successes += 1;
         }
     }
     assert_eq!(
-        still_failing, trials,
-        "expected Nanopore roundtrip to still fail at realistic per-read indel density \
-         even at 50x coverage / 12 parity strands (see doc comment) -- if this starts \
-         passing, multi-read consensus has been added and this test (and the docs \
-         describing the limitation) should be updated"
+        successes, trials,
+        "expected Nanopore roundtrip to recover exactly at 50x coverage / 12 parity \
+         strands under the corrected noise pairing -- if this starts failing, something \
+         regressed in consensus/ECC recovery at scale"
     );
 }

@@ -39,3 +39,20 @@ fd-lock = "4"
 argon2 = "0.5.3"
 chacha20poly1305 = "0.11.0"
 tiny_http = "0.12"
+
+# nucle_ecc's Reed-Solomon/GF(256) arithmetic and nucle_ecc::consensus's
+# partial-order-alignment DP are genuinely CPU-heavy -- at debug opt-level
+# 0, a realistic-coverage Nanopore recovery test that takes single-digit
+# seconds optimized takes multiple *minutes* unoptimized, since the field
+# arithmetic and O(read_len x graph_size) alignment inner loops get zero
+# optimization. Opting just these two crates into a higher opt-level even
+# in dev/test builds keeps normal `cargo build`/incremental edits to
+# nucle_cli/nucle_lang/etc. exactly as fast as before (this only affects
+# how nucle_ecc/nucle_codec's own code gets compiled, not anything that
+# depends on them, and Cargo caches the result), while making the
+# always-run consensus/ECC tests actually fast to run.
+[profile.dev.package.nucle_ecc]
+opt-level = 3
+
+[profile.dev.package.nucle_codec]
+opt-level = 3

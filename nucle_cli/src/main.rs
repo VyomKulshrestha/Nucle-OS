@@ -1075,6 +1075,26 @@ fn cmd_tenants(base_pool_dir: &std::path::Path, json: bool) {
     }
 }
 
+/// Pairs a `--profile` selection with a realistic synthesis profile,
+/// rather than using the same profile for both synthesis and sequencing.
+/// `Illumina`/`OxfordNanopore` are sequencing-only technologies in this
+/// project's profile catalog -- there's no such thing as synthesizing
+/// DNA on an Illumina or Nanopore sequencer, and pairing one of them
+/// with itself for the synthesis stage too silently *doubles* its error
+/// rate (`NoiseEngine::simulate` correctly applies both stages in
+/// sequence, so it faithfully doubles whatever it's handed). This
+/// mirrors `SimulationConfig::twist_illumina`/`twist_nanopore`, which
+/// already exist for exactly this pairing but weren't being used here.
+/// `Twist`/`Pristine` are left paired with themselves: Twist's own error
+/// rate is low enough that doubling it is immaterial, and Pristine
+/// doubled is still zero.
+fn realistic_synth_seq_pair(profile: HardwareProfile) -> (HardwareProfile, HardwareProfile) {
+    match profile {
+        HardwareProfile::Illumina | HardwareProfile::OxfordNanopore => (HardwareProfile::TwistBioscience, profile),
+        other => (other, other),
+    }
+}
+
 fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {
     let data = match fs::read(file) {
         Ok(d) => d,
@@ -1104,11 +1124,12 @@ fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {
         }
     };
 
+    let (synthesis_profile, sequencing_profile) = realistic_synth_seq_pair(hw_profile);
     let config = SimulationConfig {
         seed: 42,
         coverage_depth: coverage as u32,
-        synthesis_profile: hw_profile,
-        sequencing_profile: hw_profile,
+        synthesis_profile,
+        sequencing_profile,
         simulate_decay: false,
         decay_rate: 0.0,
         storage_time: 0.0,
@@ -1181,13 +1202,14 @@ fn estimate_recovery_probability(codec: &dyn DnaCodec, data: &[u8], profile: Har
     let Ok(encoded) = codec.encode(data) else {
         return 0.0;
     };
+    let (synthesis_profile, sequencing_profile) = realistic_synth_seq_pair(profile);
     let mut successes = 0u64;
     for t in 0..trials {
         let config = SimulationConfig {
             seed: 9000 + t,
             coverage_depth: 1,
-            synthesis_profile: profile,
-            sequencing_profile: profile,
+            synthesis_profile,
+            sequencing_profile,
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
@@ -1288,13 +1310,14 @@ fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: boo
     };
 
     let mut results = Vec::new();
+    let (synthesis_profile, sequencing_profile) = realistic_synth_seq_pair(hw_profile);
 
     for (name, data) in &files_to_bench {
         let noise_cfg = SimulationConfig {
             seed: 42,
             coverage_depth: 10,
-            synthesis_profile: hw_profile,
-            sequencing_profile: hw_profile,
+            synthesis_profile,
+            sequencing_profile,
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
@@ -2677,6 +2700,7 @@ fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redun
     }
 
     let mut rng = StdRng::seed_from_u64(42);
+    let (synthesis_profile, sequencing_profile) = realistic_synth_seq_pair(hw_profile);
 
     let mut recovered = 0usize;
     let mut failed = 0usize;
@@ -2698,8 +2722,8 @@ fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redun
         let noise_cfg = SimulationConfig {
             seed: 42 + i as u64,
             coverage_depth: coverage as u32,
-            synthesis_profile: hw_profile,
-            sequencing_profile: hw_profile,
+            synthesis_profile,
+            sequencing_profile,
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
