@@ -1036,6 +1036,67 @@ impl NucleOS {
     pub fn dna_search(&self, query: &str, top_k: usize) -> Vec<SearchResult> {
         self.search.search(query, top_k)
     }
+
+    // -----------------------------------------------------------------------
+    // dna_scan — proactive integrity scanning across the whole pool
+    // -----------------------------------------------------------------------
+
+    /// Proactively scans every file whose name starts with `prefix` (an
+    /// empty prefix scans everything, matching `dna_list`'s own
+    /// convention) for silent corruption, rather than waiting to
+    /// discover it passively on the next `dna_read`. For each file:
+    /// records how many strands the pool actually holds for it versus
+    /// how many `DnaFile::total_strands()` says it should (catches
+    /// strands that vanished outside the normal `dna_delete` path), then
+    /// attempts a real `dna_read` -- the same decode/consensus/
+    /// hash-check pipeline retrieve itself uses -- to catch corruption
+    /// *within* an otherwise-complete strand set that only ECC/consensus
+    /// can actually detect. See `nucle_vfs::scan`'s own doc comment for
+    /// why this reuses `dna_read` rather than a separate, side-effect-free
+    /// pipeline.
+    pub fn dna_scan(&mut self, prefix: &str) -> crate::scan::ScanReport {
+        let filenames: Vec<String> = self.catalog.list_prefixed(prefix).iter().map(|f| f.filename.clone()).collect();
+
+        let mut results = Vec::with_capacity(filenames.len());
+        let mut healthy = 0usize;
+
+        for filename in &filenames {
+            let Some((file_id, expected_strands)) = self.catalog.get_by_name(filename)
+                .map(|f| (f.file_id.clone(), f.total_strands()))
+            else {
+                // Removed by something else mid-scan (e.g. a concurrent
+                // delete) -- skip rather than report a bogus result for a
+                // file that no longer exists.
+                continue;
+            };
+            let present_strands = self.pool.get_file_strands(&file_id).len();
+
+            let (recoverable, detail) = match self.dna_read(filename) {
+                Ok(_) => (true, "recovered successfully".to_string()),
+                Err(e) => (false, e),
+            };
+            if recoverable {
+                healthy += 1;
+            }
+
+            results.push(crate::scan::FileScanResult {
+                filename: filename.clone(),
+                file_id,
+                expected_strands,
+                present_strands,
+                recoverable,
+                detail,
+            });
+        }
+
+        let corrupted = results.len() - healthy;
+        crate::scan::ScanReport {
+            total_files: results.len(),
+            healthy,
+            corrupted,
+            results,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1486,6 +1547,87 @@ mod tests {
         let result = os.disable_encryption(&dir);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not encrypted"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Proactive integrity scanning ──
+
+    #[test]
+    fn scanning_an_empty_pool_reports_zero_files_healthy() {
+        let mut os = NucleOS::new(10);
+        let report = os.dna_scan("");
+        assert_eq!(report.total_files, 0);
+        assert_eq!(report.healthy, 0);
+        assert_eq!(report.corrupted, 0);
+        assert!(report.results.is_empty());
+    }
+
+    #[test]
+    fn a_healthy_pool_scans_every_file_as_recoverable() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("a.txt", b"first file", 1).unwrap();
+        os.dna_write("b.txt", b"second file", 1).unwrap();
+
+        let report = os.dna_scan("");
+        assert_eq!(report.total_files, 2);
+        assert_eq!(report.healthy, 2);
+        assert_eq!(report.corrupted, 0);
+        for r in &report.results {
+            assert!(r.recoverable, "expected {} to be recoverable", r.filename);
+            assert_eq!(r.present_strands, r.expected_strands);
+        }
+    }
+
+    #[test]
+    fn a_file_whose_strands_vanished_from_the_pool_scans_as_corrupted() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("healthy.txt", b"still fine", 1).unwrap();
+        let corrupted_write = os.dna_write("corrupted.txt", b"about to vanish", 1).unwrap();
+
+        // Simulate silent bit-rot / a corrupted state.json: the strands
+        // disappear from the pool directly, without going through
+        // dna_delete, so the catalog entry (and its expected strand
+        // count) is left completely untouched -- exactly the "pool and
+        // catalog disagree" scenario a real corruption would produce.
+        os.pool.remove_file(&corrupted_write.file_id);
+
+        let report = os.dna_scan("");
+        assert_eq!(report.total_files, 2);
+        assert_eq!(report.healthy, 1);
+        assert_eq!(report.corrupted, 1);
+
+        let corrupted = report.results.iter().find(|r| r.filename == "corrupted.txt").unwrap();
+        assert!(!corrupted.recoverable);
+        assert_eq!(corrupted.present_strands, 0);
+        assert!(corrupted.expected_strands > 0);
+
+        let healthy = report.results.iter().find(|r| r.filename == "healthy.txt").unwrap();
+        assert!(healthy.recoverable);
+    }
+
+    #[test]
+    fn scanning_with_a_prefix_only_covers_matching_files() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("docs/a.txt", b"in scope", 1).unwrap();
+        os.dna_write("downloads/b.txt", b"out of scope", 1).unwrap();
+
+        let report = os.dna_scan("docs/");
+        assert_eq!(report.total_files, 1);
+        assert_eq!(report.results[0].filename, "docs/a.txt");
+    }
+
+    #[test]
+    fn scanning_persists_recovery_manifests_like_a_real_retrieve_would() {
+        let dir = scratch_pool_dir("scan_persists_manifest");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut os = NucleOS::open(&dir, 10).unwrap();
+        os.dna_write("a.txt", b"scan me", 1).unwrap();
+        assert!(os.catalog.get_by_name("a.txt").unwrap().manifest.as_ref().unwrap().recovery_manifest.is_none());
+
+        os.dna_scan("");
+        assert!(os.catalog.get_by_name("a.txt").unwrap().manifest.as_ref().unwrap().recovery_manifest.is_some());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

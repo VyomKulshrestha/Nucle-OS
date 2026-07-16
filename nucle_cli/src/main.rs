@@ -161,6 +161,15 @@ enum Commands {
     /// encrypted.
     DecryptPool,
 
+    /// Proactively scan the pool for silent corruption, instead of only
+    /// discovering it passively when a `retrieve` happens to run into
+    /// it. Attempts a real recovery of every file (optionally filtered
+    /// to a name prefix) and reports which ones failed and why.
+    Scan {
+        /// Only scan files whose name starts with this prefix
+        prefix: Option<String>,
+    },
+
     /// Simulate synthesis/sequencing noise on data
     Simulate {
         /// Input file to simulate
@@ -389,6 +398,7 @@ fn main() {
         Commands::ConfirmUsers { add, remove } => cmd_confirm_users(add, remove, &pool_dir, cli.json),
         Commands::EncryptPool => cmd_encrypt_pool(&pool_dir, passphrase.as_deref(), cli.json),
         Commands::DecryptPool => cmd_decrypt_pool(&pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Scan { prefix } => cmd_scan(prefix.as_deref().unwrap_or(""), &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -874,6 +884,25 @@ fn cmd_decrypt_pool(pool_dir: &std::path::Path, passphrase: Option<&str>, json: 
             eprintln!("Failed to decrypt pool: {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+fn cmd_scan(prefix: &str, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let mut os = open_pool(pool_dir, passphrase);
+    let report = os.dna_scan(prefix);
+    // A scan attempts a real recovery of every file, which updates each
+    // one's recovery manifest exactly as a real retrieve would -- persist
+    // so that update survives, same reasoning as cmd_retrieve's own.
+    persist_pool(&mut os, pool_dir);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    } else {
+        print!("{}", report);
+    }
+
+    if report.corrupted > 0 {
+        std::process::exit(1);
     }
 }
 
@@ -2258,6 +2287,7 @@ fn cmd_help() {
     println!("  nucle confirm-users [--add|--remove USER]  Show or edit who may pass --confirm for hardware export");
     println!("  nucle encrypt-pool                        Enable encryption at rest (needs --pool-key)");
     println!("  nucle decrypt-pool                        Disable encryption at rest (needs --pool-key)");
+    println!("  nucle scan [prefix]                       Proactively scan for silent corruption");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");
