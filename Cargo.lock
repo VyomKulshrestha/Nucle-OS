@@ -788,6 +788,7 @@ dependencies = [
  "nucle_vfs",
  "rand",
  "serde_json",
+ "tiny_http",
 ]
 
 [[package]]

@@ -170,6 +170,21 @@ enum Commands {
         prefix: Option<String>,
     },
 
+    /// Serve this pool's current state as Prometheus metrics over HTTP,
+    /// re-read fresh on every scrape at GET /metrics. This is a small,
+    /// separate exporter process -- it never handles store/retrieve/etc.
+    /// itself; those still only ever run as direct CLI invocations
+    /// against the same pool_dir. Runs until killed (Ctrl+C).
+    Serve {
+        /// Port to serve metrics on
+        #[arg(long, default_value_t = 9898)]
+        port: u16,
+        /// Bind address -- defaults to localhost only. Pass 0.0.0.0 to
+        /// expose beyond this machine, as an explicit opt-in.
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
+    },
+
     /// Simulate synthesis/sequencing noise on data
     Simulate {
         /// Input file to simulate
@@ -399,6 +414,7 @@ fn main() {
         Commands::EncryptPool => cmd_encrypt_pool(&pool_dir, passphrase.as_deref(), cli.json),
         Commands::DecryptPool => cmd_decrypt_pool(&pool_dir, passphrase.as_deref(), cli.json),
         Commands::Scan { prefix } => cmd_scan(prefix.as_deref().unwrap_or(""), &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Serve { port, bind } => cmd_serve(&bind, port, &pool_dir, passphrase.as_deref()),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -903,6 +919,66 @@ fn cmd_scan(prefix: &str, pool_dir: &std::path::Path, passphrase: Option<&str>, 
 
     if report.corrupted > 0 {
         std::process::exit(1);
+    }
+}
+
+fn cmd_serve(bind: &str, port: u16, pool_dir: &std::path::Path, passphrase: Option<&str>) {
+    let addr = format!("{}:{}", bind, port);
+    let server = match tiny_http::Server::http(&addr) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to start metrics server on '{}': {}", addr, e);
+            std::process::exit(1);
+        }
+    };
+    println!("Serving Prometheus metrics at http://{}/metrics (pool: '{}')", addr, pool_dir.display());
+    println!("Press Ctrl+C to stop.");
+
+    for request in server.incoming_requests() {
+        let response = metrics_response(request.method(), request.url(), pool_dir, passphrase);
+        let _ = request.respond(response);
+    }
+}
+
+/// Builds the response for one request -- a pure function, independent
+/// of the server loop itself, so it can be exercised directly in tests
+/// without actually binding a socket.
+fn metrics_response(
+    method: &tiny_http::Method,
+    url: &str,
+    pool_dir: &std::path::Path,
+    passphrase: Option<&str>,
+) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
+    if *method != tiny_http::Method::Get {
+        return tiny_http::Response::from_string("Method Not Allowed\n").with_status_code(405);
+    }
+    match url {
+        "/metrics" => {
+            // Re-opened fresh on every single scrape, deliberately --
+            // other processes (real nucle store/retrieve/etc. CLI
+            // invocations) are mutating pool_dir concurrently while this
+            // server runs, so a cached snapshot from startup would go
+            // stale immediately. Errors (a locked/corrupted pool, a
+            // wrong passphrase) surface as one failed scrape, not a
+            // crashed exporter -- the whole point of a long-running
+            // process is that one bad read shouldn't take it down.
+            let opened = match passphrase {
+                Some(p) => nucle_vfs::syscall::NucleOS::open_encrypted(pool_dir, 100, p),
+                None => nucle_vfs::syscall::NucleOS::open(pool_dir, 100),
+            };
+            match opened.and_then(|os| nucle_vfs::metrics::collect(&os, pool_dir)) {
+                Ok(m) => {
+                    let header = tiny_http::Header::from_bytes(
+                        &b"Content-Type"[..],
+                        &b"text/plain; version=0.0.4; charset=utf-8"[..],
+                    ).unwrap();
+                    tiny_http::Response::from_string(m.to_prometheus_text()).with_header(header)
+                }
+                Err(e) => tiny_http::Response::from_string(format!("scrape failed: {}\n", e)).with_status_code(500),
+            }
+        }
+        "/" => tiny_http::Response::from_string("NucleOS metrics exporter -- see /metrics\n"),
+        _ => tiny_http::Response::from_string("Not Found\n").with_status_code(404),
     }
 }
 
@@ -2288,6 +2364,7 @@ fn cmd_help() {
     println!("  nucle encrypt-pool                        Enable encryption at rest (needs --pool-key)");
     println!("  nucle decrypt-pool                        Disable encryption at rest (needs --pool-key)");
     println!("  nucle scan [prefix]                       Proactively scan for silent corruption");
+    println!("  nucle serve [--port N] [--bind ADDR]      Serve Prometheus metrics at /metrics");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");

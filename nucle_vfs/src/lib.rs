@@ -19,3 +19,4 @@ pub mod audit;
 pub mod confirm_policy;
 pub mod crypto;
 pub mod scan;
+pub mod metrics;
