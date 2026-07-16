@@ -1,9 +1,8 @@
 //! Proves `nucle store` then `nucle retrieve` genuinely persist across
 //! separate `nucle-cli` process invocations -- not just within one
-//! process's own memory. This is the actual repro from actions2.md's
-//! Step 4: before `NucleOS::open`/`persist` existed, this exact sequence
-//! failed with "file not found" because every command started a fresh,
-//! empty, in-memory `NucleOS::new()`.
+//! process's own memory. Before `NucleOS::open`/`persist` existed, this
+//! exact sequence failed with "file not found" because every command
+//! started a fresh, empty, in-memory `NucleOS::new()`.
 //!
 //! Spawns the real, compiled `nucle-cli` binary twice via
 //! `CARGO_BIN_EXE_nucle-cli` -- an in-memory `to_json`/`from_json`

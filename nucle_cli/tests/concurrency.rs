@@ -1,5 +1,5 @@
-//! Proves the optimistic-concurrency safety from actions2.md's Step 6: two
-//! `nucle store` invocations racing on the same pool directory never
+//! Proves the optimistic-concurrency safety: two `nucle store`
+//! invocations racing on the same pool directory never
 //! silently lose one's write. Spawns two real, concurrent `nucle-cli`
 //! processes (`std::process::Command::spawn`, not `.output()`, so neither
 //! blocks the other) -- unlike `nucle_vfs`'s own unit tests, which prove

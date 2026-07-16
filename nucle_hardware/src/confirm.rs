@@ -162,8 +162,8 @@ mod tests {
 
     #[test]
     fn qc_and_recovery_requests_are_not_effectful() {
-        // The actual design decision from actions2.md's Step 1: Qc/Recovery
-        // are read-only, so they must never require --confirm. Proven here
+        // Deliberate design decision: Qc/Recovery are read-only, so they
+        // must never require --confirm. Proven here
         // against fixtures shaped exactly like collect_hardware_requests'
         // real output, not just a generic Pure-effect stand-in.
         assert!(!is_effectful(&[qc_request("a.bin"), recovery_request("recovered")]));

@@ -1,4 +1,4 @@
-//! Step 9: `Result<T, E>` + `?` error propagation. Covers the full
+//! `Result<T, E>` + `?` error propagation. Covers the full
 //! pipeline this feature touches -- parsing the new syntax, type-checking
 //! its validity rules, conservative effect-joining across a `?`
 //! short-circuit, and real end-to-end execution where a genuine VFS
@@ -321,8 +321,8 @@ fn a_caught_store_failure_does_not_abort_the_run_and_a_fallback_pool_succeeds() 
 
     // Second run against the SAME NucleOS: `sample_a.txt`/`sample_c.txt`
     // already exist in `primary`/`backup`, so both real VFS writes now
-    // genuinely fail -- this is the actual motivating gap Step 9 closes.
-    // Before this feature, that failure would have aborted
+    // genuinely fail -- this is the actual motivating gap `Result<T,E>`/
+    // `?` closes. Before this feature, that failure would have aborted
     // `execute_program` entirely (a hard `Result::Err` via Rust's own
     // `?`); now it's caught inside `archive_in_primary`/
     // `confirm_backup_copy` and surfaced as a step, and the run completes.

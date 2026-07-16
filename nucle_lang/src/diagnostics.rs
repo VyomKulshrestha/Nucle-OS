@@ -5,7 +5,7 @@ use crate::typeck::Diagnostic;
 /// Render a diagnostic the way rustc/cargo do: `file:line:column: level
 /// [code]: message`, followed by the offending source line and a `^^^`
 /// underline under the diagnostic's exact span. Pure string formatting
-/// over what Step 0 (spans) and Step 1 (codes) already compute -- no new
+/// over the spans/codes the diagnostic already carries -- no new
 /// analysis, just making the existing data visible.
 pub fn render_snippet(path: &str, source: &str, diagnostic: &Diagnostic) -> String {
     let span = diagnostic.span;

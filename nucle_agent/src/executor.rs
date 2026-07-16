@@ -336,8 +336,8 @@ mod tests {
 
     #[test]
     fn test_execute_help_lists_tools_not_pool_status() {
-        // Regression guard for actions2.md's Step 2: the "help" command
-        // used to silently execute PoolStatus instead of real help text.
+        // Regression guard: the "help" command used to silently execute
+        // PoolStatus instead of real help text.
         let mut os = NucleOS::new(10);
         let report = Executor::run(&mut os, "help").unwrap();
         assert!(report.success);

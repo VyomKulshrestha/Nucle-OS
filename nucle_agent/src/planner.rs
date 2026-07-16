@@ -460,8 +460,8 @@ mod tests {
 
     #[test]
     fn test_plan_help_uses_the_help_tool_not_pool_status() {
-        // Regression guard for actions2.md's Step 2 bug fix: this used to
-        // silently call PoolStatus instead of showing real help text.
+        // Regression guard: this used to silently call PoolStatus instead
+        // of showing real help text.
         let plan = Planner::plan("help").unwrap();
         assert_eq!(plan.steps[0].tool, ToolName::Help);
     }

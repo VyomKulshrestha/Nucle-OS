@@ -1,5 +1,5 @@
-//! Proves the hierarchical, path-like namespace from actions2.md's Step 5:
-//! storing under a relative path like "docs/readme.txt" doesn't collide
+//! Proves the hierarchical, path-like namespace: storing under a
+//! relative path like "docs/readme.txt" doesn't collide
 //! with "downloads/readme.txt", and `nucle list <prefix>` filters by it.
 //! Spawns the real, compiled `nucle-cli` binary (`CARGO_BIN_EXE_nucle-cli`).
 
@@ -25,8 +25,8 @@ fn same_leaf_name_under_different_prefixes_stores_and_lists_independently() {
     std::fs::write(src_dir.join("docs/readme.txt"), b"the docs one").unwrap();
     std::fs::write(src_dir.join("downloads/readme.txt"), b"the downloads one").unwrap();
 
-    // Run with the source directory as cwd, so the relative "docs/readme.txt"
-    // argument is exactly what actions2.md's acceptance criterion names.
+    // Run with the source directory as cwd, so the relative
+    // "docs/readme.txt" argument keeps its directory prefix as given.
     for rel in ["docs/readme.txt", "downloads/readme.txt"] {
         let store = Command::new(nucle_cli_bin())
             .current_dir(&src_dir)

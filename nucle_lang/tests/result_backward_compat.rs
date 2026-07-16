@@ -1,4 +1,4 @@
-//! Guards Step 9's (`Result<T, E>` + `?`) central promise: a program using
+//! Guards `Result<T, E>` + `?`'s central promise: a program using
 //! none of the new syntax must produce byte-identical execution output
 //! (modulo two pre-existing, unrelated sources of non-determinism --
 //! see `normalize` below) before and after this feature.
@@ -115,7 +115,7 @@ fn execution_output_matches_pre_result_baseline() {
     assert_eq!(
         actual.trim_end(),
         expected.trim_end(),
-        "execution output for docs/examples/*.nsl changed -- Step 9 (Result<T,E>/?) must not \
+        "execution output for docs/examples/*.nsl changed -- Result<T,E>/? must not \
          alter behavior for programs that use none of its new syntax. If this diff is an \
          intentional, unrelated change to an existing example, regenerate the fixture; \
          otherwise this is exactly the regression this test exists to catch."

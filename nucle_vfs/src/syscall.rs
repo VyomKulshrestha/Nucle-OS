@@ -163,7 +163,7 @@ pub struct NucleOS {
     pub catalog: Catalog,
     /// Primer library for file addressing.
     pub primers: PrimerLibrary,
-    /// Search engine for semantic file lookup.
+    /// Search engine for metadata-similarity file lookup.
     pub search: SearchEngine,
     /// CRISPR simulator for selective retrieval.
     crispr: CrisprSimulator,
@@ -328,8 +328,8 @@ impl NucleOS {
     /// wrote), some other process has persisted a newer state since —
     /// writing now would silently discard that write, so this refuses
     /// instead with a clear, retryable error. Two `open()`s against the
-    /// same directory racing is now a real scenario (pools are durable,
-    /// Step 4), where it wasn't when every process got its own empty,
+    /// same directory racing is now a real scenario (pools are durable),
+    /// where it wasn't when every process got its own empty,
     /// throwaway state. On success, `self.loaded_version` advances, so a
     /// second `persist()` call on the same instance (no intervening
     /// external change) succeeds too, rather than conflicting with itself.
@@ -1439,9 +1439,8 @@ mod tests {
 
     #[test]
     fn a_file_stored_and_persisted_is_readable_after_reopening() {
-        // The actual repro from actions2.md's Step 4: this must succeed
-        // across two genuinely separate NucleOS instances, not just one
-        // process's own memory.
+        // This must succeed across two genuinely separate NucleOS
+        // instances, not just one process's own memory.
         let dir = scratch_pool_dir("roundtrip");
         let _ = std::fs::remove_dir_all(&dir);
 

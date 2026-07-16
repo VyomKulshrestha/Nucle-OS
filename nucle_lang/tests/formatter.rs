@@ -19,9 +19,9 @@ fn examples_dir() -> std::path::PathBuf {
 
 /// `nucle fmt --write` once, then `nucle fmt --check` forever after: every
 /// shipped example must both format without error and be a fixed point of
-/// formatting (formatting its own output changes nothing). This is the
-/// acceptance bar from actions.md's Step 5 plan, run for real against every
-/// file NucleScript actually ships, not just hand-picked snippets.
+/// formatting (formatting its own output changes nothing) -- run for real
+/// against every file NucleScript actually ships, not just hand-picked
+/// snippets.
 #[test]
 fn every_example_formats_and_is_idempotent() {
     let dir = examples_dir();

@@ -1,4 +1,4 @@
-//! Step 11: pattern matching over `Result<T, E>`. Covers the full
+//! Pattern matching over `Result<T, E>`. Covers the full
 //! pipeline this feature touches -- parsing `match`/`Ok`/`Err`/`=>`,
 //! type-checking its validity rules (scrutinee must be Result-shaped,
 //! both arms must unify), conservative effect-joining across both arms,
@@ -71,12 +71,12 @@ fn match_accepts_an_optional_trailing_comma() {
 
 #[test]
 fn arm_order_is_free_not_fixed_ok_then_err() {
-    // Step 14: the general N-arm matching engine checks exhaustiveness by
-    // variant *name*, not by position -- unlike the old fixed-two-arm
-    // form, `Err` may now come before `Ok` (matching a general enum's
-    // variants being name-checked, not position-checked). This is a
-    // deliberate, confirmed behavior change from the original Step 11
-    // design (see `Expr::Match`'s doc comment in ast.rs).
+    // The general N-arm matching engine checks exhaustiveness by variant
+    // *name*, not by position -- unlike the old fixed-two-arm form, `Err`
+    // may now come before `Ok` (matching a general enum's variants being
+    // name-checked, not position-checked). This is a deliberate,
+    // confirmed behavior change from the original two-arm-only design
+    // (see `Expr::Match`'s doc comment in ast.rs).
     let src = format!(
         "{}fn f() returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let saved: DnaFile = match attempt {{\n        Err(reason) => (store \"b.txt\" into archive)?,\n        Ok(file) => file\n    }}\n}}\n",
         POOL
@@ -203,7 +203,7 @@ fn a_match_expression_nests_inside_another_matchs_scrutinee() {
 #[test]
 fn destructive_effect_in_only_the_err_arm_still_requires_confirmation() {
     // Mirrors `If`'s existing "join across the untaken branch too"
-    // precedent (and Step 9's identical reasoning for `?`): a
+    // precedent (and `?`'s identical reasoning): a
     // `Destructive` operation that only runs in the `Err` arm still
     // counts, since effect analysis never models "this branch might not
     // run".

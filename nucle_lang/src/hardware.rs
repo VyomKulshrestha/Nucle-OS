@@ -260,8 +260,8 @@ mod tests {
 
     #[test]
     fn qc_and_recovery_requests_do_not_require_confirmation() {
-        // Regression guard for the design decision in actions2.md's Step 1:
-        // Qc/Recovery are read-only, so nucle_hardware::confirm's
+        // Regression guard for a deliberate design decision: Qc/Recovery
+        // are read-only, so nucle_hardware::confirm's
         // is_effectful/count_effectful must never treat them as
         // cost-bearing/destructive. Exercised for real here rather than
         // only in nucle_hardware's own tests, since the Effect::Pure choice

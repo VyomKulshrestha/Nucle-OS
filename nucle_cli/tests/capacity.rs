@@ -1,9 +1,9 @@
-//! Proves the pool capacity limits from actions2.md's Step 7: a small
-//! configured capacity refuses a write that would exceed it with a clear,
-//! capacity-specific error (not the old confusing primer-exhaustion
-//! message), the limit persists across separate `nucle-cli` invocations,
-//! and clearing it removes the restriction. Spawns the real, compiled
-//! `nucle-cli` binary (`CARGO_BIN_EXE_nucle-cli`).
+//! Proves the pool capacity limits: a small configured capacity refuses
+//! a write that would exceed it with a clear, capacity-specific error
+//! (not the old confusing primer-exhaustion message), the limit persists
+//! across separate `nucle-cli` invocations, and clearing it removes the
+//! restriction. Spawns the real, compiled `nucle-cli` binary
+//! (`CARGO_BIN_EXE_nucle-cli`).
 
 use std::path::PathBuf;
 use std::process::Command;

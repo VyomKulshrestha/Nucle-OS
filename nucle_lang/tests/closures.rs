@@ -1,4 +1,4 @@
-//! Step 12: closures / higher-order functions. Covers the full pipeline
+//! Closures / higher-order functions. Covers the full pipeline
 //! this feature touches -- parsing `Fn(...)`/anonymous `fn(...) {...}`
 //! literals, type-checking (capture, return-type validation, arg
 //! checking against a closure's own signature), effect analysis actually
