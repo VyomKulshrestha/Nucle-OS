@@ -344,6 +344,27 @@ scale this limitation was originally diagnosed at
 See [docs/architecture.md](docs/architecture.md#current-status) for the
 full investigation.
 
+```
+$ nucle benchmark -p nanopore -r 12
+
+╔══════════════════════════════════════════════════════════════════════════════════════════════════╗
+║                              NucleOS Full-Pipeline Benchmark                                      ║
+╠══════════════════════════════════════════════════════════════════════════════════════════════════╣
+║ File               │ Size(B) │ Strands │ Error Rate │ Recover │ Cost(USD) │    GC% │  HpolV ║
+╟────────────────────┼─────────┼─────────┼────────────┼─────────┼───────────┼────────┼────────╢
+║ small_text.txt     │      96 │      16 │      7.16% │    PASS │ $  0.0324 │  47.5% │      0 ║
+║ archive.bin        │     327 │      26 │      7.04% │    PASS │ $  0.1134 │  46.2% │      0 ║
+║ sample.fasta       │     176 │      20 │      7.14% │    PASS │ $  0.0648 │  45.3% │      0 ║
+║ image.png          │     294 │      24 │      7.00% │    PASS │ $  0.0972 │  47.0% │      0 ║
+╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
+```
+
+At the CLI's default `-r 4` (fine for Illumina's ~0.3% rate, thin for
+Nanopore's ~7%), 3 of the 4 standard fixtures still pass; `sample.fasta`
+still FAILs — expected, not a regression, since 4 parity strands is
+genuinely low redundancy at Nanopore's per-base rate, and raising `-r`
+is exactly the intended knob for that tradeoff, not a bug to fix.
+
 ### End-to-End Roundtrip: Encode → Noise → Recover
 
 ```
