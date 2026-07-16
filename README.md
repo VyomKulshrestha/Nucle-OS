@@ -1,6 +1,8 @@
 # Nucle-OS — DNA Storage Engine
 
 [![Release](https://img.shields.io/github/v/release/VyomKulshrestha/Nucle-OS)](https://github.com/VyomKulshrestha/Nucle-OS/releases)
+[![CI](https://github.com/VyomKulshrestha/Nucle-OS/actions/workflows/ci.yml/badge.svg)](https://github.com/VyomKulshrestha/Nucle-OS/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **A complete software-defined DNA storage operating system.**
 
@@ -1113,6 +1115,13 @@ packages/        — NucleScript package registry (packages/registry.json) and p
 ```
 
 ---
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+dev environment setup, code style, and how to open a pull request. Please
+also read the [Code of Conduct](CODE_OF_CONDUCT.md). Found a security
+issue? See [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
 ## License
 
