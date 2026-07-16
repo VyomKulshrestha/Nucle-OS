@@ -1,0 +1,11 @@
+# Force consistent LF line endings on checkout, regardless of the
+# checking-out machine's core.autocrlf setting. Without this, a fixture
+# file like docs/examples/sample_a.txt gets checked out with CRLF on a
+# Windows machine with core.autocrlf=true but LF on Linux/macOS CI --
+# same git blob, different byte content once read from disk. That's
+# invisible until something reads a fixture file's exact bytes (e.g.
+# nucle_lang/tests/result_backward_compat.rs's golden-fixture comparison,
+# which bakes in a stored file's exact byte count) and compares it
+# across machines -- exactly what broke the first time this workspace's
+# tests ran on CI instead of only ever locally on Windows.
+* text=auto eol=lf
