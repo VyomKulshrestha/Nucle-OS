@@ -38,6 +38,15 @@ struct Cli {
     #[arg(long, global = true)]
     pool_dir: Option<String>,
 
+    /// Passphrase to unlock an encrypted pool (see `nucle encrypt-pool`).
+    /// Defaults to NUCLEOS_POOL_PASSPHRASE if set. Ignored (with a note)
+    /// if the pool isn't actually encrypted. Note: passing this directly
+    /// on the command line can leak via shell history or a process
+    /// listing (`ps`) -- the environment variable is marginally safer,
+    /// though not perfectly so either.
+    #[arg(long, global = true)]
+    pool_key: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -140,6 +149,17 @@ enum Commands {
         #[arg(long)]
         remove: Option<String>,
     },
+
+    /// Enable encryption at rest for this pool's stored state, protected
+    /// by a passphrase (--pool-key or NUCLEOS_POOL_PASSPHRASE). Errors if
+    /// the pool is already encrypted.
+    EncryptPool,
+
+    /// Disable encryption at rest for this pool, decrypting its state
+    /// back to plaintext. Requires the pool's current passphrase
+    /// (--pool-key or NUCLEOS_POOL_PASSPHRASE). Errors if the pool isn't
+    /// encrypted.
+    DecryptPool,
 
     /// Simulate synthesis/sequencing noise on data
     Simulate {
@@ -353,19 +373,22 @@ enum HardwareSubcommand {
 fn main() {
     let cli = Cli::parse();
     let pool_dir = resolve_pool_dir(cli.pool_dir.as_deref());
+    let passphrase = resolve_passphrase(cli.pool_key.as_deref());
 
     match cli.command {
         Commands::Encode { file, output } => cmd_encode(&file, output.as_deref()),
         Commands::Decode { file, output, size } => cmd_decode(&file, output.as_deref(), size),
-        Commands::Store { file, redundancy } => cmd_store(&file, redundancy, &pool_dir, cli.json),
-        Commands::Retrieve { name } => cmd_retrieve(&name, &pool_dir, cli.json),
-        Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), &pool_dir, cli.json),
-        Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, cli.json),
-        Commands::Pool => cmd_pool(&pool_dir, cli.json),
-        Commands::List { prefix } => cmd_list(prefix.as_deref().unwrap_or(""), &pool_dir, cli.json),
-        Commands::Capacity { max_nucleotides, unlimited } => cmd_capacity(max_nucleotides, unlimited, &pool_dir, cli.json),
+        Commands::Store { file, redundancy } => cmd_store(&file, redundancy, &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Retrieve { name } => cmd_retrieve(&name, &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Pool => cmd_pool(&pool_dir, passphrase.as_deref(), cli.json),
+        Commands::List { prefix } => cmd_list(prefix.as_deref().unwrap_or(""), &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Capacity { max_nucleotides, unlimited } => cmd_capacity(max_nucleotides, unlimited, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Audit { tail } => cmd_audit(tail, &pool_dir, cli.json),
         Commands::ConfirmUsers { add, remove } => cmd_confirm_users(add, remove, &pool_dir, cli.json),
+        Commands::EncryptPool => cmd_encrypt_pool(&pool_dir, passphrase.as_deref(), cli.json),
+        Commands::DecryptPool => cmd_decrypt_pool(&pool_dir, passphrase.as_deref(), cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -385,7 +408,7 @@ fn main() {
         Commands::Package { action } => cmd_package(action, cli.json),
         Commands::Hardware { subcommand } => cmd_hardware(subcommand, &pool_dir, cli.json),
         Commands::Doctor => cmd_doctor(cli.json),
-        Commands::Agent { command } => cmd_agent(&command.join(" "), &pool_dir),
+        Commands::Agent { command } => cmd_agent(&command.join(" "), &pool_dir, passphrase.as_deref()),
         Commands::Tools => cmd_help(),
     }
 }
@@ -504,10 +527,29 @@ fn resolve_pool_dir(explicit: Option<&str>) -> std::path::PathBuf {
     std::path::PathBuf::from(".nucleos")
 }
 
+/// Resolves the passphrase for an encrypted pool, in priority order: an
+/// explicit `--pool-key` flag, then `NUCLEOS_POOL_PASSPHRASE`. `None` if
+/// neither is set -- fine for an unencrypted pool, an error (from
+/// `NucleOS::open`'s own clear message) for an encrypted one.
+fn resolve_passphrase(explicit: Option<&str>) -> Option<String> {
+    explicit.map(|s| s.to_string()).or_else(|| std::env::var("NUCLEOS_POOL_PASSPHRASE").ok())
+}
+
 /// Opens the pool at `pool_dir`, exiting with a clear error if it can't be
 /// read -- shared by every command that touches the real, durable pool.
-fn open_pool(pool_dir: &std::path::Path) -> NucleOS {
-    match NucleOS::open(pool_dir, 100) {
+/// `passphrase` unlocks an encrypted pool (see `nucle encrypt-pool`); a
+/// passphrase given for a pool that isn't actually encrypted is a no-op,
+/// noted rather than silently ignored, in case the caller expected it to
+/// matter.
+fn open_pool(pool_dir: &std::path::Path, passphrase: Option<&str>) -> NucleOS {
+    if passphrase.is_some() && !nucle_vfs::crypto::is_encrypted(pool_dir) {
+        eprintln!("Note: --pool-key/NUCLEOS_POOL_PASSPHRASE given but this pool isn't encrypted; ignoring.");
+    }
+    let result = match passphrase {
+        Some(p) => NucleOS::open_encrypted(pool_dir, 100, p),
+        None => NucleOS::open(pool_dir, 100),
+    };
+    match result {
         Ok(os) => os,
         Err(e) => {
             eprintln!("Failed to open pool at '{}': {}", pool_dir.display(), e);
@@ -527,7 +569,7 @@ fn persist_pool(os: &mut NucleOS, pool_dir: &std::path::Path) {
     }
 }
 
-fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, json: bool) {
+fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
     let data = match fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -550,7 +592,7 @@ fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, json: bo
         file
     };
 
-    let mut os = open_pool(pool_dir);
+    let mut os = open_pool(pool_dir, passphrase);
     match os.dna_write(filename, &data, redundancy) {
         Ok(result) => {
             persist_pool(&mut os, pool_dir);
@@ -568,8 +610,8 @@ fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, json: bo
     }
 }
 
-fn cmd_retrieve(name: &str, pool_dir: &std::path::Path, json: bool) {
-    let mut os = open_pool(pool_dir);
+fn cmd_retrieve(name: &str, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let mut os = open_pool(pool_dir, passphrase);
     match os.dna_read(name) {
         Ok(data) => {
             // dna_read updates the file's recovery manifest -- persist so
@@ -619,8 +661,8 @@ fn cmd_retrieve(name: &str, pool_dir: &std::path::Path, json: bool) {
     }
 }
 
-fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, pool_dir: &std::path::Path, json: bool) {
-    let mut os = open_pool(pool_dir);
+fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let mut os = open_pool(pool_dir, passphrase);
     match nucle_vfs::migrate::migrate_object(&mut os, name, redundancy, codec) {
         Ok(manifest) => {
             persist_pool(&mut os, pool_dir);
@@ -641,8 +683,8 @@ fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, pool_
     }
 }
 
-fn cmd_search(query: &str, top_k: usize, pool_dir: &std::path::Path, json: bool) {
-    let os = open_pool(pool_dir);
+fn cmd_search(query: &str, top_k: usize, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let os = open_pool(pool_dir, passphrase);
     let results = os.dna_search(query, top_k);
     if json {
         println!("{}", serde_json::to_string_pretty(&results).unwrap());
@@ -658,8 +700,8 @@ fn cmd_search(query: &str, top_k: usize, pool_dir: &std::path::Path, json: bool)
     }
 }
 
-fn cmd_pool(pool_dir: &std::path::Path, json: bool) {
-    let os = open_pool(pool_dir);
+fn cmd_pool(pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let os = open_pool(pool_dir, passphrase);
     let status = os.dna_stat();
     if json {
         println!("{}", serde_json::to_string_pretty(&status).unwrap());
@@ -668,8 +710,8 @@ fn cmd_pool(pool_dir: &std::path::Path, json: bool) {
     }
 }
 
-fn cmd_list(prefix: &str, pool_dir: &std::path::Path, json: bool) {
-    let os = open_pool(pool_dir);
+fn cmd_list(prefix: &str, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let os = open_pool(pool_dir, passphrase);
     let files = os.dna_list(prefix);
     if json {
         println!("{}", serde_json::to_string_pretty(&files).unwrap());
@@ -689,8 +731,8 @@ fn cmd_list(prefix: &str, pool_dir: &std::path::Path, json: bool) {
     }
 }
 
-fn cmd_capacity(max_nucleotides: Option<usize>, unlimited: bool, pool_dir: &std::path::Path, json: bool) {
-    let mut os = open_pool(pool_dir);
+fn cmd_capacity(max_nucleotides: Option<usize>, unlimited: bool, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let mut os = open_pool(pool_dir, passphrase);
 
     // Any explicit setting request (either --unlimited or a value)
     // persists the new configuration; omitting both just reports status.
@@ -785,6 +827,53 @@ fn cmd_confirm_users(add: Option<String>, remove: Option<String>, pool_dir: &std
         println!("No confirm-allowlist configured -- any OS user may pass --confirm.");
     } else {
         println!("Confirm-allowlist: {}", policy.allowed_users.join(", "));
+    }
+}
+
+fn cmd_encrypt_pool(pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let Some(passphrase) = passphrase else {
+        eprintln!("Encrypting a pool requires a passphrase: pass --pool-key <passphrase> or set NUCLEOS_POOL_PASSPHRASE.");
+        std::process::exit(1);
+    };
+
+    // Opened with no passphrase: if the pool is already encrypted, this
+    // fails with open()'s own clear "is encrypted" error, which is
+    // exactly the right refusal here too.
+    let mut os = open_pool(pool_dir, None);
+    match os.enable_encryption(pool_dir, passphrase) {
+        Ok(()) => {
+            if json {
+                println!("{}", serde_json::json!({"status": "encrypted"}));
+            } else {
+                println!("✓ Pool at '{}' is now encrypted at rest.", pool_dir.display());
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to encrypt pool: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_decrypt_pool(pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let Some(passphrase) = passphrase else {
+        eprintln!("Decrypting a pool requires its current passphrase: pass --pool-key <passphrase> or set NUCLEOS_POOL_PASSPHRASE.");
+        std::process::exit(1);
+    };
+
+    let mut os = open_pool(pool_dir, Some(passphrase));
+    match os.disable_encryption(pool_dir) {
+        Ok(()) => {
+            if json {
+                println!("{}", serde_json::json!({"status": "decrypted"}));
+            } else {
+                println!("✓ Pool at '{}' is no longer encrypted.", pool_dir.display());
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to decrypt pool: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
@@ -2129,7 +2218,7 @@ fn cmd_doctor(json: bool) {
     }
 }
 
-fn cmd_agent(command: &str, pool_dir: &std::path::Path) {
+fn cmd_agent(command: &str, pool_dir: &std::path::Path, passphrase: Option<&str>) {
     if command.is_empty() {
         println!("Usage: nucle agent <natural language command>");
         println!("\nExamples:");
@@ -2140,7 +2229,7 @@ fn cmd_agent(command: &str, pool_dir: &std::path::Path) {
         return;
     }
 
-    let mut os = open_pool(pool_dir);
+    let mut os = open_pool(pool_dir, passphrase);
     match Executor::run(&mut os, command) {
         Ok(report) => {
             // A single agent command could be any tool, including several
@@ -2167,6 +2256,8 @@ fn cmd_help() {
     println!("  nucle capacity [max] [--unlimited]        Show or set the pool's capacity limit");
     println!("  nucle audit [--tail N]                     Show the pool's audit log");
     println!("  nucle confirm-users [--add|--remove USER]  Show or edit who may pass --confirm for hardware export");
+    println!("  nucle encrypt-pool                        Enable encryption at rest (needs --pool-key)");
+    println!("  nucle decrypt-pool                        Disable encryption at rest (needs --pool-key)");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");

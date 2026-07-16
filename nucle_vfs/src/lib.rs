@@ -17,3 +17,4 @@ pub mod syscall;
 pub mod migrate;
 pub mod audit;
 pub mod confirm_policy;
+pub mod crypto;
