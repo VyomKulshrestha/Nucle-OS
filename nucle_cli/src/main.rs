@@ -128,6 +128,19 @@ enum Commands {
         tail: Option<usize>,
     },
 
+    /// Show or edit the OS usernames allowed to pass --confirm for
+    /// cost-bearing/destructive `nucle hardware export` requests against
+    /// this pool. Omit both flags to just show the current allowlist --
+    /// empty means unrestricted, matching today's default.
+    ConfirmUsers {
+        /// Add a username to the allowlist
+        #[arg(long)]
+        add: Option<String>,
+        /// Remove a username from the allowlist
+        #[arg(long)]
+        remove: Option<String>,
+    },
+
     /// Simulate synthesis/sequencing noise on data
     Simulate {
         /// Input file to simulate
@@ -352,6 +365,7 @@ fn main() {
         Commands::List { prefix } => cmd_list(prefix.as_deref().unwrap_or(""), &pool_dir, cli.json),
         Commands::Capacity { max_nucleotides, unlimited } => cmd_capacity(max_nucleotides, unlimited, &pool_dir, cli.json),
         Commands::Audit { tail } => cmd_audit(tail, &pool_dir, cli.json),
+        Commands::ConfirmUsers { add, remove } => cmd_confirm_users(add, remove, &pool_dir, cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -369,7 +383,7 @@ fn main() {
         Commands::Plan { source } => cmd_plan(&source),
         Commands::Packages => cmd_packages(),
         Commands::Package { action } => cmd_package(action, cli.json),
-        Commands::Hardware { subcommand } => cmd_hardware(subcommand, cli.json),
+        Commands::Hardware { subcommand } => cmd_hardware(subcommand, &pool_dir, cli.json),
         Commands::Doctor => cmd_doctor(cli.json),
         Commands::Agent { command } => cmd_agent(&command.join(" "), &pool_dir),
         Commands::Tools => cmd_help(),
@@ -734,6 +748,43 @@ fn cmd_audit(tail: Option<usize>, pool_dir: &std::path::Path, json: bool) {
                 e.timestamp, status, e.operation, e.filename, archive, e.detail
             );
         }
+    }
+}
+
+fn cmd_confirm_users(add: Option<String>, remove: Option<String>, pool_dir: &std::path::Path, json: bool) {
+    let mut policy = match nucle_vfs::confirm_policy::load(pool_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to read pool config at '{}': {}", pool_dir.display(), e);
+            std::process::exit(1);
+        }
+    };
+
+    let mut changed = false;
+    if let Some(user) = add {
+        if !policy.allowed_users.contains(&user) {
+            policy.allowed_users.push(user);
+        }
+        changed = true;
+    }
+    if let Some(user) = remove {
+        policy.allowed_users.retain(|u| u != &user);
+        changed = true;
+    }
+
+    if changed {
+        if let Err(e) = nucle_vfs::confirm_policy::save(pool_dir, &policy) {
+            eprintln!("Failed to save pool config to '{}': {}", pool_dir.display(), e);
+            std::process::exit(1);
+        }
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&policy).unwrap());
+    } else if policy.allowed_users.is_empty() {
+        println!("No confirm-allowlist configured -- any OS user may pass --confirm.");
+    } else {
+        println!("Confirm-allowlist: {}", policy.allowed_users.join(", "));
     }
 }
 
@@ -1646,13 +1697,13 @@ fn indexed_output_path(base: &str, index: usize) -> String {
     }
 }
 
-fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
+fn cmd_hardware(subcommand: HardwareSubcommand, pool_dir: &std::path::Path, json: bool) {
     match subcommand {
         HardwareSubcommand::Export { source, output, provider, confirm, simulated_delay_ms } => {
             if source.len() == 1 {
-                export_single(&source[0], &output, &provider, confirm, simulated_delay_ms, json);
+                export_single(&source[0], &output, &provider, confirm, simulated_delay_ms, pool_dir, json);
             } else {
-                export_multiple(&source, &output, &provider, confirm, simulated_delay_ms, json);
+                export_multiple(&source, &output, &provider, confirm, simulated_delay_ms, pool_dir, json);
             }
         }
     }
@@ -1661,7 +1712,7 @@ fn cmd_hardware(subcommand: HardwareSubcommand, json: bool) {
 /// The original, single-file export path — unchanged output shape (a flat
 /// JSON object on success) so no existing consumer of `nucle hardware
 /// export <file>` breaks.
-fn export_single(source: &str, output: &str, provider: &str, confirm: bool, simulated_delay_ms: u64, json: bool) {
+fn export_single(source: &str, output: &str, provider: &str, confirm: bool, simulated_delay_ms: u64, pool_dir: &std::path::Path, json: bool) {
     let requests = match compile_source(source) {
         Ok(r) => r,
         Err(e) => {
@@ -1672,9 +1723,22 @@ fn export_single(source: &str, output: &str, provider: &str, confirm: bool, simu
     let effectful_count = nucle_hardware::count_effectful(&requests);
     let delay = std::time::Duration::from_millis(simulated_delay_ms);
 
-    // The confirmation gate lives in nucle_hardware::confirm, not here, so
-    // every consumer of Provider gets the same safety check — not just this
-    // CLI command.
+    // An additional, pool-scoped gate on top of nucle_hardware::confirm's
+    // own bare bool check: if this pool has a confirm-allowlist configured
+    // (nucle confirm-users --add), the invoking OS user must be on it, or
+    // this refuses before the provider ever sees the batch -- same as
+    // nucle_hardware::confirm's own "refuse before submission" shape, just
+    // one layer earlier. A no-op for every pool that hasn't configured one.
+    if effectful_count > 0 && confirm {
+        if let Err(e) = nucle_vfs::confirm_policy::check(pool_dir) {
+            eprintln!("Refusing to submit: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    // The confirmation gate itself lives in nucle_hardware::confirm, not
+    // here, so every consumer of Provider gets the same safety check — not
+    // just this CLI command.
     let (used_provider, result): (&str, Result<String, String>) = match provider {
         "mock" => ("mock", nucle_hardware::submit_with_confirmation(&nucle_hardware::MockProvider, &requests, confirm)),
         "mock-delayed" => (
@@ -1732,7 +1796,7 @@ struct PendingSource {
 /// submissions never block on each other, even against `mock-delayed`'s real
 /// background-thread latency — and finally waits on all of them and reports
 /// per-source success/failure.
-fn export_multiple(sources: &[String], output: &str, provider: &str, confirm: bool, simulated_delay_ms: u64, json: bool) {
+fn export_multiple(sources: &[String], output: &str, provider: &str, confirm: bool, simulated_delay_ms: u64, pool_dir: &std::path::Path, json: bool) {
     let mut submissions = Vec::new();
     for (i, src) in sources.iter().enumerate() {
         let requests = match compile_source(src) {
@@ -1749,13 +1813,27 @@ fn export_multiple(sources: &[String], output: &str, provider: &str, confirm: bo
         });
     }
 
+    let mut any_effectful = false;
     for sub in &submissions {
         let effectful = nucle_hardware::count_effectful(&sub.requests);
-        if effectful > 0 && !confirm {
-            eprintln!(
-                "Refusing to submit: '{}' contains {} cost-bearing/destructive request(s) without confirmation.",
-                sub.source, effectful
-            );
+        if effectful > 0 {
+            any_effectful = true;
+            if !confirm {
+                eprintln!(
+                    "Refusing to submit: '{}' contains {} cost-bearing/destructive request(s) without confirmation.",
+                    sub.source, effectful
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Same pool-scoped OS-user allowlist as export_single, checked once
+    // for the whole batch of sources rather than per-source (it's the
+    // same invoking user and the same pool_dir for all of them).
+    if any_effectful && confirm {
+        if let Err(e) = nucle_vfs::confirm_policy::check(pool_dir) {
+            eprintln!("Refusing to submit: {}", e);
             std::process::exit(1);
         }
     }
@@ -2088,6 +2166,7 @@ fn cmd_help() {
     println!("  nucle list [prefix]                       List stored files, optionally by name prefix");
     println!("  nucle capacity [max] [--unlimited]        Show or set the pool's capacity limit");
     println!("  nucle audit [--tail N]                     Show the pool's audit log");
+    println!("  nucle confirm-users [--add|--remove USER]  Show or edit who may pass --confirm for hardware export");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");
