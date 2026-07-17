@@ -1,13 +1,15 @@
 // Pattern matching over `Result<T, E>` -- unlike
 // `result_fallback_store.nsl` (which needs a *second* caller-side
 // function to inspect a caught `Err`), `match` branches on `Ok`/`Err`
-// directly inside the same function: try storing `sample_a.txt`, and
+// directly inside the same function: try storing the given target, and
 // fall back to a *different* file (`sample_b.txt`, into a secondary
-// pool) on failure, without a second call. Calling this twice within
-// one run demonstrates both arms: the first call's store into `primary`
-// succeeds (`Ok`); the second's fails ("file already exists" -- NucleOS
-// tracks filenames globally, not per-pool, so a same-named fallback
-// could never succeed either) and falls back to `secondary` (`Err`).
+// pool) on failure, without a second call. Each function below takes
+// its target as a parameter (rather than a hardcoded filename) so it
+// can be called once with a real, existing file (the `Ok` arm) and once
+// with a filename that genuinely doesn't exist (the `Err` arm) --
+// `dna_write` versions a repeated filename instead of rejecting it, so
+// storing the same name twice no longer reliably fails the way it used
+// to.
 
 pool primary: DnaPool {
     codec: Ternary,
@@ -25,8 +27,8 @@ pool secondary: DnaPool {
 /// different file into `secondary` in the same function -- the `Err`
 /// arm's `?` still propagates a *second* real failure (if `secondary`
 /// is also full) rather than papering over it.
-fn archive_with_fallback() returns Result<DnaFile, Str> {
-    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+fn archive_with_fallback(target: File) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store target into primary
     let saved: DnaFile = match attempt {
         Ok(file) => file,
         Err(reason) => (store "sample_b.txt" into secondary)?
@@ -37,11 +39,11 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
 /// result (not just a plain `Result` binding), with `Ok`/`Err` used as
 /// match-arm bodies instead of a bare unwrapped value or a `store`/`?`
 /// expression. Called twice below: the first call's `store` succeeds,
-/// so the `Ok` arm's `Ok(file)` re-wrap runs; the second's fails (same
-/// global-filename reasoning as `archive_with_fallback` above), so the
-/// `Err` arm's `Err(reason)` runs and the outer `?` propagates it.
-fn archive_with_labeled_outcome() returns Result<DnaFile, Str> {
-    let attempt: Result<DnaFile, Str> = store "sample_c.txt" into primary
+/// so the `Ok` arm's `Ok(file)` re-wrap runs; the second's fails (a
+/// nonexistent target), so the `Err` arm's `Err(reason)` runs and the
+/// outer `?` propagates it.
+fn archive_with_labeled_outcome(target: File) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store target into primary
     let saved: DnaFile = (match attempt {
             Ok(file) => Ok(file),
             Err(reason) => Err(reason)
@@ -69,12 +71,12 @@ fn archive_with_nested_check() returns Result<DnaFile, Str> {
     }
 }
 
-let first: Result<DnaFile, Str> = archive_with_fallback()
+let first: Result<DnaFile, Str> = archive_with_fallback("sample_a.txt")
 
-let second: Result<DnaFile, Str> = archive_with_fallback()
+let second: Result<DnaFile, Str> = archive_with_fallback("this_file_does_not_exist.txt")
 
-let third: Result<DnaFile, Str> = archive_with_labeled_outcome()
+let third: Result<DnaFile, Str> = archive_with_labeled_outcome("sample_c.txt")
 
-let fourth: Result<DnaFile, Str> = archive_with_labeled_outcome()
+let fourth: Result<DnaFile, Str> = archive_with_labeled_outcome("this_file_does_not_exist_either.txt")
 
 let fifth: Result<DnaFile, Str> = archive_with_nested_check()

@@ -245,11 +245,11 @@ fn the_ok_arm_runs_and_the_err_arm_runs_and_its_fallback_write_lands() {
 
     // First call's primary store succeeds -- the `Ok` arm ran.
     assert!(result.steps.iter().any(|s| s.contains("✓ store into primary")), "steps: {:?}", result.steps);
-    // Second call's primary store fails (same filename, already exists),
-    // and its `Err` arm's fallback into `secondary` actually lands.
+    // Second call's primary store fails (a nonexistent target), and its
+    // `Err` arm's fallback into `secondary` actually lands.
     assert!(
-        result.steps.iter().any(|s| s.contains("✗ store into primary") && s.contains("already exists")),
-        "expected a caught duplicate-file failure, got: {:?}",
+        result.steps.iter().any(|s| s.contains("✗ store into primary") && s.contains("this_file_does_not_exist.txt")),
+        "expected a caught missing-file failure, got: {:?}",
         result.steps
     );
     assert!(result.steps.iter().any(|s| s.contains("✓ store into secondary")), "steps: {:?}", result.steps);

@@ -309,35 +309,31 @@ fn a_caught_store_failure_does_not_abort_the_run_and_a_fallback_pool_succeeds() 
     let mut os = nucle_vfs::syscall::NucleOS::new(100);
     let mut plan = compile(&source).expect("the example must compile cleanly");
 
-    // First run: `archive_in_primary()` succeeds (nothing in `primary`
-    // yet), and the top-level `outcome` binding holds `Ok(...)`.
-    // `confirm_backup_copy()` (a separate top-level binding demonstrating
-    // `Ok(...)` construction) also runs every call and lands its own
-    // store into `backup`, so two files exist after this first run.
-    let first = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
-    assert!(first.steps.iter().any(|s| s.contains("✓ store into primary")), "steps: {:?}", first.steps);
-    assert!(first.steps.iter().any(|s| s.contains("✓ store into backup")), "steps: {:?}", first.steps);
-    assert_eq!(os.dna_stat().file_count, 2);
-
-    // Second run against the SAME NucleOS: `sample_a.txt`/`sample_c.txt`
-    // already exist in `primary`/`backup`, so both real VFS writes now
-    // genuinely fail -- this is the actual motivating gap `Result<T,E>`/
-    // `?` closes. Before this feature, that failure would have aborted
-    // `execute_program` entirely (a hard `Result::Err` via Rust's own
-    // `?`); now it's caught inside `archive_in_primary`/
-    // `confirm_backup_copy` and surfaced as a step, and the run completes.
-    let second = execute_program(&mut os, &mut plan, &dir).expect("a caught Result::Err must not abort execute_program");
+    // `archive_in_primary("sample_a.txt")`/`confirm_backup_copy("sample_c.txt")`:
+    // real, existing files, so both top-level `outcome`/`confirmed`
+    // bindings hold `Ok(...)` and land real stores into `primary`/`backup`.
+    // `archive_in_primary("this_file_does_not_exist.txt")`/
+    // `confirm_backup_copy("this_file_does_not_exist.txt")`: a nonexistent
+    // target, so both real VFS writes now genuinely fail -- this is the
+    // actual motivating gap `Result<T,E>`/`?` closes. Before this feature,
+    // that failure would have aborted `execute_program` entirely (a hard
+    // `Result::Err` via Rust's own `?`); now it's caught inside
+    // `archive_in_primary`/`confirm_backup_copy` and surfaced as a step,
+    // and the run completes.
+    let result = execute_program(&mut os, &mut plan, &dir).expect("a caught Result::Err must not abort execute_program");
+    assert!(result.steps.iter().any(|s| s.contains("✓ store into primary")), "steps: {:?}", result.steps);
+    assert!(result.steps.iter().any(|s| s.contains("✓ store into backup")), "steps: {:?}", result.steps);
     assert!(
-        second.steps.iter().any(|s| s.contains("✗ store into primary") && s.contains("already exists")),
-        "expected a caught duplicate-file failure, got: {:?}",
-        second.steps
+        result.steps.iter().any(|s| s.contains("✗ store into primary") && s.contains("this_file_does_not_exist.txt")),
+        "expected a caught missing-file failure, got: {:?}",
+        result.steps
     );
     assert!(
-        second.steps.iter().any(|s| s.contains("✗ store into backup") && s.contains("already exists")),
-        "expected a caught duplicate-file failure, got: {:?}",
-        second.steps
+        result.steps.iter().any(|s| s.contains("✗ store into backup") && s.contains("this_file_does_not_exist.txt")),
+        "expected a caught missing-file failure, got: {:?}",
+        result.steps
     );
-    // Nothing new was actually written on the failed attempt.
+    // Only the two successful stores actually landed.
     assert_eq!(os.dna_stat().file_count, 2);
 }
 
@@ -368,15 +364,15 @@ fn a_statement_form_store_inside_a_function_body_actually_executes() {
 fn a_statement_form_store_failure_short_circuits_the_rest_of_the_function_body() {
     let dir = examples_dir();
     let src = format!(
-        "{}fn f() returns Result<DnaFile, Str> {{\n    store \"sample_a.txt\" into archive\n    store \"sample_a.txt\" into archive\n    let confirmation: Result<DnaFile, Str> = store \"sample_b.txt\" into archive\n    let saved: DnaFile = confirmation?\n}}\nlet result: Result<DnaFile, Str> = f()\n",
+        "{}fn f() returns Result<DnaFile, Str> {{\n    store \"sample_a.txt\" into archive\n    store \"this_file_does_not_exist.txt\" into archive\n    let confirmation: Result<DnaFile, Str> = store \"sample_b.txt\" into archive\n    let saved: DnaFile = confirmation?\n}}\nlet result: Result<DnaFile, Str> = f()\n",
         POOL
     );
     let mut os = nucle_vfs::syscall::NucleOS::new(100);
     let mut plan = compile(&src).expect("must compile cleanly");
     let result = execute_program(&mut os, &mut plan, &dir).expect("a caught statement-form failure must not abort execute_program");
-    // The second (duplicate) statement-form store fails and short-
-    // circuits -- the third declaration (`sample_b.txt`) never runs.
-    assert!(result.steps.iter().any(|s| s.contains("✗ store into archive") && s.contains("already exists")), "steps: {:?}", result.steps);
+    // The second statement-form store (a nonexistent file) fails and
+    // short-circuits -- the third declaration (`sample_b.txt`) never runs.
+    assert!(result.steps.iter().any(|s| s.contains("✗ store into archive") && s.contains("this_file_does_not_exist.txt")), "steps: {:?}", result.steps);
     assert!(
         !result.steps.iter().any(|s| s.contains("sample_b.txt")),
         "the statement-form failure should have short-circuited before sample_b.txt, steps: {:?}",

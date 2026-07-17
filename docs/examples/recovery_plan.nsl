@@ -28,13 +28,18 @@ pool secondary: DnaPool {
 /// second match over `plan`, a real user-declared enum. A trailing
 /// wildcard covers `GiveUp` (and any future variant) without needing its
 /// own reason payload here -- exhaustiveness via `_`, not a named arm for
-/// every single variant.
-fn archive_with_plan(plan: RecoveryPlan) returns Result<DnaFile, Str> {
-    let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+/// every single variant. Takes its `target` as a parameter (rather than
+/// a hardcoded filename) so the two calls below can demonstrate both the
+/// outer `Ok` arm (a real, existing file) and the outer `Err` arm (a
+/// filename that genuinely doesn't exist) without depending on `store`
+/// rejecting a repeated filename -- it doesn't, `dna_write` versions a
+/// repeated filename instead of rejecting it.
+fn archive_with_plan(target: File, plan: RecoveryPlan) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store target into primary
     let saved: DnaFile = match attempt {
         Ok(file) => file,
         Err(reason) => match plan {
-            Retry => (store "sample_a.txt" into primary)?,
+            Retry => (store target into primary)?,
             _ => (store "sample_b.txt" into secondary)?,
         }
     }
@@ -58,12 +63,12 @@ fn log_message(level: LogLevel) returns Str {
     }
 }
 
-// First call: `primary` is empty, so the outer `Ok` arm runs directly --
-// `plan` is never even inspected.
-let first: Result<DnaFile, Str> = archive_with_plan(RecoveryPlan::Fallback)
+// First call: a real, existing file, so the outer `Ok` arm runs
+// directly -- `plan` is never even inspected.
+let first: Result<DnaFile, Str> = archive_with_plan("sample_a.txt", RecoveryPlan::Fallback)
 
-// Second call: `sample_a.txt` already exists, so the outer attempt fails
-// and the nested match over `plan` actually runs -- `Fallback` isn't a
-// named arm, so it's caught by the trailing wildcard `_`, landing
+// Second call: a nonexistent target, so the outer attempt fails and the
+// nested match over `plan` actually runs -- `Fallback` isn't a named
+// arm, so it's caught by the trailing wildcard `_`, landing
 // `sample_b.txt` into `secondary` for real.
-let second: Result<DnaFile, Str> = archive_with_plan(RecoveryPlan::Fallback)
+let second: Result<DnaFile, Str> = archive_with_plan("this_file_does_not_exist.txt", RecoveryPlan::Fallback)

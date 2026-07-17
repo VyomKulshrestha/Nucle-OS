@@ -69,6 +69,19 @@ pub struct DnaFile {
     /// History of manifests for audit log.
     #[serde(default)]
     pub manifest_history: Vec<StorageManifest>,
+    /// This file's content version: 1 for the first `dna_write` under this
+    /// filename, incremented by one on every subsequent write that reuses
+    /// the same filename instead of being rejected as a duplicate (see
+    /// `Catalog::register`'s versioning behavior and `NucleOS::dna_history`/
+    /// `dna_read_version`). Old versions keep their own `file_id`/strands in
+    /// the pool untouched -- rewriting never deletes prior physical data,
+    /// it just supersedes which one `dna_read`/`dna_list` resolve to.
+    #[serde(default = "default_version")]
+    pub version: u32,
+}
+
+fn default_version() -> u32 {
+    1
 }
 
 impl DnaFile {
@@ -155,6 +168,7 @@ mod tests {
             redundancy: 1.4,
             manifest: None,
             manifest_history: Vec::new(),
+            version: 1,
         }
     }
 

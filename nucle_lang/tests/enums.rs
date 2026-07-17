@@ -300,13 +300,13 @@ fn every_variant_arm_actually_runs_against_a_real_vfs() {
     let mut plan = compile(&source).expect("the example must compile cleanly");
     let result = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
 
-    // `first`: `primary` is empty, so the outer `Ok` arm runs directly.
+    // `first`: a real, existing file, so the outer `Ok` arm runs directly.
     assert!(result.steps.iter().any(|s| s.contains("✓ store into primary") && s.contains("sample_a.txt")), "steps: {:?}", result.steps);
-    // `second`: the outer attempt fails (duplicate filename), so the
+    // `second`: a nonexistent target, so the outer attempt fails and the
     // nested match over `plan` runs for real -- `Fallback` is caught by
     // the trailing wildcard, landing a real store into `secondary`.
     assert!(
-        result.steps.iter().any(|s| s.contains("✗ store into primary") && s.contains("already exists")),
+        result.steps.iter().any(|s| s.contains("✗ store into primary") && s.contains("this_file_does_not_exist.txt")),
         "steps: {:?}",
         result.steps
     );

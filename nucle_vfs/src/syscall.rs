@@ -553,6 +553,10 @@ impl NucleOS {
         let result = self.dna_write_with_codec_impl(filename, data, redundancy, codec_kind);
         let archive_id = result.as_ref().ok().map(|r| r.file_id.clone());
         let detail = match &result {
+            Ok(r) if r.version > 1 => format!(
+                "stored version {} ({} bytes across {} strands, {} data + {} parity), superseding the prior version's catalog entry",
+                r.version, data.len(), r.total_strand_count, r.data_strand_count, r.parity_strand_count
+            ),
             Ok(r) => format!(
                 "stored {} bytes across {} strands ({} data + {} parity)",
                 data.len(), r.total_strand_count, r.data_strand_count, r.parity_strand_count
@@ -570,10 +574,14 @@ impl NucleOS {
         redundancy: usize,
         codec_kind: CodecKind,
     ) -> Result<WriteResult, String> {
-        // Check if filename already exists
-        if self.catalog.contains_name(filename) {
-            return Err(format!("file '{}' already exists", filename));
-        }
+        // A write to an existing filename is a new version, not a
+        // rejected duplicate -- `Catalog::register` (below) archives
+        // whatever was current into that filename's history rather than
+        // deleting it, so `dna_history`/`dna_read_version` can still
+        // reach it. This file's own version number is one past whatever
+        // was current (1 if this filename has never been written).
+        let previous = self.catalog.get_by_name(filename).map(|f| (f.version, f.file_id.clone()));
+        let next_version = previous.as_ref().map(|(v, _)| v + 1).unwrap_or(1);
 
         // Assign a primer pair
         let primer_pair = self.primers
@@ -765,10 +773,20 @@ impl NucleOS {
             redundancy: redundancy_ratio,
             manifest: Some(manifest),
             manifest_history: Vec::new(),
+            version: next_version,
         };
         self.catalog.register(dna_file);
 
-        // ── Register in search engine
+        // ── Register in search engine. If this write superseded a
+        // previous version, drop that version's own search entry first --
+        // search should only ever surface the current version of a
+        // filename, the same "one visible entry per name" principle
+        // `Catalog::register` already applies to `list()`/`dna_stat()`.
+        // The superseded strands/catalog entry stay fully intact in
+        // `dna_history`; only the search index stops pointing at them.
+        if let Some((_, old_file_id)) = &previous {
+            self.search.remove_file(old_file_id);
+        }
         self.search.register_file(FileMeta {
             file_id: file_id.clone(),
             filename: filename.to_string(),
@@ -787,6 +805,7 @@ impl NucleOS {
             total_strand_count: total_strands,
             primer_id: primer_pair.id,
             redundancy: redundancy_ratio,
+            version: next_version,
         })
     }
 
@@ -817,6 +836,37 @@ impl NucleOS {
         result
     }
 
+    /// Read a specific past version of `filename` -- the one `dna_write`
+    /// reported as `version` in its `WriteResult`, or that `dna_history`
+    /// lists -- rather than whatever is current. Runs the exact same
+    /// decode pipeline as `dna_read`, just against a different catalog
+    /// entry; `version` may name the current version too (equivalent to
+    /// `dna_read`, just spelled explicitly).
+    pub fn dna_read_version(&mut self, filename: &str, version: u32) -> Result<Vec<u8>, String> {
+        let archive_id = self.catalog.get_version(filename, version).map(|f| f.file_id.clone());
+        let result = self.dna_read_version_impl(filename, version);
+        let detail = match &result {
+            Ok(bytes) => format!("read {} bytes from version {}", bytes.len(), version),
+            Err(e) => e.clone(),
+        };
+        self.record_audit("read", filename, archive_id, result.is_ok(), detail);
+        result
+    }
+
+    /// Every version of `filename` that has ever existed, oldest first,
+    /// ending with the current one -- the current version is included so
+    /// callers don't need a separate `dna_stat`/`dna_list` lookup just to
+    /// see where the chain ends. Empty result on a nonexistent filename.
+    pub fn dna_history(&self, filename: &str) -> Vec<VersionInfo> {
+        let mut versions: Vec<VersionInfo> = self.catalog.history(filename).iter().map(version_info).collect();
+        if let Some(current) = self.catalog.get_by_name(filename) {
+            let mut info = version_info(current);
+            info.is_current = true;
+            versions.push(info);
+        }
+        versions
+    }
+
     fn dna_read_impl(&mut self, filename: &str) -> Result<Vec<u8>, String> {
         // ── Layer 5: VFS ── look up file
         // Cloned (not borrowed) so the catalog can be mutably re-borrowed
@@ -824,7 +874,23 @@ impl NucleOS {
         let dna_file = self.catalog.get_by_name(filename)
             .ok_or(format!("file '{}' not found", filename))?
             .clone();
+        self.decode_dna_file(filename, &dna_file)
+    }
 
+    fn dna_read_version_impl(&mut self, filename: &str, version: u32) -> Result<Vec<u8>, String> {
+        let dna_file = self.catalog.get_version(filename, version)
+            .ok_or_else(|| format!("file '{}' has no version {}", filename, version))?
+            .clone();
+        self.decode_dna_file(filename, &dna_file)
+    }
+
+    /// The real decode pipeline (CRISPR retrieval → untag → consensus/RS →
+    /// codec decode → hash check), parameterized on an already-resolved
+    /// `DnaFile` rather than always re-looking-up "whatever's current for
+    /// this filename" -- shared by `dna_read_impl` (current version) and
+    /// `dna_read_version_impl` (any version), since both need the exact
+    /// same pipeline against different catalog entries.
+    fn decode_dna_file(&mut self, filename: &str, dna_file: &DnaFile) -> Result<Vec<u8>, String> {
         // ── Layer 4: Index ── CRISPR selective retrieval
         let primer_pair = self.primers.get(&dna_file.primer_id)
             .ok_or(format!("primer '{}' not found", dna_file.primer_id))?;
@@ -948,9 +1014,11 @@ impl NucleOS {
         };
 
         // Persist onto this object's own storage manifest (keyed by its
-        // archive_id via the catalog entry), not session-global state — so
-        // reading a different file afterward can't clobber this one's history.
-        if let Some(file) = self.catalog.get_by_name_mut(filename) {
+        // archive_id via the catalog entry, current or historical --
+        // `get_version_mut` resolves either), not session-global state —
+        // so reading a different file, or a different version of this
+        // one, afterward can't clobber this one's history.
+        if let Some(file) = self.catalog.get_version_mut(filename, dna_file.version) {
             if let Some(manifest) = file.manifest.as_mut() {
                 manifest.recovery_manifest = Some(recovery_manifest);
             }
@@ -1005,6 +1073,10 @@ impl NucleOS {
         let archive_id = self.catalog.get_by_name(filename).map(|f| f.file_id.clone());
         let result = self.dna_delete_impl(filename);
         let detail = match &result {
+            Ok(r) if r.versions_removed > 1 => format!(
+                "removed {} strands across all {} versions",
+                r.strands_removed, r.versions_removed
+            ),
             Ok(r) => format!("removed {} strands", r.strands_removed),
             Err(e) => e.clone(),
         };
@@ -1013,18 +1085,25 @@ impl NucleOS {
     }
 
     fn dna_delete_impl(&mut self, filename: &str) -> Result<DeleteResult, String> {
-        let dna_file = self.catalog.get_by_name(filename)
-            .ok_or(format!("file '{}' not found", filename))?;
-        let file_id = dna_file.file_id.clone();
-        let strand_count = dna_file.total_strands();
+        if !self.catalog.contains_name(filename) {
+            return Err(format!("file '{}' not found", filename));
+        }
 
-        self.pool.remove_file(&file_id);
-        self.catalog.remove(&file_id);
-        self.search.remove_file(&file_id);
+        // Deleting a filename removes its whole version chain -- there's
+        // no "delete just the current version, keep the history" concept
+        // here, since a history entry with no current version to point
+        // back to would be an orphan nothing else in this crate expects.
+        let versions = self.catalog.take_all_versions(filename);
+        let mut strands_removed = 0;
+        for version in &versions {
+            strands_removed += self.pool.remove_file(&version.file_id);
+            self.search.remove_file(&version.file_id);
+        }
 
         Ok(DeleteResult {
             filename: filename.to_string(),
-            strands_removed: strand_count,
+            strands_removed,
+            versions_removed: versions.len(),
         })
     }
 
@@ -1114,6 +1193,10 @@ pub struct WriteResult {
     pub total_strand_count: usize,
     pub primer_id: String,
     pub redundancy: f64,
+    /// This write's version number for `filename` -- 1 the first time it's
+    /// written, incremented on every write that reuses an existing name
+    /// instead of being rejected. See `NucleOS::dna_history`/`dna_read_version`.
+    pub version: u32,
 }
 
 impl fmt::Display for WriteResult {
@@ -1121,23 +1204,27 @@ impl fmt::Display for WriteResult {
         write!(
             f,
             "Stored '{}' ({} bytes → {} data + {} parity = {} strands, \
-             {:.2}× redundancy, primer={})",
+             {:.2}× redundancy, primer={}, version={})",
             self.filename,
             self.data_size,
             self.data_strand_count,
             self.parity_strand_count,
             self.total_strand_count,
             self.redundancy,
-            self.primer_id
+            self.primer_id,
+            self.version
         )
     }
 }
 
-/// Result of a dna_delete operation.
+/// Result of a dna_delete operation. Deleting a filename removes its
+/// *entire* version chain, not just the current version -- `strands_removed`
+/// and `versions_removed` both total across every version that existed.
 #[derive(Debug, Clone, Serialize)]
 pub struct DeleteResult {
     pub filename: String,
     pub strands_removed: usize,
+    pub versions_removed: usize,
 }
 
 /// A file summary in pool status.
@@ -1164,6 +1251,34 @@ fn file_info(f: &DnaFile) -> FileInfo {
         codec: f.codec.clone(),
         redundancy: f.redundancy,
         manifest: f.manifest.clone(),
+    }
+}
+
+/// A single version's summary, as returned by `dna_history`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionInfo {
+    pub version: u32,
+    pub file_id: String,
+    pub size: usize,
+    pub created_at: u64,
+    pub codec: String,
+    pub redundancy: f64,
+    pub is_current: bool,
+}
+
+/// Shared by `dna_history`'s history-entries and current-entry cases so
+/// both build a `VersionInfo` the same way; `is_current` is filled in by
+/// the caller since a bare `&DnaFile` can't tell which catalog list it
+/// came from.
+fn version_info(f: &DnaFile) -> VersionInfo {
+    VersionInfo {
+        version: f.version,
+        file_id: f.file_id.clone(),
+        size: f.size,
+        created_at: f.created_at,
+        codec: f.codec.clone(),
+        redundancy: f.redundancy,
+        is_current: false,
     }
 }
 
@@ -1720,10 +1835,83 @@ mod tests {
     // ── Error cases ──
 
     #[test]
-    fn test_duplicate_filename_error() {
+    fn rewriting_an_existing_filename_versions_instead_of_erroring() {
         let mut os = NucleOS::new(10);
-        os.dna_write("test.txt", b"data", 0).unwrap();
-        assert!(os.dna_write("test.txt", b"other", 0).is_err());
+        let first = os.dna_write("test.txt", b"data", 0).unwrap();
+        assert_eq!(first.version, 1);
+        let second = os.dna_write("test.txt", b"other", 0).unwrap();
+        assert_eq!(second.version, 2);
+        // The current version is what a plain read returns.
+        assert_eq!(os.dna_read("test.txt").unwrap(), b"other".to_vec());
+        // `dna_list`/`dna_stat` show exactly one entry per filename, not
+        // one per historical write.
+        assert_eq!(os.dna_stat().file_count, 1);
+    }
+
+    #[test]
+    fn dna_history_lists_every_version_oldest_first_ending_with_current() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("test.txt", b"v1", 0).unwrap();
+        os.dna_write("test.txt", b"v2", 0).unwrap();
+        os.dna_write("test.txt", b"v3", 0).unwrap();
+
+        let history = os.dna_history("test.txt");
+        assert_eq!(history.iter().map(|v| v.version).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert!(!history[0].is_current);
+        assert!(!history[1].is_current);
+        assert!(history[2].is_current);
+    }
+
+    #[test]
+    fn dna_history_is_empty_for_a_nonexistent_filename() {
+        let os = NucleOS::new(10);
+        assert!(os.dna_history("missing.txt").is_empty());
+    }
+
+    #[test]
+    fn dna_read_version_reads_a_specific_past_version_not_just_current() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("test.txt", b"v1", 0).unwrap();
+        os.dna_write("test.txt", b"v2", 0).unwrap();
+        os.dna_write("test.txt", b"v3", 0).unwrap();
+
+        assert_eq!(os.dna_read_version("test.txt", 1).unwrap(), b"v1".to_vec());
+        assert_eq!(os.dna_read_version("test.txt", 2).unwrap(), b"v2".to_vec());
+        assert_eq!(os.dna_read_version("test.txt", 3).unwrap(), b"v3".to_vec());
+        // Current version is still reachable through dna_read too.
+        assert_eq!(os.dna_read("test.txt").unwrap(), b"v3".to_vec());
+    }
+
+    #[test]
+    fn dna_read_version_rejects_a_version_that_never_existed() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("test.txt", b"v1", 0).unwrap();
+        assert!(os.dna_read_version("test.txt", 2).is_err());
+    }
+
+    #[test]
+    fn dna_delete_removes_the_entire_version_chain_not_just_current() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("test.txt", b"v1", 0).unwrap();
+        os.dna_write("test.txt", b"v2", 0).unwrap();
+
+        let result = os.dna_delete("test.txt").unwrap();
+        assert_eq!(result.versions_removed, 2);
+        assert!(os.dna_read("test.txt").is_err());
+        assert!(os.dna_history("test.txt").is_empty());
+        assert_eq!(os.dna_stat().file_count, 0);
+        assert_eq!(os.dna_stat().total_strands, 0, "both versions' strands should be gone from the pool");
+    }
+
+    #[test]
+    fn rewriting_a_filename_supersedes_its_old_search_entry() {
+        let mut os = NucleOS::new(10);
+        os.dna_write("test.txt", b"v1 content", 0).unwrap();
+        os.dna_write("test.txt", b"v2 content", 0).unwrap();
+
+        // Only one hit for "test.txt", not one per historical version.
+        let hits = os.dna_search("test.txt", 10);
+        assert_eq!(hits.iter().filter(|r| r.meta.as_ref().is_some_and(|m| m.filename == "test.txt")).count(), 1);
     }
 
     #[test]
@@ -1787,6 +1975,7 @@ mod tests {
             total_strand_count: 7,
             primer_id: "P0000".into(),
             redundancy: 1.4,
+            version: 1,
         };
         let display = format!("{}", result);
         assert!(display.contains("test.txt"));

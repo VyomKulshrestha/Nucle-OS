@@ -229,10 +229,19 @@ let recovered: Pool<Recovered> = g(noisy_illumina)
 // (`sample_b.txt`), not the identical one that just failed -- a
 // self-recursive closure that always retries the exact same failing
 // operation with no changing state recurses forever (a real stack
-// overflow this was caught by while developing the fix below). Uses
-// `sample_a.txt`/`sample_b.txt` (real fixtures under `docs/examples/`,
-// since `a_self_recursive_closure_actually_recurses_and_terminates_for_
-// real` below executes for real against `examples_dir()`).
+// overflow this was caught by while developing the fix below, and
+// again while re-deriving this fixture's failure trigger -- see the
+// execution test's own comment for why "the same filename twice" no
+// longer reliably fails now that `dna_write` versions instead of
+// rejecting a repeat name). The first attempt targets a filename that
+// genuinely doesn't exist under `docs/examples/` -- `store` reading it
+// fails with a real, universally reliable `Err` (see
+// `nucle_lang::codegen::eval_store_expr`'s `std::fs::read` failure
+// path) independent of pool capacity or versioning, unlike trying to
+// engineer a capacity-based trigger (measured directly: two real
+// fixtures of different byte sizes, 30 vs. 39 bytes, still encoded to
+// byte-identical nucleotide counts under this codec's fixed strand
+// sizing, so a capacity cap couldn't discriminate between them either).
 const SELF_RECURSIVE_CLOSURE_FN: &str = "\
 fn f() returns Result<DnaFile, Str> {
     let attempt_with_fallback: Fn(File) -> Result<DnaFile, Str> = fn(target: File) -> Result<DnaFile, Str> {
@@ -242,7 +251,7 @@ fn f() returns Result<DnaFile, Str> {
             Err(reason) => attempt_with_fallback(\"sample_b.txt\")?
         }
     }
-    let result: Result<DnaFile, Str> = attempt_with_fallback(\"sample_a.txt\")
+    let result: Result<DnaFile, Str> = attempt_with_fallback(\"this_file_does_not_exist.txt\")
 }
 ";
 
@@ -270,29 +279,30 @@ fn a_self_recursive_closure_actually_recurses_and_terminates_for_real() {
     let mut os = nucle_vfs::syscall::NucleOS::new(100);
     let mut plan = compile(&src).expect("must compile cleanly");
 
-    // First call: `archive` is empty, so the first attempt (`sample_a.txt`)
-    // already succeeds -- the self-recursive branch isn't taken yet.
-    let first = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
-    assert!(first.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_a.txt")), "steps: {:?}", first.steps);
-    assert_eq!(os.dna_stat().file_count, 1);
-
-    // Second call against the same NucleOS: `sample_a.txt` already
-    // exists, so the first attempt fails and the closure calls itself
-    // by its own bound name with the fallback filename -- a real,
-    // distinct second attempt (not the identical one retried forever),
-    // which succeeds for real.
-    let second = execute_program(&mut os, &mut plan, &dir).expect("a caught, self-recursive Result::Err must not abort execute_program");
+    // The first attempt (`this_file_does_not_exist.txt`) fails for a
+    // real, universal reason -- there's nothing under `docs/examples/`
+    // by that name -- independent of pool state, capacity, or filename
+    // versioning, so this reliably exercises the self-recursive branch
+    // on every run without needing two sequential calls against a
+    // shared, stateful `NucleOS`.
+    let outcome = execute_program(&mut os, &mut plan, &dir)
+        .expect("a caught, self-recursive Result::Err must not abort execute_program");
     assert!(
-        second.steps.iter().any(|s| s.contains("✗ store into archive") && s.contains("sample_a.txt") && s.contains("already exists")),
+        outcome.steps.iter().any(|s| s.contains("✗ store into archive") && s.contains("this_file_does_not_exist.txt")),
         "steps: {:?}",
-        second.steps
+        outcome.steps
     );
+    // The self-recursive call, under its own bound name, retries with a
+    // genuinely different (real, existing) target and succeeds -- proof
+    // this is real recursion that terminates, not the identical failing
+    // call repeated forever (which would stack-overflow instead of
+    // reaching this assertion at all).
     assert!(
-        second.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_b.txt")),
+        outcome.steps.iter().any(|s| s.contains("✓ store into archive") && s.contains("sample_b.txt")),
         "expected the self-recursive call's own fallback attempt to succeed, steps: {:?}",
-        second.steps
+        outcome.steps
     );
-    assert_eq!(os.dna_stat().file_count, 2);
+    assert_eq!(os.dna_stat().file_count, 1);
 }
 
 // ---------------------------------------------------------------------
@@ -541,17 +551,19 @@ fn the_higher_order_call_retries_and_the_captured_binding_fallback_lands() {
     let mut plan = compile(&source).expect("the example must compile cleanly");
     let result = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
 
-    // `first` (archive_with_retry): the passed closure's first attempt
-    // already succeeds.
+    // `first` (archive_with_retry("sample_a.txt")): a real file, so the
+    // passed closure's first attempt already succeeds.
     assert!(result.steps.iter().any(|s| s.contains("✓ store into primary")), "steps: {:?}", result.steps);
-    // `second` (archive_with_logged_fallback): the captured binding's
-    // Err arm fires, and its fallback into `secondary` actually lands.
+    // `second` (archive_with_logged_fallback(nonexistent)): the captured
+    // binding's Err arm fires, and its fallback into `secondary` actually
+    // lands.
     assert!(result.steps.iter().any(|s| s.contains("✓ store into secondary")), "steps: {:?}", result.steps);
-    // `third` (archive_with_retry again): `retry_once` genuinely calls
-    // the closure a *second* time -- both attempts fail identically.
-    // `fifth` (archive_with_self_retry again): the self-recursive
-    // closure's own retry into `primary` fails identically too, adding
-    // one more failure on top of the three above.
+    // `third` (archive_with_retry(nonexistent)): `retry_once` genuinely
+    // calls the closure a *second* time -- both attempts fail identically
+    // since the target still doesn't exist either time.
+    // `fifth` (archive_with_self_retry(nonexistent)): the self-recursive
+    // closure's own first attempt into `primary` fails the same way,
+    // adding one more failure on top of the three above.
     let primary_failures = result.steps.iter().filter(|s| s.contains("✗ store into primary")).count();
     assert_eq!(
         primary_failures,
@@ -559,12 +571,13 @@ fn the_higher_order_call_retries_and_the_captured_binding_fallback_lands() {
         "expected 4 failed primary stores (second's own, retry_once's two, and the self-recursive retry's own first attempt), got: {:?}",
         result.steps
     );
-    // `fourth` (archive_with_self_retry): the self-recursive closure's
-    // own first attempt succeeds once, landing `sample_f.txt`.
+    // `fourth` (archive_with_self_retry("sample_f.txt")): a real file, so
+    // the self-recursive closure's own first attempt succeeds once,
+    // landing `sample_f.txt`.
     assert!(result.steps.iter().any(|s| s.contains("✓ store into primary") && s.contains("sample_f.txt")), "steps: {:?}", result.steps);
-    // `fifth` (archive_with_self_retry again): the first attempt fails
-    // (`sample_f.txt` already exists), so the closure genuinely calls
-    // itself with a different fallback filename, which succeeds.
+    // `fifth` (archive_with_self_retry(nonexistent)): the first attempt
+    // fails (the target doesn't exist), so the closure genuinely calls
+    // itself with a different, real fallback filename, which succeeds.
     assert!(result.steps.iter().any(|s| s.contains("✓ store into primary") && s.contains("sample_f_fallback.txt")), "steps: {:?}", result.steps);
     assert_eq!(os.dna_stat().file_count, 4);
 }
