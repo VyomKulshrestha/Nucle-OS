@@ -10,6 +10,7 @@ members = [
     "nucle_lang",
     "nucle_cli",
     "nucle_hardware",
+    "nucle_blockdev",
     "nucle_playground",
     "nucle_demo_core",
     "nucle_wasm",
@@ -64,4 +65,14 @@ protoc-bin-vendored = "3"
 opt-level = 3
 
 [profile.dev.package.nucle_codec]
+opt-level = 3
+
+# nucle_blockdev's coverage-depth noise injection calls nucle_synth's
+# NoiseEngine (per-base error application, looped per copy per strand)
+# often enough per write/read that it hits the same unoptimized-debug-build
+# wall the two overrides above were added for -- same fix, same reasoning.
+[profile.dev.package.nucle_synth]
+opt-level = 3
+
+[profile.dev.package.nucle_blockdev]
 opt-level = 3

@@ -1145,6 +1145,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nucle_blockdev"
+version = "0.1.0"
+dependencies = [
+ "nucle_codec",
+ "nucle_ecc",
+ "nucle_synth",
+ "thiserror",
+]
+
+[[package]]
 name = "nucle_codec"
 version = "0.1.0"
 dependencies = [

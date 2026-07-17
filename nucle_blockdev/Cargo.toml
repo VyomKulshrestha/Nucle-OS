@@ -1,0 +1,13 @@
+[package]
+name = "nucle_blockdev"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "A block-device abstraction over simulated DNA/molecular storage backends"
+
+[dependencies]
+nucle_codec = { path = "../nucle_codec" }
+nucle_ecc = { path = "../nucle_ecc" }
+nucle_synth = { path = "../nucle_synth" }
+thiserror = { workspace = true }
