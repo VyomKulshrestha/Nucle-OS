@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["full"] }
 # Pinned: idna_adapter >=1.2 requires Cargo's edition2024 feature, which
 # isn't stabilized in this toolchain's Cargo (1.83.0) -- the last version
 # before that MSRV bump.
-idna_adapter = "=1.1.0"
+idna_adapter = "=1.2.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
