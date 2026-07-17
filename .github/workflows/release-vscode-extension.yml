@@ -47,7 +47,7 @@ jobs:
             binary_name: nucle-lsp
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
@@ -87,7 +87,7 @@ jobs:
       run:
         working-directory: editors/vscode/nuclescript
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
