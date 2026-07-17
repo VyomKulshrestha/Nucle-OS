@@ -82,24 +82,37 @@ mod tests {
 
     #[test]
     fn multiple_submissions_run_concurrently_not_sequentially() {
-        let provider = DelayedMockProvider::new(Duration::from_millis(100));
-        let start = Instant::now();
+        // Compare against a *measured* sequential baseline (submit, wait,
+        // submit, wait, ...) on a fresh provider instance, rather than a
+        // fixed wall-clock threshold -- this was flaky under CI/heavy-load
+        // conditions (observed 335ms against a 250ms fixed threshold on a
+        // contended macOS runner) since absolute timing isn't stable
+        // across machines/load, only the *relative* concurrency benefit
+        // is. Same fix as `nucle_blockdev::synthesis_array`'s
+        // `batched_writes_pay_latency_once_per_parallelism_chunk_not_once_per_write`
+        // test, which hit the identical problem.
+        let delay = Duration::from_millis(100);
 
-        let h1 = provider.submit(&[synthesis_request("a.bin")]);
-        let h2 = provider.submit(&[synthesis_request("b.bin")]);
-        let h3 = provider.submit(&[synthesis_request("c.bin")]);
+        let sequential_provider = DelayedMockProvider::new(delay);
+        let sequential_start = Instant::now();
+        sequential_provider.submit(&[synthesis_request("a.bin")]).wait().unwrap();
+        sequential_provider.submit(&[synthesis_request("b.bin")]).wait().unwrap();
+        sequential_provider.submit(&[synthesis_request("c.bin")]).wait().unwrap();
+        let sequential_elapsed = sequential_start.elapsed();
 
+        let concurrent_provider = DelayedMockProvider::new(delay);
+        let concurrent_start = Instant::now();
+        let h1 = concurrent_provider.submit(&[synthesis_request("a.bin")]);
+        let h2 = concurrent_provider.submit(&[synthesis_request("b.bin")]);
+        let h3 = concurrent_provider.submit(&[synthesis_request("c.bin")]);
         h1.wait().unwrap();
         h2.wait().unwrap();
         h3.wait().unwrap();
+        let concurrent_elapsed = concurrent_start.elapsed();
 
-        let elapsed = start.elapsed();
-        // Sequential execution would take ~300ms; concurrent execution
-        // should stay well under that even with generous CI scheduling slack.
         assert!(
-            elapsed < Duration::from_millis(250),
-            "expected concurrent execution (~100ms), took {:?}",
-            elapsed
+            concurrent_elapsed < sequential_elapsed,
+            "expected concurrent submission to beat one-at-a-time (sequential {sequential_elapsed:?}, concurrent {concurrent_elapsed:?})"
         );
     }
 
