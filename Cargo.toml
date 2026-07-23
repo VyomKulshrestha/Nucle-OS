@@ -45,7 +45,7 @@ tonic = { version = "0.14", features = ["tls-ring"] }
 tonic-prost = "0.14"
 prost = "0.14"
 prost-types = "0.14"
-base64 = "0.22"
+base64 = "0.23"
 tokio = { version = "1", features = ["rt"] }
 tonic-prost-build = "0.14"
 protoc-bin-vendored = "3"
