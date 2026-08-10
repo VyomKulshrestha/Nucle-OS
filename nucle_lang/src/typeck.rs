@@ -969,27 +969,18 @@ impl TypeChecker {
                     _ => None,
                 }
             }
-            // Argument validation for non-`Fn`-typed parameters is
-            // intentionally skipped here, matching the pre-existing
-            // (unrelated to closures) gap this path has always had --
-            // but a `Fn(...)`-typed parameter's own argument *is*
-            // validated (see `check_fn_typed_arg`): unlike an unchecked
-            // `Pool`/`Str`/etc. argument, an unchecked closure argument
-            // would mean its entire body -- and whatever it does at
-            // runtime -- was never type-checked at all.
-            Expr::FunctionCall { name, args, .. } => {
+            Expr::FunctionCall { name, .. } => {
                 let func = self.lookup_function(name)?;
                 if !matches!(func.return_type, TypeExpr::Result(_, _)) {
                     return None;
                 }
-                for (param, arg) in func.params.iter().zip(args.iter()) {
-                    if let TypeExpr::Fn(expected_params, expected_return, expected_effect) = &param.ty {
-                        self.check_fn_typed_arg(expected_params, expected_return, *expected_effect, arg, &param.name, span);
-                    } else if param.ty != TypeExpr::Void {
-                        self.check_value_argument(&param.ty, arg, &param.name, span);
-                    }
-                }
-                match func.return_type {
+                let return_type = func.return_type.clone();
+                // `infer_expr` is the authoritative call validator even
+                // when the call does not produce a Pool. Reusing it here
+                // closes the old Result-only shortcut around arity,
+                // generic unification, and ordinary argument checks.
+                let _ = self.infer_expr(expr, span);
+                match return_type {
                     TypeExpr::Result(ok, err) => Some((*ok, *err)),
                     _ => None,
                 }
@@ -1046,14 +1037,21 @@ impl TypeChecker {
             // `LetDecl` of its own to look up in `self.bindings`) -- see
             // `TypeChecker::enum_bindings`'s own doc comment.
             Expr::Variable(name) => self.enum_bindings.get(name).cloned(),
-            Expr::FunctionCall { name, .. } if self.closures.contains_key(name) => match &self.closures[name].2 {
-                TypeExpr::Enum(n) => Some(n.clone()),
-                _ => None,
-            },
-            Expr::FunctionCall { name, .. } => match self.lookup_function(name).map(|f| f.return_type.clone()) {
-                Some(TypeExpr::Enum(n)) => Some(n),
-                _ => None,
-            },
+            Expr::FunctionCall { name, args, .. } if self.closures.contains_key(name) => {
+                let (type_params, params, return_type) = self.closures[name].clone();
+                match self.check_closure_call_args(name, &type_params, &params, &return_type, args, span) {
+                    Some(TypeExpr::Enum(n)) => Some(n),
+                    _ => None,
+                }
+            }
+            Expr::FunctionCall { name, .. } => {
+                let return_type = self.lookup_function(name).map(|f| f.return_type.clone());
+                let _ = self.infer_expr(expr, span);
+                match return_type {
+                    Some(TypeExpr::Enum(n)) => Some(n),
+                    _ => None,
+                }
+            }
             // A nested match whose own unified arm type is an enum --
             // composability, mirroring `infer_result_expr`'s own nested-
             // Match delegation.
