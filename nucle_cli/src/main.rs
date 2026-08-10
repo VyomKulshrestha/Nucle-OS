@@ -95,6 +95,24 @@ enum Commands {
     Retrieve {
         /// Filename to retrieve
         name: String,
+        /// Retrieve this historical version instead of the current version
+        #[arg(long)]
+        version: Option<u32>,
+    },
+
+    /// List every stored version of a file, oldest first
+    History {
+        /// Filename whose version history should be shown
+        name: String,
+    },
+
+    /// Delete a file and its complete version history from the pool
+    Delete {
+        /// Filename to delete
+        name: String,
+        /// Required acknowledgement because deletion removes every version
+        #[arg(long)]
+        confirm: bool,
     },
 
     /// Migrate a file to new storage parameters (e.g. redundancy, codec)
@@ -428,7 +446,9 @@ fn main() {
         Commands::Encode { file, output } => cmd_encode(&file, output.as_deref()),
         Commands::Decode { file, output, size } => cmd_decode(&file, output.as_deref(), size),
         Commands::Store { file, redundancy } => cmd_store(&file, redundancy, &pool_dir, passphrase.as_deref(), cli.json),
-        Commands::Retrieve { name } => cmd_retrieve(&name, &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Retrieve { name, version } => cmd_retrieve(&name, version, &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::History { name } => cmd_history(&name, &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Delete { name, confirm } => cmd_delete(&name, confirm, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Pool => cmd_pool(&pool_dir, passphrase.as_deref(), cli.json),
@@ -704,14 +724,20 @@ fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, passphra
     }
 }
 
-fn cmd_retrieve(name: &str, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+fn cmd_retrieve(name: &str, version: Option<u32>, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
     let mut os = open_pool(pool_dir, passphrase);
-    match os.dna_read(name) {
+    let result = match version {
+        Some(version) => os.dna_read_version(name, version),
+        None => os.dna_read(name),
+    };
+    match result {
         Ok(data) => {
-            // dna_read updates the file's recovery manifest -- persist so
-            // that update (not just the original write) survives.
+            // Both current and historical reads update that version's
+            // recovery manifest -- persist so the update survives.
             persist_pool(&mut os, pool_dir);
-            let manifest_opt = os.catalog.get_by_name(name)
+            let selected_version = version.or_else(|| os.catalog.get_by_name(name).map(|f| f.version));
+            let manifest_opt = selected_version
+                .and_then(|version| os.catalog.get_version(name, version))
                 .and_then(|f| f.manifest.as_ref())
                 .and_then(|m| m.recovery_manifest.clone());
             if json {
@@ -721,6 +747,7 @@ fn cmd_retrieve(name: &str, pool_dir: &std::path::Path, passphrase: Option<&str>
                 };
                 let json_val = serde_json::json!({
                     "filename": name,
+                    "version": selected_version,
                     "size": data.len(),
                     "is_text": is_text,
                     "content": content,
@@ -750,6 +777,62 @@ fn cmd_retrieve(name: &str, pool_dir: &std::path::Path, passphrase: Option<&str>
         }
         Err(e) => {
             eprintln!("Retrieve failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_history(name: &str, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    let os = open_pool(pool_dir, passphrase);
+    let versions = os.dna_history(name);
+    if versions.is_empty() {
+        eprintln!("History failed: file '{}' not found", name);
+        std::process::exit(1);
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&versions).unwrap());
+    } else {
+        println!("Version history for '{}':", name);
+        for version in &versions {
+            let current = if version.is_current { " (current)" } else { "" };
+            println!(
+                "  v{}{}: {} B, {:.2}× redundancy, codec={}, archive={}",
+                version.version,
+                current,
+                version.size,
+                version.redundancy,
+                version.codec,
+                version.file_id
+            );
+        }
+    }
+}
+
+fn cmd_delete(name: &str, confirm: bool, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+    if !confirm {
+        eprintln!(
+            "Delete refused: this removes '{}' and every stored version; rerun with --confirm",
+            name
+        );
+        std::process::exit(1);
+    }
+
+    let mut os = open_pool(pool_dir, passphrase);
+    match os.dna_delete(name) {
+        Ok(result) => {
+            persist_pool(&mut os, pool_dir);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            } else {
+                println!(
+                    "✓ Deleted '{}' ({} strands across {} version(s))",
+                    result.filename, result.strands_removed, result.versions_removed
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("Delete failed: {}", e);
             std::process::exit(1);
         }
     }
