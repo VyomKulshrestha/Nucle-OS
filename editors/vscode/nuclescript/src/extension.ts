@@ -9,12 +9,14 @@ import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } f
 import { registerFormattingProvider } from "./formatProvider";
 import { registerRunCommand } from "./runProvider";
 import { resolveServerPath } from "./serverDownload";
+import { registerTestController } from "./testController";
 
 let client: LanguageClient | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   registerFormattingProvider(context);
   registerRunCommand(context);
+  registerTestController(context);
 
   let command: string;
   try {

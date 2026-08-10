@@ -20,7 +20,7 @@
     "vscode": "^1.75.0"
   },
   "categories": ["Programming Languages"],
-  "activationEvents": ["onLanguage:nuclescript", "onCommand:nuclescript.runFile"],
+  "activationEvents": ["onLanguage:nuclescript", "onCommand:nuclescript.runFile", "workspaceContains:**/*.nsl"],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
@@ -102,6 +102,6 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "test": "vscode-tmgrammar-snap -s source.nuclescript -g syntaxes/nuclescript.tmLanguage.json ../../../docs/examples/*.nsl"
+    "test": "npm run compile && node --test scripts/test-discovery.cjs && vscode-tmgrammar-snap -s source.nuclescript -g syntaxes/nuclescript.tmLanguage.json ../../../docs/examples/*.nsl"
   }
 }
