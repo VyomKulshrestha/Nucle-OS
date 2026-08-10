@@ -149,7 +149,7 @@ Abstracts all layers behind clean syscall-style interfaces:
 
 DNA storage needs a proper ABI. This layer provides it. `NucleOS::open(pool_dir, max_files)`/`persist(pool_dir)` make a pool durable across separate CLI invocations (not just one process's own memory) — see [Pool storage location](#pool-storage-location) below. `NucleOS::open_encrypted`/`enable_encryption`/`disable_encryption` add optional, passphrase-protected encryption at rest for that same durable state — see `nucle encrypt-pool`/`decrypt-pool` above.
 
-**Rewrite/versioning.** `dna_write`ing a filename that already exists no longer rejects it as a duplicate — it stores the new content as the next version (`WriteResult::version`) and archives the previous version rather than deleting it (old strands, old primer — nothing physically removed). `dna_read`/`dna_list`/`dna_stat` always resolve to the *current* version, so nothing else changes shape; `dna_history(filename)` lists every version oldest-first, and `dna_read_version(filename, version)` reads a specific one, current or historical. `dna_delete` removes the *entire* version chain (`DeleteResult::versions_removed`), not just the current version — there's no "delete just the latest, keep history with no current version to point back to" concept. See [docs/architecture.md](docs/architecture.md#rewrite-versioning) for the full design and what changed in the shipped `.nsl` examples as a result.
+**Rewrite/versioning.** `dna_write`ing a filename that already exists no longer rejects it as a duplicate — it stores the new content as the next version (`WriteResult::version`) and archives the previous version rather than deleting it (old strands, old primer — nothing physically removed). `dna_read`/`dna_list`/`dna_stat` always resolve to the current version; `dna_history` and `dna_read_version` expose immutable history; migration writes a new representation without destroying older versions; `dna_rename` moves the complete logical chain without rewriting strands; and confirmed delete removes the complete chain. Primer addressing grows deterministically beyond the initial capacity without reusing old addresses. See [docs/architecture.md](docs/architecture.md#rewrite-versioning) and [docs/nucleos-operations.md](docs/nucleos-operations.md).
 
 ### Layer 6 — Agent Interface (`nucle_agent`)
 
@@ -198,7 +198,7 @@ $ nucle bench
 ║ dna-fountain         │    0.824 │  26.0% │   29 │  ✗  │  ✓   ║
 ╚══════════════════════════════════════════════════════════════════╝
   Best density:    yin-yang (1.798 bits/nt)
-  Fastest encode:  yin-yang (55 μs)
+  Fastest encode:  yin-yang (5 μs)
 
   Bio = all strands pass biological constraints (GC 40–60%, homopolymer ≤ 3)
   R/T = encode → decode roundtrip produces identical data
@@ -228,6 +228,11 @@ write → simulate-noise → read pipeline against the standard fixtures in
 and a real Monte-Carlo recovery probability and cost estimate — not
 placeholders:
 
+The figures below were re-measured on 10 August 2026 from the current local
+`main` build. Encoding timings are machine-dependent; density, GC,
+homopolymer, error-rate, recovery, strand-count, and cost fields are the
+reproducible comparison values.
+
 ```
 $ nucle benchmark --profile pristine -r 4
 
@@ -255,14 +260,14 @@ them — and it's now wired into the real `dna_read` path (`nucle_ecc::consensus
 ```
 $ nucle benchmark -p illumina -r 4
 
-║ small_text.txt     │      96 │       8 │      0.32% │    PASS │ $  0.0648 │  47.5% │      0 ║
-║ archive.bin        │     327 │      18 │      0.32% │    PASS │ $  0.2268 │  46.2% │      0 ║
-║ sample.fasta       │     176 │      12 │      0.30% │    PASS │ $  0.1296 │  45.3% │      0 ║
-║ image.png          │     294 │      16 │      0.31% │    PASS │ $  0.1944 │  47.0% │      0 ║
+║ small_text.txt     │      96 │       8 │      0.28% │    PASS │ $  0.0648 │  47.5% │      0 ║
+║ archive.bin        │     327 │      18 │      0.25% │    PASS │ $  0.2268 │  46.2% │      0 ║
+║ sample.fasta       │     176 │      12 │      0.21% │    PASS │ $  0.1296 │  45.3% │      0 ║
+║ image.png          │     294 │      16 │      0.22% │    PASS │ $  0.1944 │  47.0% │      0 ║
 ```
 
-This fixes Illumina. Nanopore is still broken, and we chased why three
-times. Fix one: consensus voting now aligns each read to the group's
+Illumina was fixed first. Nanopore took several more investigation rounds
+before it also passed. Fix one: consensus voting now aligns each read to the group's
 reference before voting instead of comparing raw positions, so it tolerates
 indels, not just substitutions. Fix two, bigger: primer matching
 (`nucle_index::primer::PrimerPair`) required an exact-position match, so a
@@ -937,6 +942,9 @@ directory next to wherever the command runs (created on first use, like
 atomically (a temp file, then renamed over the real path), so a process
 killed mid-write never corrupts previously-stored data.
 
+See [NucleOS operations](docs/nucleos-operations.md) for the complete durable
+file, version, provider, and block-image lifecycle.
+
 A global `--tenant <name>` flag (or `NUCLEOS_TENANT`) scopes any command to
 that tenant's own, fully isolated pool — a `tenants/<name>/` subdirectory of
 whatever the above resolves to, with its own independent `state.json`/
@@ -954,8 +962,21 @@ nucle decode myfile.dna -o recovered.txt -s 1024
 # Store a file with error correction (4 parity strands)
 nucle store myfile.txt -r 4
 
+# Select either end-to-end storage codec (ternary is the default)
+nucle store myfile.txt -r 4 --codec yin-yang
+
 # Retrieve a stored file
 nucle retrieve myfile.txt
+
+# Inspect and retrieve immutable historical versions
+nucle history myfile.txt
+nucle retrieve myfile.txt --version 1
+
+# Rename the logical file and its complete version chain without rewriting DNA
+nucle rename myfile.txt archive/myfile.txt
+
+# Delete the current file and every historical version (explicit acknowledgement)
+nucle delete archive/myfile.txt --confirm
 
 # Migrate a stored file to new parameters (redundancy and/or codec)
 nucle migrate myfile.txt -r 6
@@ -1095,6 +1116,15 @@ nucle --tenant acme retrieve readme.txt
 nucle --tenant globex list                 # globex never sees acme's files
 nucle tenants                              # list every tenant with existing data
 
+# Create and use a persistent simulated molecular block-device image
+nucle block create dna.img --backend synthesis-array --block-size 256 --capacity-blocks 64
+nucle block write dna.img 0 block.bin
+nucle block read dna.img 0 --output recovered-block.bin
+nucle block info dna.img
+
+# Rewritable Nanopore images persist overwrite generation and read counters too
+nucle block create rw.img --backend rewritable-nanopore --block-size 256 --capacity-blocks 64
+
 # Environment and integrity diagnostics
 nucle doctor
 
@@ -1114,15 +1144,15 @@ nucle agent "pool status"
 | `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
 | `nucle_ecc` | 39 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, metadata-similarity search |
-| `nucle_vfs` | 120 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, rewrite/versioning (rewriting an existing filename versions instead of erroring, `dna_history` lists every version oldest-first ending with the current one, `dna_read_version` reads a specific past version, `dna_delete` removes the entire version chain not just the current version, a superseded version's search entry is dropped so search only ever surfaces the current one, plus `Catalog`-level coverage of archiving/retrieving/mutating/removing versions directly), migration (incl. codec-migration rejection), per-object recovery manifests, regression-pinned fixture roundtrips, Illumina noise roundtrips, and Nanopore noise roundtrips under the correct Twist-synthesis + Nanopore-sequencing pairing (recovers exactly at 15x coverage / 6 parity strands, always-run; a `#[ignore]`d thorough check reproduces the exact 50x/12 scale a since-fixed noise-doubling bug once made this look like an open research problem -- see docs/architecture.md; run it explicitly with `cargo test -p nucle_vfs -- --ignored`), durable cross-process persistence (`NucleOS::open`/`persist`: a fresh directory behaves like `new`, a stored file survives a real reopen, search is correctly rebuilt from the restored catalog, a deleted file's primer is never reassigned after reopening, and a stray partial `.tmp` file is never loaded over a good `state.json`), the hierarchical path-like namespace (`Catalog::list_prefixed`, same leaf name under different prefixes never colliding), optimistic-concurrency + file-lock safety (a stale persist after a concurrent write is rejected not silently lost, the same racing against a brand-new pool, sequential persists on one instance both succeed, and a pre-versioning `state.json` with no version field still loads), pool capacity limits (unlimited by default, an oversized write refused before touching the pool with the exact remaining headroom reported, a fitting write still succeeding, the limit persisting and being enforced after a real reopen, and clearing it removing the restriction), the system-wide audit log (`pool_dir/audit.log`: an ephemeral in-memory instance logs nothing, a successful write/read/delete each append their own event, a failed operation still logs with no archive ID, a migration's read+delete+write trail appears as three linked events under the same filename, and a truncated trailing line from a crash mid-append is skipped rather than failing the whole read), the `--confirm` OS-user allowlist (an empty/unconfigured allowlist allows any user, a configured one only allows listed users, `save`/`load` round-trip through `pool_dir/config.json`, and an unconfigured pool's check is a no-op), encryption at rest (`nucle_vfs::crypto`'s Argon2id-wrapped, ChaCha20-Poly1305-encrypted data key: wrap/unlock round-trips, a wrong passphrase and a corrupted/tampered ciphertext both fail clearly, two key files for the same passphrase are never identical, encrypt/decrypt byte round-trips, a reused plaintext never produces the same ciphertext twice; plus `NucleOS`-level coverage of `enable_encryption`/`open_encrypted`/`disable_encryption`: a stored file survives an encrypt-then-reopen-then-decrypt round trip, the on-disk `state.json` no longer contains a stored file's plaintext filename once encrypted, a plain `open()` refuses an encrypted pool instead of misreading it, the wrong passphrase is refused clearly, `open_encrypted` is a transparent passthrough for an unencrypted pool, and enabling/disabling encryption twice in a row are both clear errors rather than a silent no-op), proactive integrity scanning (`dna_scan`: an empty pool reports zero files, a healthy pool scans every file as recoverable with matching strand counts, a file whose strands vanished from the pool without going through `dna_delete` scans as corrupted while an unaffected sibling file still scans healthy, prefix filtering matches `dna_list`'s own convention, and a scan persists recovery manifests exactly as a real retrieve would), and Prometheus metrics (`nucle_vfs::metrics`: an empty pool collects zeroed metrics with no audit events, a stored file is reflected in both the pool-state gauges and the audit-event counts, a failed operation is counted separately from successes under the same `(operation, success)` label pair, the rendered Prometheus text carries a `# HELP`/`# TYPE` pair for every metric, and an unset capacity limit omits that one gauge entirely rather than emitting a bogus zero) |
+| `nucle_vfs` | 122 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, rewrite/versioning, historical reads, complete-chain deletion, metadata-only complete-chain rename, migration that preserves readable history, automatically growing deterministic primer addressing (including reopen with a smaller capacity hint and no address consumption on a refused write), per-object recovery manifests, fixture/Illumina/Nanopore roundtrips, durable atomic persistence, namespace prefixes, optimistic concurrency and file locking, capacity limits, audit logging, confirm-user policy, encryption at rest, integrity scanning, tenancy, and Prometheus metrics |
 | `nucle_agent` | 35 | Tool defs, planner, executor, including natural-language `migrate` (redundancy/codec extraction with a friendlier-than-the-CLI codec alias table) and `help` (regression-guarded against a fixed bug where it silently ran `pool_status` instead) |
 | `nucle_lang` | 262 | Lexer/parser, biological and probabilistic pool checks, effects, compile-time control flow, canonical formatting, `test`/`assert`, doc generation, package/lockfile APIs, functions/generics/closures, `Result<T, E>`/`?`, enums and exhaustive pattern matching, and effect-annotated function types. New soundness coverage validates whole-program forward and mutually-recursive signatures, ordinary binding/argument/return types, nested calls, Result/enum-producing call arity and generics, strict `protect(File, Recovery) -> DnaFile`, scalar `Ok`/computed `Err`/enum payloads/match arms, and real runtime execution of computed error messages. |
 | `nucle_hardware` | 49 | Confirmation gating (effectful/destructive rejection, count/message correctness, sync and async variants, and a dedicated proof that read-only `Qc`/`Recovery` requests never count as effectful), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation, the job-handle/concurrency model (`submit()` returning before a real simulated delay elapses, multiple concurrent jobs finishing in well under their sequential-sum time, `Pending`/`Running`/`Complete` status transitions), and the real vendor adapters: Twist/IDT/Illumina HTTP request-building/auth-header/status-classification against a local `tiny_http` stand-in server (order-then-poll round trips, completed/cancelled/aborted status mapping, a bounded-timeout failure against an unreachable endpoint), IDT's two-step OAuth2 token-then-order flow specifically, and Nanopore's `ProtocolState`-to-`JobStatus` mapping plus a real (but connection-refused) gRPC dial against an absent MinKNOW instance |
-| `nucle_blockdev` | 22 | The `BlockDevice` trait's own contract (out-of-range/wrong-size/never-written rejection) against both backends; the Atlas/imec-modeled `SynthesisArrayBlockDevice`'s write-once enforcement, a real write-then-read-recovers-after-direct-strand-corruption proof (consensus + Reed-Solomon, not luck from a low noise seed), and batched writes measurably saving latency over one-at-a-time (compared against a same-config sequential baseline, not a fixed wall-clock number, so it isn't flaky under CI/parallel-suite load); the Mizzou-modeled `RewritableNanoporeBlockDevice`'s genuine overwrite-in-place (the core behavioral difference from the write-once backend), the same corruption-recovery proof, and per-operation latency on both reads and writes; and `blob`'s minimal length-prefixed multi-block layout round-tripping unmodified across both backends, including an empty blob and a too-large blob correctly rejected before any block is touched |
-| `nucle-cli` | 36 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior, plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows exercised through the real compiled CLI. |
+| `nucle_blockdev` | 25 | The `BlockDevice` contract against both backends; write-once synthesis-array and rewritable-Nanopore behavior; real consensus + Reed-Solomon corruption recovery; batched array latency; blob layout; and atomic, versioned image save/load including backend dimensions, written blocks, Nanopore read counters, write generations, and malformed-image rejection |
+| `nucle-cli` | 46 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; selectable storage codecs; persistent block-device images; fail-closed hardware-provider selection; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI |
 | `nucle_lsp` | 17 | UTF-16-correct positions, diagnostics, hover, definition, symbols, context-aware completion, references, safe prepare/rename, and semantic tokens, including real Content-Length-framed JSON-RPC integration tests cross-checked against `nucle check`. |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **711 (+3 doctests, +1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary** |
+| **Total** | **729 discovered tests (728 passed, 1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary; verified with `cargo test --workspace --no-fail-fast`** |
 
 ---
 
