@@ -418,10 +418,8 @@ enum HardwareSubcommand {
         /// or 'mock-delayed' (simulates real hardware latency on a
         /// background thread — see --simulated-delay-ms). Real vendor
         /// adapters (nucle_hardware::{twist,idt,illumina,nanopore}) exist as
-        /// library Providers but aren't wired up to this flag yet -- each
-        /// needs its own vendor-specific credential flags/env vars, a CLI
-        /// UX decision left for when that's actually needed. Vendor names
-        /// passed here are accepted but fall back to file-export.
+        /// library APIs, but are rejected here until the CLI has
+        /// vendor-specific credential and resumable job handling.
         #[arg(short, long, default_value = "file-export")]
         provider: String,
         /// Required whenever the batch contains a Synthesis, Sequencing, or
@@ -2295,12 +2293,26 @@ fn indexed_output_path(base: &str, index: usize) -> String {
 fn cmd_hardware(subcommand: HardwareSubcommand, pool_dir: &std::path::Path, json: bool) {
     match subcommand {
         HardwareSubcommand::Export { source, output, provider, confirm, simulated_delay_ms } => {
+            if let Err(error) = validate_cli_provider(&provider) {
+                eprintln!("{}", error);
+                std::process::exit(1);
+            }
             if source.len() == 1 {
                 export_single(&source[0], &output, &provider, confirm, simulated_delay_ms, pool_dir, json);
             } else {
                 export_multiple(&source, &output, &provider, confirm, simulated_delay_ms, pool_dir, json);
             }
         }
+    }
+}
+
+fn validate_cli_provider(provider: &str) -> Result<(), String> {
+    match provider {
+        "file-export" | "mock" | "mock-delayed" => Ok(()),
+        other => Err(format!(
+            "provider '{}' is not available through the CLI; expected file-export, mock, or mock-delayed. Real vendor adapters must be configured through the nucle_hardware library until resumable CLI job handling is available.",
+            other
+        )),
     }
 }
 
@@ -2344,14 +2356,7 @@ fn export_single(source: &str, output: &str, provider: &str, confirm: bool, simu
             let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(output));
             ("file-export", nucle_hardware::submit_with_confirmation(&p, &requests, confirm))
         }
-        other => {
-            eprintln!(
-                "Note: provider '{}' isn't wired up to this CLI flag yet (its nucle_hardware library adapter needs vendor credentials this flag can't pass); falling back to file-export.",
-                other
-            );
-            let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(output));
-            ("file-export", nucle_hardware::submit_with_confirmation(&p, &requests, confirm))
-        }
+        _ => unreachable!("provider is validated before export"),
     };
 
     match result {
@@ -2434,7 +2439,6 @@ fn export_multiple(sources: &[String], output: &str, provider: &str, confirm: bo
     }
 
     let delay = std::time::Duration::from_millis(simulated_delay_ms);
-    let mut warned_fallback = false;
     let mut pending: Vec<(&PendingSource, &str, Box<dyn JobHandle>)> = Vec::new();
 
     for sub in &submissions {
@@ -2455,17 +2459,7 @@ fn export_multiple(sources: &[String], output: &str, provider: &str, confirm: bo
                 let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&sub.output_path));
                 ("file-export", nucle_hardware::submit_with_confirmation_async(&p, &sub.requests, confirm))
             }
-            other => {
-                if !warned_fallback {
-                    eprintln!(
-                        "Note: provider '{}' isn't wired up to this CLI flag yet (its nucle_hardware library adapter needs vendor credentials this flag can't pass); falling back to file-export.",
-                        other
-                    );
-                    warned_fallback = true;
-                }
-                let p = nucle_hardware::FileExportProvider::new(std::path::PathBuf::from(&sub.output_path));
-                ("file-export", nucle_hardware::submit_with_confirmation_async(&p, &sub.requests, confirm))
-            }
+            _ => unreachable!("provider is validated before export"),
         };
 
         match handle_result {
