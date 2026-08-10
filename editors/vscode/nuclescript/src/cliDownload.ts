@@ -17,13 +17,12 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // whenever a newer `v*` release ships with an updated nucle-cli, or a
 // fresh install downloading it will fail to parse -- or silently
 // mis-execute -- any .nsl file using syntax added since the pinned tag.
-// v0.1.8 covers user-defined enums/general `match` (v0.1.6), effect-
-// annotated `Fn(...)` types (v0.1.7), and concurrent hardware submission
-// (v0.1.8, no new .nsl syntax) -- the two syntax-adding releases were
-// missed here for a while (this constant is separate from nucle-lsp's
-// own version-templated download in serverDownload.ts, which tracks the
-// extension's own version automatically and was never at risk).
-const CLI_RELEASE_TAG = "v0.1.8";
+// v0.1.26 is the newest published release with CLI assets for Windows,
+// Linux, and macOS. It includes every language/runtime feature through
+// versioned writes and rewrites, so Test Explorer, formatting, and Run
+// never fall back to an older parser after a clean extension install.
+// This stays independent of nucle-lsp's extension-versioned release tag.
+const CLI_RELEASE_TAG = "v0.1.26";
 
 /** The release asset name published for this platform, or `undefined` if
  * none exists (arm64 Linux/Windows) -- caller falls back to asking the
