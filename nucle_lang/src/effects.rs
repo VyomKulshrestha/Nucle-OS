@@ -201,12 +201,14 @@ pub fn join_effects(a: Effect, b: Effect) -> Effect {
 
 /// The effect and confirmation state of calling `name`, computed by joining
 /// the effects of every declaration in its body. `resolving` guards against
-/// infinite recursion on a (mutually-)recursive function: a cycle is
-/// reported as `Destructive` and unconfirmed — the conservative choice — so
-/// a recursive function can never silently look `Pure`/pre-confirmed just
-/// because its own effect couldn't be fully resolved. The SAME `resolving`
-/// set must be threaded through every nested lookup within one resolution
-/// (never a fresh one per call), or the cycle can't be detected.
+/// infinite recursion on a (mutually-)recursive function. A back-edge is
+/// the neutral element (`Pure`, confirmed): the enclosing DFS still visits
+/// every concrete operation in the recursive component and joins its real
+/// effect, while the call edge itself contributes no new operation. This is
+/// the least fixed point of the effect lattice, and avoids inventing a
+/// destructive effect for a genuinely pure recursive component. The SAME
+/// `resolving` set must be threaded through every nested lookup within one
+/// resolution (never a fresh one per call), or the cycle can't be detected.
 ///
 /// `pub` (not private) so `typeck::TypeChecker::check_fn_effect_
 /// compatibility` can resolve a named reference to a let-bound closure
@@ -235,7 +237,7 @@ pub fn function_call_effect(name: &str, funcs: &FunctionTable, closures: &Functi
         };
     };
     if !resolving.insert(name.to_string()) {
-        return (Effect::Destructive, false);
+        return (Effect::Pure, true);
     }
     let scoped = scoped_fn_param_effects(&func.params, fn_param_effects);
     let (joint_effect, confirmed) = body_effect(&func.body, funcs, &scoped, resolving);
@@ -551,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn self_recursive_function_is_treated_conservatively() {
+    fn pure_self_recursive_function_reaches_the_neutral_fixed_point() {
         let mut funcs = FunctionTable::new();
         funcs.insert(
             "loop_fn".into(),
@@ -571,7 +573,24 @@ mod tests {
             },
         );
         let call = Expr::FunctionCall { name: "loop_fn".into(), args: vec![], explicit_type_args: vec![] };
-        // Must terminate (no stack overflow) and must not report Pure/confirmed.
+        // Must terminate (no stack overflow); the recursive edge itself is
+        // effect-free, so an otherwise empty body reaches Pure/confirmed.
+        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()), Effect::Pure);
+        assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()));
+    }
+
+    #[test]
+    fn recursive_component_still_reports_its_concrete_destructive_effect() {
+        let mut recursive = destructive_delete_fn("loop_fn", false);
+        recursive.body.push(Declaration::Let(LetDecl {
+            name: "again".into(),
+            annotation: TypeExpr::Void,
+            expr: Expr::FunctionCall { name: "loop_fn".into(), args: vec![], explicit_type_args: vec![] },
+            span: Span::default(),
+        }));
+        let mut funcs = FunctionTable::new();
+        funcs.insert("loop_fn".into(), recursive);
+        let call = Expr::FunctionCall { name: "loop_fn".into(), args: vec![], explicit_type_args: vec![] };
         assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()), Effect::Destructive);
         assert!(!expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()));
     }

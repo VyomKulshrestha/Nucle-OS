@@ -140,6 +140,10 @@ struct TypeChecker {
     strands: HashMap<String, Span>,
     sequences: HashMap<String, Span>,
     functions: HashMap<String, FunctionDecl>,
+    /// True while the program-level pass is checking bodies after first
+    /// collecting every top-level function signature. Nested functions
+    /// are still registered incrementally by their fresh body checker.
+    functions_predeclared: bool,
     /// Bindings whose inferred type is `Result<Ok, Err>` -- parallel to
     /// `pool_bindings`, but for the structurally different "this is a
     /// Result, not a pool" shape `infer_expr` has no room for (see
@@ -238,11 +242,30 @@ impl TypeChecker {
     /// declarations of its resolved branch/unrolled iterations, so the
     /// result never contains either variant.
     fn check(&mut self, program: &Program) -> Program {
+        self.predeclare_functions(program);
         let mut declarations = Vec::new();
         for declaration in &program.declarations {
             declarations.extend(self.check_declaration_single(declaration));
         }
+        self.functions_predeclared = false;
         Program { declarations }
+    }
+
+    /// Collect top-level signatures before checking any body, making
+    /// forward calls and mutually-referenced signatures independent of
+    /// source order while keeping duplicate diagnostics deterministic.
+    fn predeclare_functions(&mut self, program: &Program) {
+        self.functions_predeclared = true;
+        for declaration in &program.declarations {
+            let Declaration::Function(function) = declaration else { continue };
+            if self.functions.contains_key(&function.name) {
+                self.report.error(function.span, "E-FUNCTION-DUPLICATE", format!(
+                    "function '{}' is declared more than once", function.name
+                ));
+            } else {
+                self.functions.insert(function.name.clone(), function.clone());
+            }
+        }
     }
 
     /// Checks one declaration and returns its desugared form: every
@@ -1878,11 +1901,19 @@ impl TypeChecker {
     }
 
     fn check_function(&mut self, func: &FunctionDecl) -> FunctionDecl {
-        if self.functions.contains_key(&func.name) {
-            self.report.error(func.span, "E-FUNCTION-DUPLICATE", format!("function '{}' is declared more than once", func.name));
-            return func.clone();
+        if self.functions_predeclared {
+            // A different span under this name is the duplicate already
+            // diagnosed by `predeclare_functions`.
+            if self.functions.get(&func.name).is_some_and(|decl| decl.span != func.span) {
+                return func.clone();
+            }
+        } else {
+            if self.functions.contains_key(&func.name) {
+                self.report.error(func.span, "E-FUNCTION-DUPLICATE", format!("function '{}' is declared more than once", func.name));
+                return func.clone();
+            }
+            self.functions.insert(func.name.clone(), func.clone());
         }
-        self.functions.insert(func.name.clone(), func.clone());
 
         let mut param_names = HashSet::new();
         for param in &func.params {
