@@ -109,6 +109,14 @@ enum Commands {
         name: String,
     },
 
+    /// Rename a file and its complete version history
+    Rename {
+        /// Current stored filename
+        old_name: String,
+        /// New stored filename
+        new_name: String,
+    },
+
     /// Delete a file and its complete version history from the pool
     Delete {
         /// Filename to delete
@@ -496,6 +504,9 @@ fn main() {
         }
         Commands::Retrieve { name, version } => cmd_retrieve(&name, version, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::History { name } => cmd_history(&name, &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Rename { old_name, new_name } => {
+            cmd_rename(&old_name, &new_name, &pool_dir, passphrase.as_deref(), cli.json)
+        }
         Commands::Delete { name, confirm } => cmd_delete(&name, confirm, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, passphrase.as_deref(), cli.json),
@@ -870,6 +881,33 @@ fn cmd_history(name: &str, pool_dir: &std::path::Path, passphrase: Option<&str>,
                 version.codec,
                 version.file_id
             );
+        }
+    }
+}
+
+fn cmd_rename(
+    old_name: &str,
+    new_name: &str,
+    pool_dir: &std::path::Path,
+    passphrase: Option<&str>,
+    json: bool,
+) {
+    let mut os = open_pool(pool_dir, passphrase);
+    match os.dna_rename(old_name, new_name) {
+        Ok(result) => {
+            persist_pool(&mut os, pool_dir);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            } else {
+                println!(
+                    "Renamed '{}' to '{}' ({} version(s))",
+                    result.old_name, result.new_name, result.versions_moved
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!("Rename failed: {}", error);
+            std::process::exit(1);
         }
     }
 }

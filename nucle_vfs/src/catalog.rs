@@ -147,6 +147,39 @@ impl Catalog {
         self.remove(&file_id)
     }
 
+    /// Rename a current file and its complete version chain without changing
+    /// archive IDs, primers, or pool strands.
+    pub fn rename(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+        if old_name == new_name {
+            return self
+                .contains_name(old_name)
+                .then_some(())
+                .ok_or_else(|| format!("file '{}' not found", old_name));
+        }
+        if self.contains_name(new_name) {
+            return Err(format!("file '{}' already exists", new_name));
+        }
+
+        let file_id = self
+            .name_index
+            .remove(old_name)
+            .ok_or_else(|| format!("file '{}' not found", old_name))?;
+        let current = self
+            .files
+            .get_mut(&file_id)
+            .expect("name index must reference a current file");
+        current.filename = new_name.to_string();
+        self.name_index.insert(new_name.to_string(), file_id);
+
+        if let Some(mut history) = self.version_history.remove(old_name) {
+            for version in &mut history {
+                version.filename = new_name.to_string();
+            }
+            self.version_history.insert(new_name.to_string(), history);
+        }
+        Ok(())
+    }
+
     /// List all files.
     pub fn list(&self) -> Vec<&DnaFile> {
         self.files.values().collect()

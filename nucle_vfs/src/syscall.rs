@@ -916,6 +916,53 @@ impl NucleOS {
         versions
     }
 
+    /// Rename a file and its complete version chain. Physical strands,
+    /// archive IDs, primers, and stored bytes are unchanged; only catalog and
+    /// search metadata move to the new logical name.
+    pub fn dna_rename(&mut self, old_name: &str, new_name: &str) -> Result<RenameResult, String> {
+        let archive_id = self.catalog.get_by_name(old_name).map(|file| file.file_id.clone());
+        let result = self.dna_rename_impl(old_name, new_name);
+        let detail = match &result {
+            Ok(rename) => format!(
+                "renamed to '{}' with {} version(s)",
+                rename.new_name, rename.versions_moved
+            ),
+            Err(error) => error.clone(),
+        };
+        self.record_audit("rename", old_name, archive_id, result.is_ok(), detail);
+        result
+    }
+
+    fn dna_rename_impl(&mut self, old_name: &str, new_name: &str) -> Result<RenameResult, String> {
+        if new_name.is_empty() {
+            return Err("new filename cannot be empty".to_string());
+        }
+        let current = self
+            .catalog
+            .get_by_name(old_name)
+            .ok_or_else(|| format!("file '{}' not found", old_name))?
+            .clone();
+        let versions_moved = self.catalog.history(old_name).len() + 1;
+
+        self.catalog.rename(old_name, new_name)?;
+        self.search.remove_file(&current.file_id);
+        self.search.register_file(FileMeta {
+            file_id: current.file_id.clone(),
+            filename: new_name.to_string(),
+            size: current.size,
+            content_hash: current.content_hash,
+            primer_id: current.primer_id,
+            strand_count: current.data_strand_count + current.parity_strand_count,
+        });
+
+        Ok(RenameResult {
+            old_name: old_name.to_string(),
+            new_name: new_name.to_string(),
+            file_id: current.file_id,
+            versions_moved,
+        })
+    }
+
     fn dna_read_impl(&mut self, filename: &str) -> Result<Vec<u8>, String> {
         // ── Layer 5: VFS ── look up file
         // Cloned (not borrowed) so the catalog can be mutably re-borrowed
@@ -1247,6 +1294,15 @@ pub struct WriteResult {
     /// written, incremented on every write that reuses an existing name
     /// instead of being rejected. See `NucleOS::dna_history`/`dna_read_version`.
     pub version: u32,
+}
+
+/// Result of a metadata-only rename operation.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenameResult {
+    pub old_name: String,
+    pub new_name: String,
+    pub file_id: String,
+    pub versions_moved: usize,
 }
 
 impl fmt::Display for WriteResult {
