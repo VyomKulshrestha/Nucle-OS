@@ -118,6 +118,9 @@ pub const STATE_FILE_NAME: &str = "state.json";
 /// was added). The lock doesn't replace the version check; it just makes
 /// check-then-write atomic with respect to any other process's persist().
 const LOCK_FILE_NAME: &str = ".lock";
+const MIN_PRIMER_CAPACITY: usize = 10;
+const PRIMER_LENGTH: usize = 20;
+const PRIMER_SEED: u64 = 42;
 
 /// The only state that can't be deterministically reconstructed at
 /// `open()` time -- see `NucleOS::open`'s doc comment for why `primers`/
@@ -233,7 +236,7 @@ impl NucleOS {
     ///
     /// `max_files`: maximum number of files (determines primer library size).
     pub fn new(max_files: usize) -> Self {
-        let primers = PrimerLibrary::generate(max_files.max(10), 20, 42);
+        let primers = PrimerLibrary::generate(max_files.max(MIN_PRIMER_CAPACITY), PRIMER_LENGTH, PRIMER_SEED);
         let search = SearchEngine::new(primers.clone());
         Self {
             pool: DnaPool::new(),
@@ -342,7 +345,18 @@ impl NucleOS {
             return Ok(os);
         };
 
-        let primers = PrimerLibrary::generate(max_files.max(10), 20, 42);
+        // A caller may reopen an older pool with a smaller max_files value.
+        // Generate enough of the deterministic sequence to resolve every
+        // primer that the persisted catalog can already reference.
+        let primer_capacity = max_files.max(persisted.primers_used).max(MIN_PRIMER_CAPACITY);
+        let primers = PrimerLibrary::generate(primer_capacity, PRIMER_LENGTH, PRIMER_SEED);
+        if primers.len() < persisted.primers_used {
+            return Err(format!(
+                "could not regenerate {} persisted primer addresses (generated {})",
+                persisted.primers_used,
+                primers.len()
+            ));
+        }
         let mut search = SearchEngine::new(primers.clone());
         for file in persisted.catalog.list() {
             search.register_file(FileMeta {
@@ -584,12 +598,15 @@ impl NucleOS {
         let previous = self.catalog.get_by_name(filename).map(|f| (f.version, f.file_id.clone()));
         let next_version = previous.as_ref().map(|(v, _)| v + 1).unwrap_or(1);
 
-        // Assign a primer pair
+        // Assign a primer pair. The constructor's max_files value is an
+        // initial capacity hint, not a lifetime write limit: versioned writes
+        // and deleted archives still need distinct physical addresses, so the
+        // deterministic library expands before it is exhausted.
+        self.ensure_primer_capacity()?;
         let primer_pair = self.primers
             .assign_next(self.primers_used)
-            .ok_or("no primer pairs available")?
+            .ok_or("failed to allocate a primer pair")?
             .clone();
-        self.primers_used += 1;
 
         // ── Layer 1: Codec ── encode binary → DNA strands
         let codec = codec_kind.to_boxed();
@@ -796,6 +813,7 @@ impl NucleOS {
             primer_id: primer_pair.id.clone(),
             strand_count: total_strands,
         });
+        self.primers_used += 1;
 
         Ok(WriteResult {
             file_id,
@@ -808,6 +826,35 @@ impl NucleOS {
             redundancy: redundancy_ratio,
             version: next_version,
         })
+    }
+
+    /// Expand the deterministic primer sequence without changing any
+    /// previously assigned address. `PrimerLibrary::generate` always starts
+    /// from the same seed, so a larger generation has the old library as an
+    /// exact prefix. The search engine receives the same expanded library so
+    /// physical-address resolution remains consistent across both subsystems.
+    fn ensure_primer_capacity(&mut self) -> Result<(), String> {
+        if self.primers_used < self.primers.len() {
+            return Ok(());
+        }
+
+        let target = self
+            .primers
+            .len()
+            .saturating_mul(2)
+            .max(self.primers_used.saturating_add(1))
+            .max(MIN_PRIMER_CAPACITY);
+        let expanded = PrimerLibrary::generate(target, PRIMER_LENGTH, PRIMER_SEED);
+        if expanded.len() <= self.primers_used {
+            return Err(format!(
+                "primer address space exhausted after {} assignments",
+                self.primers_used
+            ));
+        }
+
+        self.primers = expanded.clone();
+        self.search.primers = expanded;
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -2211,5 +2258,49 @@ mod tests {
         assert!(reopened.catalog.get_by_name("new.txt").is_some());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn primer_library_grows_and_reopens_with_every_version_readable() {
+        let dir = scratch_pool_dir("primer_growth");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        {
+            // max_files is deliberately smaller than both the minimum initial
+            // library and the number of versions written. Crossing version 10
+            // exercises the automatic 10 -> 20 expansion.
+            let mut os = NucleOS::open(&dir, 1).unwrap();
+            for version in 1..=12u32 {
+                let content = format!("content-v{version}");
+                let result = os.dna_write("growing.txt", content.as_bytes(), 1).unwrap();
+                assert_eq!(result.version, version);
+            }
+            assert!(os.primers.len() >= 12);
+            os.persist(&dir).unwrap();
+        }
+
+        // Reopening with the same tiny capacity hint must regenerate enough
+        // deterministic addresses for the already-persisted version chain.
+        let mut reopened = NucleOS::open(&dir, 1).unwrap();
+        assert_eq!(reopened.dna_history("growing.txt").len(), 12);
+        for version in 1..=12u32 {
+            let expected = format!("content-v{version}").into_bytes();
+            assert_eq!(reopened.dna_read_version("growing.txt", version).unwrap(), expected);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejected_write_does_not_consume_a_primer_address() {
+        let mut os = NucleOS::new(1);
+        os.set_max_nucleotides(Some(1));
+        assert!(os.dna_write("too-large.txt", b"cannot fit", 0).is_err());
+        assert_eq!(os.primers_used, 0);
+
+        os.set_max_nucleotides(None);
+        let stored = os.dna_write("fits.txt", b"fits now", 0).unwrap();
+        assert_eq!(stored.primer_id, "P0000");
+        assert_eq!(os.primers_used, 1);
     }
 }
