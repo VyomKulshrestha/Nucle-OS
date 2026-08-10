@@ -1278,11 +1278,21 @@ impl TypeChecker {
             }
             return None;
         }
-        // 8. Pool-shaped body.
+        // 8. Ordinary values. Pattern variables were handled in
+        // (1); this admits literals, outer bindings, and scalar-returning
+        // calls through the same value inference used by constructors.
+        if matches!(body, Expr::StringLiteral(_) | Expr::Variable(_) | Expr::FunctionCall { .. }) {
+            if let Some(value_ty) = self.infer_value_type(body, span) {
+                return Some(value_ty);
+            }
+        }
+        // 9. Pool-producing intrinsic expressions (simulate,
+        // synthesize, sequence). Function calls and bound pool variables
+        // already resolved through the general value path above.
         if let Some(pool_ty) = self.infer_expr(body, span) {
             return Some(TypeExpr::Pool(PoolType { state: pool_ty.state, error_rate_percent: Some(pool_ty.error_rate_percent) }));
         }
-        self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "match arm's body must be the pattern's own bound name, a re-wrapped construction of its own variant, a nested match, a Result-shaped expression, an enum-shaped expression, or a Pool-shaped expression");
+        self.report.error(span, "E-MATCH-ARM-UNTYPABLE", "match arm's body must be a scalar value, the pattern's own bound name, a re-wrapped construction of its own variant, a nested match, a Result-shaped expression, an enum-shaped expression, or a Pool-shaped expression");
         None
     }
 
@@ -1327,13 +1337,13 @@ impl TypeChecker {
         }
     }
 
-    /// Infers a "value type" for an expression that's meant to become
-    /// `Ok(...)`'s payload -- a bare `Variable` (any bound shape:
-    /// `Pool`/`Result`/`Str`/whatever `self.bindings` already tracks),
-    /// `?`, a `Result`-shaped expression, or a `Pool`-shaped one. Shared
-    /// by `check_ok_expr`; not by `check_match_arm`, which has its own
-    /// pattern-name special case this helper doesn't need to know about.
+    /// Infers a value type for constructors and match arms: scalar
+    /// strings, a bare bound variable, `?`, a validated function/closure
+    /// call, a nested match, or a Result/enum/Pool-shaped expression.
     fn infer_value_type(&mut self, expr: &Expr, span: Span) -> Option<TypeExpr> {
+        if matches!(expr, Expr::StringLiteral(_)) {
+            return Some(TypeExpr::Str);
+        }
         if let Expr::Try(inner) = expr {
             return self.check_try(inner, span);
         }
@@ -1348,17 +1358,32 @@ impl TypeChecker {
         if let Expr::Variable(name) = expr {
             return self.bindings.get(name).map(|b| b.annotation.clone());
         }
+        if matches!(expr, Expr::Match { .. }) {
+            return self.check_match(expr, span);
+        }
+        if let Expr::EnumConstruct { enum_name, variant, payload } = expr {
+            return self.check_enum_construct(enum_name, variant, payload.as_deref(), span);
+        }
         if let Some((ok, err)) = self.infer_result_expr(expr, span) {
             return Some(TypeExpr::Result(Box::new(ok), Box::new(err)));
         }
+        if let Expr::FunctionCall { name, args, .. } = expr {
+            if let Some((type_params, params, return_type)) = self.closures.get(name).cloned() {
+                return self.check_closure_call_args(name, &type_params, &params, &return_type, args, span);
+            }
+            let return_type = self.lookup_function(name).map(|function| function.return_type.clone());
+            let inferred_pool = self.infer_expr(expr, span);
+            return match (return_type, inferred_pool) {
+                (Some(TypeExpr::Pool(_)), Some(pool_ty)) => Some(TypeExpr::Pool(PoolType {
+                    state: pool_ty.state,
+                    error_rate_percent: Some(pool_ty.error_rate_percent),
+                })),
+                (Some(return_type), _) => Some(return_type),
+                (None, _) => None,
+            };
+        }
         if let Some(pool_ty) = self.infer_expr(expr, span) {
             return Some(TypeExpr::Pool(PoolType { state: pool_ty.state, error_rate_percent: Some(pool_ty.error_rate_percent) }));
-        }
-        // A direct (not variable-mediated) user-enum construction --
-        // e.g. `Ok(MyEnum::Variant(x))` -- mirrors the Result-shaped case
-        // above for user enums.
-        if let Expr::EnumConstruct { enum_name, variant, payload } = expr {
-            return self.check_enum_construct(enum_name, variant, payload.as_deref(), span);
         }
         None
     }
@@ -1371,21 +1396,18 @@ impl TypeChecker {
     /// -- when it doesn't (`infer_result_expr`'s own generic path).
     fn check_ok_expr(&mut self, inner: &Expr, expected_err: Option<&TypeExpr>, span: Span) -> Option<(TypeExpr, TypeExpr)> {
         let Some(ok_ty) = self.infer_value_type(inner, span) else {
-            self.report.error(span, "E-OK-CONSTRUCTOR-INVALID", "Ok(...)'s payload must be a bound variable, '?', a Result-shaped expression, or a Pool-shaped expression");
+            self.report.error(span, "E-OK-CONSTRUCTOR-INVALID", "Ok(...)'s payload must be a typed NucleScript value expression");
             return None;
         };
         Some((ok_ty, expected_err.cloned().unwrap_or(TypeExpr::Str)))
     }
 
-    /// `Err(<expr>)`'s validity: `<expr>` must be a string literal --
-    /// the only way to author a *new* `Str` value (see `Expr::Err`'s doc
-    /// comment in ast.rs for why an already-bound `Str` can't be
-    /// referenced by name here). The `Ok` side has no sensible default
-    /// and must come from `expected_ok` (context) -- `E-ERR-CONSTRUCTOR-
-    /// AMBIGUOUS` if there isn't any.
+    /// `Err(<expr>)`'s validity: `<expr>` must resolve to `Str`. The `Ok`
+    /// side has no sensible default and must come from `expected_ok`
+    /// (context) -- `E-ERR-CONSTRUCTOR-AMBIGUOUS` if there isn't any.
     fn check_err_expr(&mut self, inner: &Expr, expected_ok: Option<&TypeExpr>, span: Span) -> Option<(TypeExpr, TypeExpr)> {
-        if !matches!(inner, Expr::StringLiteral(_)) {
-            self.report.error(span, "E-ERR-CONSTRUCTOR-INVALID", "Err(...)'s payload must be a string literal -- the only way to author a new Str value");
+        if self.infer_value_type(inner, span) != Some(TypeExpr::Str) {
+            self.report.error(span, "E-ERR-CONSTRUCTOR-INVALID", "Err(...)'s payload must be a Str value");
             return None;
         }
         let Some(ok_ty) = expected_ok.cloned() else {

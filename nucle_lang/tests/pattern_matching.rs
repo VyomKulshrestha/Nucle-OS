@@ -121,14 +121,14 @@ fn mismatched_arm_types_are_rejected() {
 }
 
 #[test]
-fn an_arm_body_that_is_not_a_supported_shape_is_rejected() {
-    // Neither arm's bound name, `?`, a Result-shaped expression, nor a
-    // Pool-shaped expression -- a bare string literal is none of those.
+fn a_scalar_arm_still_has_to_unify_with_the_other_arms() {
+    // String literals are valid scalar arm values, but `Str` still does
+    // not unify with the Ok arm's `DnaFile`.
     let src = format!(
         "{}fn f() returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    let saved: DnaFile = match attempt {{\n        Ok(file) => file,\n        Err(reason) => \"unused\"\n    }}\n}}\n",
         POOL
     );
-    assert!(diagnostic_codes(&src).contains(&"E-MATCH-ARM-UNTYPABLE".to_string()));
+    assert!(diagnostic_codes(&src).contains(&"E-MATCH-ARM-TYPE-MISMATCH".to_string()));
 }
 
 #[test]

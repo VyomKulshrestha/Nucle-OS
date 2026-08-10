@@ -478,12 +478,9 @@ pub enum Expr {
     /// what `<expr>` can be, and `codegen::eval_expr`'s `Expr::Ok` arm
     /// for the runtime counterpart.
     Ok(Box<Expr>),
-    /// `Err(<string-literal>)` -- constructs a failed `Result`. The
-    /// payload is restricted to a string literal: it's the only way to
-    /// author a *new* `Str` value (an already-bound `Str`, e.g. a
-    /// `match`-captured `Err(reason)` pattern variable, was deliberately
-    /// never registered in any typeck scope map -- see `Expr::Match`'s
-    /// doc comment). The `Ok` side has no sensible default and must come
+    /// `Err(<str-expression>)` -- constructs a failed `Result`. The
+    /// payload may be any expression that resolves to `Str`. The `Ok`
+    /// side has no sensible default and must come
     /// from context (an enclosing `let`'s annotation, a sibling `match`
     /// arm, or the enclosing function/closure's declared return type) --
     /// `E-ERR-CONSTRUCTOR-AMBIGUOUS` if none is available.

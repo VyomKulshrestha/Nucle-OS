@@ -177,6 +177,14 @@ fn constructing_a_payload_variant_with_the_wrong_payload_type_is_rejected() {
     assert!(diagnostic_codes(&src).contains(&"E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH".to_string()));
 }
 
+#[test]
+fn string_literals_are_valid_string_enum_payloads() {
+    let report = check_source(&format!(
+        "{RECOVERY_PLAN}let plan: RecoveryPlan = RecoveryPlan::GiveUp(\"blocked\")\n"
+    ));
+    assert!(report.ok, "expected a scalar enum payload to type-check: {:?}", report.diagnostics);
+}
+
 // ---------------------------------------------------------------------
 // Typeck: general match over a user enum
 // ---------------------------------------------------------------------
@@ -195,6 +203,14 @@ fn exhaustive_match_naming_every_variant_has_no_diagnostics() {
     );
     let report = check_source(&src);
     assert!(report.ok, "expected no diagnostics, got: {:?}", report.diagnostics);
+}
+
+#[test]
+fn scalar_match_arms_are_typed_and_unified() {
+    let report = check_source(&format!(
+        "{RECOVERY_PLAN}fn describe(plan: RecoveryPlan) returns Str {{\n    let label: Str = match plan {{\n        Retry => \"retry\",\n        Fallback => \"fallback\",\n        GiveUp(reason) => reason\n    }}\n}}\n"
+    ));
+    assert!(report.ok, "expected scalar match arms to type-check: {:?}", report.diagnostics);
 }
 
 #[test]

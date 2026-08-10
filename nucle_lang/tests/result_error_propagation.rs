@@ -234,7 +234,7 @@ fn err_constructor_with_no_context_at_all_is_ambiguous() {
 }
 
 #[test]
-fn err_constructor_payload_must_be_a_string_literal() {
+fn err_constructor_payload_must_resolve_to_str() {
     let src = format!(
         "{}fn f() returns Result<DnaFile, Str> {{\n    let saved: DnaFile = (store \"a.txt\" into archive)?\n    let x: Result<DnaFile, Str> = Err(saved)\n}}\n",
         POOL
@@ -243,9 +243,17 @@ fn err_constructor_payload_must_be_a_string_literal() {
 }
 
 #[test]
-fn ok_constructor_payload_must_be_resolvable() {
-    let src = format!("{}fn f() returns Result<DnaFile, Str> {{\n    let x: Result<DnaFile, Str> = Ok(\"a.txt\")\n}}\n", POOL);
-    assert!(diagnostic_codes(&src).contains(&"E-OK-CONSTRUCTOR-INVALID".to_string()));
+fn scalar_literals_and_bindings_are_valid_result_payloads() {
+    let src = format!("{}fn f() returns Result<Str, Str> {{\n    let x: Result<Str, Str> = Ok(\"ready\")\n}}\n", POOL);
+    let report = check_source(&src);
+    assert!(report.ok, "expected a literal Ok payload to type-check: {:?}", report.diagnostics);
+
+    let src = format!(
+        "{}fn f() returns Result<DnaFile, Str> {{\n    let message: Str = \"blocked\"\n    let x: Result<DnaFile, Str> = Err(message)\n}}\n",
+        POOL
+    );
+    let report = check_source(&src);
+    assert!(report.ok, "expected a bound Err payload to type-check: {:?}", report.diagnostics);
 }
 
 // ---------------------------------------------------------------------
@@ -299,6 +307,21 @@ fn confirmed_destructive_effect_after_a_try_short_circuit_is_confirmed() {
 
 fn examples_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("docs").join("examples")
+}
+
+#[test]
+fn a_computed_err_message_executes_as_a_string_value() {
+    let source = r#"
+fn fail(message: Str) returns Result<Str, Str> {
+    let outcome: Result<Str, Str> = Err(message)
+}
+let outcome: Result<Str, Str> = fail("blocked")
+"#;
+    let mut os = nucle_vfs::syscall::NucleOS::new(100);
+    let mut plan = compile(source).expect("computed Err payload must compile");
+
+    execute_program(&mut os, &mut plan, Path::new("."))
+        .expect("a computed Str payload must become a runtime Result::Err");
 }
 
 #[test]

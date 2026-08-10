@@ -319,13 +319,13 @@ fn eval_expr(
             EvalOutcome::Value(v) => EvalOutcome::Value(Value::Result(Ok(Box::new(v)))),
             err @ EvalOutcome::Err(_) => err,
         },
-        // `Err`'s payload is restricted to a string literal by typeck
-        // (`check_err_expr`) -- no need to recurse through `eval_expr`
-        // generically, the message is right there.
-        Expr::Err(inner) => match inner.as_ref() {
-            Expr::StringLiteral(s) => EvalOutcome::Value(Value::Result(Err(s.clone()))),
-            // Unreachable for a program that passed type-checking.
-            _ => EvalOutcome::Err("internal error: Err(...)'s payload was not a string literal".to_string()),
+        Expr::Err(inner) => match eval_expr(inner, env, funcs, pools, os, base_dir, steps, calling) {
+            EvalOutcome::Value(Value::Str(message)) => EvalOutcome::Value(Value::Result(Err(message))),
+            EvalOutcome::Value(_) => {
+                // Unreachable for a program that passed type-checking.
+                EvalOutcome::Err("internal error: Err(...)'s payload was not a Str value".to_string())
+            }
+            err @ EvalOutcome::Err(_) => err,
         },
         // Evaluates the scrutinee, then dispatches by variant name to
         // whichever arm matches (or the wildcard, if present) via
