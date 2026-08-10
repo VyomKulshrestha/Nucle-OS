@@ -104,7 +104,7 @@ mod tests {
         let mut device = fast_rewritable_nanopore(16, 2);
         // 2 capacity blocks, but a header block + a 20-byte payload
         // needs a header + 2 data blocks = 3.
-        let result = write_blob(&mut device, 0, &vec![1u8; 20]);
+        let result = write_blob(&mut device, 0, &[1u8; 20]);
         assert!(matches!(result, Err(BlockDeviceError::OutOfRange { .. })));
     }
 

@@ -215,7 +215,7 @@ impl YinYangCodec {
         nucleotides: &[Nucleotide],
         prev_base: Nucleotide,
     ) -> Result<Vec<u8>, DnaError> {
-        if nucleotides.len() % 4 != 0 {
+        if !nucleotides.len().is_multiple_of(4) {
             return Err(DnaError::DecodingError(format!(
                 "nucleotide count {} not a multiple of 4",
                 nucleotides.len()

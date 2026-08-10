@@ -40,7 +40,7 @@ fn two_concurrent_stores_never_silently_lose_a_write() {
 
     // Spawn (not run-and-wait) both as close together as possible, so they
     // genuinely overlap rather than running strictly sequentially.
-    let mut child_a = Command::new(nucle_cli_bin())
+    let child_a = Command::new(nucle_cli_bin())
         .arg("--pool-dir").arg(&pool_dir)
         .arg("store").arg(&file_a)
         .arg("--redundancy").arg("1")
@@ -48,7 +48,7 @@ fn two_concurrent_stores_never_silently_lose_a_write() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn nucle-cli for process A");
-    let mut child_b = Command::new(nucle_cli_bin())
+    let child_b = Command::new(nucle_cli_bin())
         .arg("--pool-dir").arg(&pool_dir)
         .arg("store").arg(&file_b)
         .arg("--redundancy").arg("1")

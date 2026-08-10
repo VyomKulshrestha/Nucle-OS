@@ -274,8 +274,8 @@ mod tests {
     #[test]
     fn write_at_an_already_written_block_is_rejected() {
         let mut device = test_device(16, 2);
-        device.write_block(0, &vec![1u8; 16]).unwrap();
-        let result = device.write_block(0, &vec![2u8; 16]);
+        device.write_block(0, &[1u8; 16]).unwrap();
+        let result = device.write_block(0, &[2u8; 16]);
         assert_eq!(result, Err(BlockDeviceError::AlreadyWritten { lba: 0 }));
     }
 
@@ -288,14 +288,14 @@ mod tests {
     #[test]
     fn write_with_wrong_size_data_is_rejected() {
         let mut device = test_device(16, 1);
-        let result = device.write_block(0, &vec![1u8; 8]);
+        let result = device.write_block(0, &[1u8; 8]);
         assert_eq!(result, Err(BlockDeviceError::BlockSizeMismatch { expected: 16, got: 8 }));
     }
 
     #[test]
     fn write_out_of_range_is_rejected() {
         let mut device = test_device(16, 2);
-        let result = device.write_block(5, &vec![1u8; 16]);
+        let result = device.write_block(5, &[1u8; 16]);
         assert_eq!(result, Err(BlockDeviceError::OutOfRange { lba: 5, capacity_blocks: 2 }));
     }
 
@@ -309,7 +309,7 @@ mod tests {
     fn a_single_write_takes_at_least_its_configured_latency() {
         let mut device = test_device(16, 1);
         let start = std::time::Instant::now();
-        device.write_block(0, &vec![1u8; 16]).unwrap();
+        device.write_block(0, &[1u8; 16]).unwrap();
         assert!(start.elapsed() >= Duration::from_millis(5));
     }
 

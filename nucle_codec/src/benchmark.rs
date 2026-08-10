@@ -10,7 +10,7 @@
 //! This is a contribution to the field — no standardised benchmark
 //! suite exists for DNA storage codecs.
 
-use crate::base::{DnaCodec, DnaError, StrandCollection};
+use crate::base::{DnaCodec, DnaError};
 use crate::constraints::{ConstraintConfig, ConstraintValidator};
 use std::fmt;
 use web_time::Instant;

@@ -401,11 +401,11 @@ fn test_roundtrip_survives_illumina_noise_via_consensus() {
 ///    correct pairing already existed in this codebase --
 ///    `SimulationConfig::twist_nanopore()` (high-fidelity Twist synthesis
 ///    + noisy Nanopore sequencing, the realistic real-world pipeline) --
-///    it just wasn't the one this test used. Direct ablation on 0
-///    through 50 parity strands at the *doubled* rate did produce the
-///    same failure at every level, which is genuinely true and was
-///    correctly reasoned about -- it just wasn't testing the rate the
-///    doc comment claimed it was.
+///      it just wasn't the one this test used. Direct ablation on 0
+///      through 50 parity strands at the *doubled* rate did produce the
+///      same failure at every level, which is genuinely true and was
+///      correctly reasoned about -- it just wasn't testing the rate the
+///      doc comment claimed it was.
 ///
 ///    With the correct pairing, consensus + Reed-Solomon **does**
 ///    converge reliably at realistic coverage/redundancy -- verified
@@ -417,8 +417,10 @@ fn test_roundtrip_survives_illumina_noise_via_consensus() {
 ///    `#[ignore]`d thorough one reproducing the original 50x/12 scale
 ///    that used to be the strongest evidence *for* the wall and is now
 ///    the strongest evidence against it.
-
-/// Fast, always-run check: realistic Nanopore sequencing (paired with
+///
+/// # Fast, always-run check
+///
+/// Realistic Nanopore sequencing (paired with
 /// realistic Twist synthesis, not Nanopore-for-both -- see item 6 above)
 /// recovers exactly, at coverage/redundancy modest enough to run on
 /// every `cargo test` (single-digit seconds).

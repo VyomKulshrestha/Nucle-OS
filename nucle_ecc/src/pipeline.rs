@@ -376,7 +376,7 @@ impl RepairPipeline {
         strand_data: &[Option<Vec<u8>>],
         parity_data: &[Vec<u8>],
     ) -> Result<(Vec<Vec<u8>>, usize), RsError> {
-        let rs = ReedSolomon::new(self.config.rs_config.clone());
+        let rs = ReedSolomon::new(self.config.rs_config);
 
         let erased_count = strand_data.iter().filter(|s| s.is_none()).count();
         let parity_opt: Vec<Option<Vec<u8>>> = parity_data.iter().map(|p| Some(p.clone())).collect();
@@ -578,7 +578,7 @@ mod tests {
         // Strand 1 has zero surviving reads (fully dropped) -- consensus
         // has nothing to vote on, so RS must reconstruct it from parity.
         let rs = ReedSolomon::new(RsConfig::new(2));
-        let strands = vec![
+        let strands = [
             DnaStrand::from_str("AAAA").unwrap(),
             DnaStrand::from_str("CCCC").unwrap(),
             DnaStrand::from_str("GGGG").unwrap(),

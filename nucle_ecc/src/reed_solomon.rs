@@ -185,16 +185,19 @@ impl GF256 {
             rhs.swap(col, pivot);
 
             let inv = Self::inv(matrix[col][col]);
-            for c in col..dim {
-                matrix[col][c] = Self::mul(matrix[col][c], inv);
+            for value in matrix[col].iter_mut().skip(col) {
+                *value = Self::mul(*value, inv);
             }
             rhs[col] = Self::mul(rhs[col], inv);
 
+            let pivot_row = matrix[col].clone();
             for r in 0..dim {
                 if r != col && matrix[r][col] != 0 {
                     let factor = matrix[r][col];
-                    for c in col..dim {
-                        matrix[r][c] = Self::sub(matrix[r][c], Self::mul(factor, matrix[col][c]));
+                    for (value, pivot_value) in
+                        matrix[r].iter_mut().zip(pivot_row.iter()).skip(col)
+                    {
+                        *value = Self::sub(*value, Self::mul(factor, *pivot_value));
                     }
                     rhs[r] = Self::sub(rhs[r], Self::mul(factor, rhs[col]));
                 }
@@ -315,9 +318,9 @@ impl ReedSolomon {
                 })
                 .collect();
 
-            for j in 0..n {
+            for (j, parity_strand) in parity_strands.iter_mut().enumerate() {
                 let x_target = (k + j) as u8;
-                parity_strands[j][pos] = Self::lagrange_eval(&points, x_target);
+                parity_strand[pos] = Self::lagrange_eval(&points, x_target);
             }
         }
 
@@ -420,8 +423,8 @@ impl ReedSolomon {
                 .find_map(|e| Self::try_welch_decode(&avail, k, e))
                 .ok_or(RsError::TooManyErrors { errors: erasures.max(e_max), parity: n })?;
 
-            for i in 0..k {
-                result[i][pos] = GF256::poly_eval(&p_coeffs, i as u8);
+            for (i, data_strand) in result.iter_mut().enumerate() {
+                data_strand[pos] = GF256::poly_eval(&p_coeffs, i as u8);
             }
         }
 
@@ -454,8 +457,8 @@ impl ReedSolomon {
         for row in 0..dim {
             let (x, y) = avail[row];
             let mut x_pow = 1u8;
-            for j in 0..(e + k) {
-                matrix[row][j] = x_pow;
+            for value in matrix[row].iter_mut().take(e + k) {
+                *value = x_pow;
                 x_pow = GF256::mul(x_pow, x);
             }
             let mut x_pow = 1u8;

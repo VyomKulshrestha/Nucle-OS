@@ -8,8 +8,8 @@
 //! - **PCR bias**: Amplification efficiency varies by strand composition
 //! - **Strand loss**: Some target strands may not amplify
 
-use crate::primer::{PrimerPair, PrimerLibrary};
-use nucle_codec::base::{DnaStrand, Nucleotide};
+use crate::primer::PrimerPair;
+use nucle_codec::base::DnaStrand;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use serde::{Serialize, Deserialize};
@@ -221,6 +221,7 @@ impl CrisprSimulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primer::PrimerLibrary;
 
     fn make_test_pool() -> (PrimerLibrary, Vec<DnaStrand>) {
         let library = PrimerLibrary::generate(3, 20, 42);

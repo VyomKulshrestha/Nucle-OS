@@ -554,11 +554,11 @@ fn cmd_encode(file: &str, output: Option<&str>) {
     };
 
     let mut result = String::new();
-    result.push_str(&format!("# NucleOS DNA Encoding\n"));
+    result.push_str("# NucleOS DNA Encoding\n");
     result.push_str(&format!("# Source: {}\n", file));
     result.push_str(&format!("# Size: {} bytes\n", data.len()));
     result.push_str(&format!("# Strands: {}\n", encoded.strand_count()));
-    result.push_str(&format!("# Codec: ternary-rotating-cipher\n\n"));
+    result.push_str("# Codec: ternary-rotating-cipher\n\n");
 
     for (i, strand) in encoded.strands.iter().enumerate() {
         result.push_str(&format!(">{:04}\n{}\n", i, strand));
@@ -2812,11 +2812,13 @@ fn cmd_stress(size: usize, json: bool) {
             nucle_codec::yinyang::YinYangConfig::default(),
         ))),
         ("fountain-raw", Box::new(FountainCodec::new(FountainConfig::unscreened()))),
-        ("fountain-screened", Box::new(FountainCodec::new({
-            let mut cfg = FountainConfig::default();
-            cfg.max_screening_attempts = 100;
-            cfg
-        }))),
+        (
+            "fountain-screened",
+            Box::new(FountainCodec::new(FountainConfig {
+                max_screening_attempts: 100,
+                ..FountainConfig::default()
+            })),
+        ),
     ];
 
     let num_codecs = codecs.len();

@@ -12,7 +12,7 @@
 use crate::errors::ErrorModel;
 use crate::profiles::HardwareProfile;
 use crate::strand::{SynthStrand, SynthPool};
-use nucle_codec::base::{DnaStrand, StrandCollection};
+use nucle_codec::base::StrandCollection;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use serde::{Serialize, Deserialize};
@@ -259,6 +259,7 @@ impl NoiseEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nucle_codec::base::DnaStrand;
 
     fn make_test_collection() -> StrandCollection {
         let strands: Vec<DnaStrand> = (0..10)

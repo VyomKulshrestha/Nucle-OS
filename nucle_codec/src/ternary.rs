@@ -166,7 +166,7 @@ impl TernaryCodec {
     /// Convert ternary digits back to bytes.
     /// Every 6 trits = 1 byte.
     fn trits_to_bytes(trits: &[u8]) -> Result<Vec<u8>, DnaError> {
-        if trits.len() % 6 != 0 {
+        if !trits.len().is_multiple_of(6) {
             return Err(DnaError::DecodingError(format!(
                 "trit count {} is not a multiple of 6",
                 trits.len()

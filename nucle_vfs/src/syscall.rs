@@ -462,6 +462,7 @@ impl NucleOS {
         let lock_path = pool_dir.join(LOCK_FILE_NAME);
         let lock_file = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&lock_path)
             .map_err(|e| format!("failed to open pool lock file '{}': {}", lock_path.display(), e))?;
@@ -675,7 +676,7 @@ impl NucleOS {
             "pristine"
         };
         id_hasher.update(profile_str.as_bytes());
-        id_hasher.update(&created_at.to_be_bytes());
+        id_hasher.update(created_at.to_be_bytes());
         let id_hash = id_hasher.finalize();
         let file_id = format!("archive-{}", &id_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>()[..16]);
 

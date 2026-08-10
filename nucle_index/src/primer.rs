@@ -117,7 +117,7 @@ impl PrimerPair {
         let mut best: Option<(usize, usize)> = None; // (end position, edit distance)
         for end in lo..=hi {
             let dist = edit_distance(primer, &haystack[..end]);
-            if best.map_or(true, |(_, best_dist)| dist < best_dist) {
+            if best.is_none_or(|(_, best_dist)| dist < best_dist) {
                 best = Some((end, dist));
             }
         }
@@ -162,8 +162,8 @@ fn edit_distance(a: &[Nucleotide], b: &[Nucleotide]) -> usize {
     for (i, row) in dp.iter_mut().enumerate() {
         row[0] = i;
     }
-    for j in 0..=m {
-        dp[0][j] = j;
+    for (j, value) in dp[0].iter_mut().enumerate() {
+        *value = j;
     }
     for i in 1..=n {
         for j in 1..=m {

@@ -367,9 +367,9 @@ impl Planner {
                 let trimmed = after.trim().trim_start_matches([':', '=', ' ']);
                 if !trimmed.is_empty() {
                     // Take quoted content or first sentence
-                    if trimmed.starts_with('"') {
-                        if let Some(end) = trimmed[1..].find('"') {
-                            return trimmed[1..1 + end].to_string();
+                    if let Some(quoted) = trimmed.strip_prefix('"') {
+                        if let Some(end) = quoted.find('"') {
+                            return quoted[..end].to_string();
                         }
                     }
                     return trimmed.to_string();

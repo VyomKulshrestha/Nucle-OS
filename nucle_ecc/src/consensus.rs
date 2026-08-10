@@ -955,7 +955,7 @@ mod tests {
     #[test]
     fn test_single_read_consensus() {
         let read = DnaStrand::from_str("ATCG").unwrap();
-        let result = build_consensus(&[read.clone()]).unwrap();
+        let result = build_consensus(std::slice::from_ref(&read)).unwrap();
 
         assert_eq!(result.sequence, read);
         assert_eq!(result.coverage, 1);

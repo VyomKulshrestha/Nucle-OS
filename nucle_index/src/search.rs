@@ -13,7 +13,7 @@
 //! Query flow: query → parse → similarity lookup → primer resolution → ranked results
 
 use crate::primer::{PrimerPair, PrimerLibrary};
-use crate::vector_index::{VectorIndex, SearchResult as VectorResult, embed_file_metadata, embed_query};
+use crate::vector_index::{VectorIndex, SearchResult as VectorResult, embed_file_metadata};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::fmt;

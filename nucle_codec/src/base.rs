@@ -246,6 +246,7 @@ impl DnaStrand {
     /// let strand = DnaStrand::from_str("ATCGATCG").unwrap();
     /// assert_eq!(strand.len(), 8);
     /// ```
+    #[allow(clippy::should_implement_trait)] // Stable API used throughout the workspace.
     pub fn from_str(s: &str) -> Result<Self, DnaError> {
         if s.is_empty() {
             return Err(DnaError::EmptyStrand);
@@ -296,6 +297,7 @@ impl DnaStrand {
     }
 
     /// Convert the strand to its string representation.
+    #[allow(clippy::inherent_to_string_shadow_display)] // Compatibility; identical to Display.
     pub fn to_string(&self) -> String {
         self.bases.iter().map(|n| n.to_char()).collect()
     }

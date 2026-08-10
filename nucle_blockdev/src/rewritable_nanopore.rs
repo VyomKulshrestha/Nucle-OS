@@ -312,19 +312,19 @@ mod tests {
     #[test]
     fn overwriting_a_block_succeeds_and_the_read_reflects_the_new_content() {
         let mut device = test_device(16, 1);
-        device.write_block(0, &vec![1u8; 16]).unwrap();
+        device.write_block(0, &[1u8; 16]).unwrap();
         assert_eq!(device.read_block(0).unwrap(), vec![1u8; 16]);
 
         // The core Atlas-vs-Mizzou distinction: this must succeed, not
         // error with AlreadyWritten like SynthesisArrayBlockDevice would.
-        device.write_block(0, &vec![2u8; 16]).unwrap();
+        device.write_block(0, &[2u8; 16]).unwrap();
         assert_eq!(device.read_block(0).unwrap(), vec![2u8; 16]);
     }
 
     #[test]
     fn write_with_wrong_size_data_is_rejected() {
         let mut device = test_device(16, 1);
-        let result = device.write_block(0, &vec![1u8; 4]);
+        let result = device.write_block(0, &[1u8; 4]);
         assert_eq!(result, Err(BlockDeviceError::BlockSizeMismatch { expected: 16, got: 4 }));
     }
 
@@ -338,7 +338,7 @@ mod tests {
     fn a_single_read_and_a_single_write_each_take_at_least_op_latency() {
         let mut device = test_device(16, 1);
         let start = std::time::Instant::now();
-        device.write_block(0, &vec![1u8; 16]).unwrap();
+        device.write_block(0, &[1u8; 16]).unwrap();
         assert!(start.elapsed() >= Duration::from_millis(5));
 
         let start = std::time::Instant::now();

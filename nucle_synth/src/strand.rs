@@ -4,7 +4,7 @@
 //! through synthesis, storage, and sequencing — quality scores,
 //! coverage depth, and provenance information.
 
-use nucle_codec::base::{DnaStrand, Nucleotide};
+use nucle_codec::base::DnaStrand;
 use serde::{Serialize, Deserialize};
 
 /// A DNA strand that has been through the synthesis/sequencing pipeline,
@@ -107,7 +107,7 @@ impl SynthStrand {
     /// Compute the error rate (errors / original length).
     pub fn error_rate(&self) -> f64 {
         if let Some(ref orig) = self.original {
-            if orig.len() == 0 {
+            if orig.is_empty() {
                 return 0.0;
             }
             self.error_count.total() as f64 / orig.len() as f64

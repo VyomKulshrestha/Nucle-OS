@@ -146,10 +146,10 @@ impl FountainEcc {
         let mut solved: Vec<Option<Vec<u8>>> = vec![None; k];
         let mut solved_count = 0;
 
-        let mut droplet_sources: Vec<Vec<usize>> = droplets.iter()
+        let droplet_sources: Vec<Vec<usize>> = droplets.iter()
             .map(|d| d.source_indices.clone())
             .collect();
-        let mut droplet_data: Vec<Vec<u8>> = droplets.iter()
+        let droplet_data: Vec<Vec<u8>> = droplets.iter()
             .map(|d| d.data.clone())
             .collect();
 

@@ -58,7 +58,7 @@ impl ToolName {
     }
 
     /// Parse a tool name from a string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "store_file" | "store" | "write" | "save" => Some(ToolName::StoreFile),
             "retrieve_file" | "retrieve" | "read" | "get" | "load" => Some(ToolName::RetrieveFile),
@@ -294,20 +294,20 @@ mod tests {
     fn test_tool_name_roundtrip() {
         for tool in ToolName::ALL {
             let name = tool.as_str();
-            let parsed = ToolName::from_str(name).unwrap();
+            let parsed = ToolName::parse(name).unwrap();
             assert_eq!(*tool, parsed);
         }
     }
 
     #[test]
     fn test_tool_aliases() {
-        assert_eq!(ToolName::from_str("store"), Some(ToolName::StoreFile));
-        assert_eq!(ToolName::from_str("write"), Some(ToolName::StoreFile));
-        assert_eq!(ToolName::from_str("read"), Some(ToolName::RetrieveFile));
-        assert_eq!(ToolName::from_str("find"), Some(ToolName::SearchFiles));
-        assert_eq!(ToolName::from_str("ls"), Some(ToolName::ListFiles));
-        assert_eq!(ToolName::from_str("rm"), Some(ToolName::DeleteFile));
-        assert_eq!(ToolName::from_str("unknown"), None);
+        assert_eq!(ToolName::parse("store"), Some(ToolName::StoreFile));
+        assert_eq!(ToolName::parse("write"), Some(ToolName::StoreFile));
+        assert_eq!(ToolName::parse("read"), Some(ToolName::RetrieveFile));
+        assert_eq!(ToolName::parse("find"), Some(ToolName::SearchFiles));
+        assert_eq!(ToolName::parse("ls"), Some(ToolName::ListFiles));
+        assert_eq!(ToolName::parse("rm"), Some(ToolName::DeleteFile));
+        assert_eq!(ToolName::parse("unknown"), None);
     }
 
     #[test]

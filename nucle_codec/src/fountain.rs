@@ -256,7 +256,7 @@ impl FountainCodec {
 
     /// Convert nucleotides back to bytes.
     fn nucleotides_to_bytes(nucs: &[Nucleotide]) -> Result<Vec<u8>, DnaError> {
-        if nucs.len() % 4 != 0 {
+        if !nucs.len().is_multiple_of(4) {
             return Err(DnaError::DecodingError(format!(
                 "nucleotide count {} is not a multiple of 4",
                 nucs.len()
@@ -355,7 +355,7 @@ impl FountainCodec {
     /// 3. XOR the solved segment out of all other droplets
     /// 4. Repeat until all segments solved or stuck
     fn peeling_decode(
-        droplets: &mut Vec<Droplet>,
+        droplets: &mut [Droplet],
         num_segments: usize,
         segment_size: usize,
     ) -> Result<Vec<Vec<u8>>, DnaError> {
@@ -363,11 +363,11 @@ impl FountainCodec {
         let mut solved_count = 0;
 
         // Track which segments each droplet still references
-        let mut droplet_segments: Vec<Vec<usize>> = droplets
+        let droplet_segments: Vec<Vec<usize>> = droplets
             .iter()
             .map(|d| d.segment_indices.clone())
             .collect();
-        let mut droplet_data: Vec<Vec<u8>> = droplets
+        let droplet_data: Vec<Vec<u8>> = droplets
             .iter()
             .map(|d| d.data.clone())
             .collect();

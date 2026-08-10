@@ -445,7 +445,7 @@ impl ConstraintValidator {
     /// Check if a sequence is a palindrome (equals its reverse complement).
     fn is_palindrome(&self, bases: &[Nucleotide]) -> bool {
         let len = bases.len();
-        if len < 2 || len % 2 != 0 {
+        if len < 2 || !len.is_multiple_of(2) {
             return false;
         }
 
@@ -509,7 +509,7 @@ mod tests {
         let strand = DnaStrand::from_str("AAATAAATAA").unwrap(); // 0% GC
         let violations = v.check_gc_content(&strand);
         assert_eq!(violations.len(), 1);
-        matches!(&violations[0], ConstraintViolation::GcContentOutOfRange { .. });
+        assert!(matches!(&violations[0], ConstraintViolation::GcContentOutOfRange { .. }));
     }
 
     #[test]
@@ -566,14 +566,10 @@ mod tests {
     #[test]
     fn test_non_palindrome() {
         let v = make_validator();
-        // ACGTACGT — check manually: reverse complement is ACGTACGT,
-        // but no 6-nt substring is a palindrome.
-        // Actually let's just use a sequence we know isn't palindromic.
-        let strand = DnaStrand::from_str("ACTAGTCA").unwrap();
+        // None of this sequence's six-base windows equals its reverse complement.
+        let strand = DnaStrand::from_str("ACGTTGCA").unwrap();
         let violations = v.check_palindromes(&strand);
-        // If it finds palindromes, that's fine — let's just test detection works
-        // The palindrome test is about detecting real palindromes like GAATTC
-        // This test validates non-palindromic sequences pass
+        assert!(violations.is_empty());
     }
 
     #[test]
@@ -582,7 +578,7 @@ mod tests {
         let strand = DnaStrand::from_str("AT").unwrap();
         let violations = v.check_length(&strand);
         assert_eq!(violations.len(), 1);
-        matches!(&violations[0], ConstraintViolation::StrandTooShort { .. });
+        assert!(matches!(&violations[0], ConstraintViolation::StrandTooShort { .. }));
     }
 
     #[test]
