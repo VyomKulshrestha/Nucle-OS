@@ -89,6 +89,9 @@ enum Commands {
         /// Number of RS parity strands for error correction
         #[arg(short, long, default_value = "2")]
         redundancy: usize,
+        /// Storage codec: ternary or yin-yang
+        #[arg(short, long, default_value = "ternary")]
+        codec: String,
     },
 
     /// Retrieve a file from the DNA storage pool
@@ -122,7 +125,7 @@ enum Commands {
         /// New number of RS parity strands
         #[arg(short, long)]
         redundancy: Option<usize>,
-        /// New codec name (only 'ternary-rotating-cipher' is supported today)
+        /// New codec name: ternary-rotating-cipher or yin-yang
         #[arg(short, long)]
         codec: Option<String>,
     },
@@ -488,7 +491,9 @@ fn main() {
     match cli.command {
         Commands::Encode { file, output } => cmd_encode(&file, output.as_deref()),
         Commands::Decode { file, output, size } => cmd_decode(&file, output.as_deref(), size),
-        Commands::Store { file, redundancy } => cmd_store(&file, redundancy, &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Store { file, redundancy, codec } => {
+            cmd_store(&file, redundancy, &codec, &pool_dir, passphrase.as_deref(), cli.json)
+        }
         Commands::Retrieve { name, version } => cmd_retrieve(&name, version, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::History { name } => cmd_history(&name, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Delete { name, confirm } => cmd_delete(&name, confirm, &pool_dir, passphrase.as_deref(), cli.json),
@@ -727,7 +732,14 @@ fn persist_pool(os: &mut NucleOS, pool_dir: &std::path::Path) {
     }
 }
 
-fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+fn cmd_store(
+    file: &str,
+    redundancy: usize,
+    codec: &str,
+    pool_dir: &std::path::Path,
+    passphrase: Option<&str>,
+    json: bool,
+) {
     let data = match fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -750,8 +762,17 @@ fn cmd_store(file: &str, redundancy: usize, pool_dir: &std::path::Path, passphra
         file
     };
 
+    let codec_kind = match codec {
+        "ternary" | "ternary-rotating-cipher" => nucle_vfs::syscall::CodecKind::Ternary,
+        "yin-yang" | "yinyang" => nucle_vfs::syscall::CodecKind::YinYang,
+        other => {
+            eprintln!("Store failed: unknown codec '{}'; expected ternary or yin-yang", other);
+            std::process::exit(1);
+        }
+    };
+
     let mut os = open_pool(pool_dir, passphrase);
-    match os.dna_write(filename, &data, redundancy) {
+    match os.dna_write_with_codec(filename, &data, redundancy, codec_kind) {
         Ok(result) => {
             persist_pool(&mut os, pool_dir);
             if json {

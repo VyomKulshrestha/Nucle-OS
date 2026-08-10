@@ -823,6 +823,7 @@ impl NucleOS {
             parity_strand_count: parity_count,
             total_strand_count: total_strands,
             primer_id: primer_pair.id,
+            codec: codec.name().to_string(),
             redundancy: redundancy_ratio,
             version: next_version,
         })
@@ -1240,6 +1241,7 @@ pub struct WriteResult {
     pub parity_strand_count: usize,
     pub total_strand_count: usize,
     pub primer_id: String,
+    pub codec: String,
     pub redundancy: f64,
     /// This write's version number for `filename` -- 1 the first time it's
     /// written, incremented on every write that reuses an existing name
@@ -2022,6 +2024,7 @@ mod tests {
             parity_strand_count: 2,
             total_strand_count: 7,
             primer_id: "P0000".into(),
+            codec: "ternary-rotating-cipher".into(),
             redundancy: 1.4,
             version: 1,
         };
