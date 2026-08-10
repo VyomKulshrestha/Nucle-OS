@@ -395,6 +395,15 @@ fn eval_expr(
         // here entirely, same as `type_params` on a `FunctionDecl` always
         // has been.
         Expr::FunctionCall { name, args, .. } => {
+            // `protect data for guarantee` is a value-preserving stdlib
+            // intrinsic: at runtime its protected plan carries the same
+            // file/path value as `data`. The safety guarantee is static
+            // metadata, so it has no separate runtime representation.
+            if name == "protect" {
+                return args.first().map_or(EvalOutcome::Value(Value::Unit), |data| {
+                    eval_expr(data, env, funcs, pools, os, base_dir, steps, calling)
+                });
+            }
             // Closures resolve first, same priority `typeck::TypeChecker`
             // already validated the program against (a closure-bound
             // name shadows a same-named global function) -- see

@@ -793,6 +793,15 @@ impl TypeChecker {
             return;
         }
 
+        // Ordinary value expressions used to fall through the Pool-only
+        // inference below, which meant `let x: DnaFile = pure_void()` or
+        // even `let x: DnaFile = "text"` could compile without `x` ever
+        // entering the symbol table. Validate every non-Pool/non-Result
+        // shape here and stop after one authoritative diagnostic path.
+        if self.check_value_binding(binding) {
+            return;
+        }
+
         let inferred = match self.infer_expr(&binding.expr, binding.span) {
             Some(inferred) => inferred,
             None => return,
@@ -821,6 +830,79 @@ impl TypeChecker {
 
         self.pool_bindings.insert(binding.name.clone(), inferred);
         self.bindings.insert(binding.name.clone(), binding.clone());
+    }
+
+    /// Checks a `let` whose RHS is an ordinary value rather than a Pool,
+    /// Result, closure literal, match, or enum construction. Returns true
+    /// when this expression shape was fully handled (success or error).
+    fn check_value_binding(&mut self, binding: &LetDecl) -> bool {
+        let actual = match &binding.expr {
+            Expr::StringLiteral(_) => {
+                // A quoted path is contextually a File; everywhere else
+                // it is a Str. No implicit conversion to DnaFile/Void/etc.
+                if matches!(binding.annotation, TypeExpr::File | TypeExpr::Str) {
+                    binding.annotation.clone()
+                } else {
+                    TypeExpr::Str
+                }
+            }
+            Expr::Number(_) | Expr::BinaryOp { .. } | Expr::Not(_) => {
+                self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
+                    "binding '{}' uses a condition-only numeric/boolean expression, which is not a storable NucleScript value",
+                    binding.name
+                ));
+                return true;
+            }
+            Expr::Variable(name) => match self.bindings.get(name) {
+                Some(existing) => existing.annotation.clone(),
+                None => return false,
+            },
+            Expr::FunctionCall { name, args, .. } => {
+                if name == "consensus_vote" {
+                    return false;
+                }
+                if let Some((type_params, params, return_type)) = self.closures.get(name).cloned() {
+                    let Some(resolved) = self.check_closure_call_args(
+                        name, &type_params, &params, &return_type, args, binding.span,
+                    ) else {
+                        return true;
+                    };
+                    if matches!(resolved, TypeExpr::Pool(_) | TypeExpr::Result(_, _)) {
+                        return false;
+                    }
+                    resolved
+                } else if let Some(function) = self.lookup_function(name) {
+                    if matches!(function.return_type, TypeExpr::Pool(_) | TypeExpr::Result(_, _)) {
+                        return false;
+                    }
+                    let return_type = function.return_type.clone();
+                    // Reuse the existing call validator for arity,
+                    // Pool/Fn arguments, generics, and suggestions.
+                    let _ = self.infer_expr(&binding.expr, binding.span);
+                    return_type
+                } else {
+                    // Produces the established E-FUNCTION-UNDECLARED path.
+                    let _ = self.infer_expr(&binding.expr, binding.span);
+                    return true;
+                }
+            }
+            _ => return false,
+        };
+
+        if actual != binding.annotation {
+            self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
+                "binding '{}' is annotated as {} but the expression produces {}",
+                binding.name,
+                crate::docgen::render_type(&binding.annotation),
+                crate::docgen::render_type(&actual)
+            ));
+        } else {
+            if let TypeExpr::Enum(name) = &actual {
+                self.enum_bindings.insert(binding.name.clone(), name.clone());
+            }
+            self.bindings.insert(binding.name.clone(), binding.clone());
+        }
+        true
     }
 
     /// Infers the `(Ok, Err)` type pair of a `Result`-shaped expression --
@@ -878,6 +960,9 @@ impl TypeChecker {
             // `FunctionCall` arm -- see its comment for why.
             Expr::FunctionCall { name, args, .. } if self.closures.contains_key(name) => {
                 let (type_params, param_types, return_type) = self.closures[name].clone();
+                if !matches!(return_type, TypeExpr::Result(_, _)) {
+                    return None;
+                }
                 let resolved_return = self.check_closure_call_args(name, &type_params, &param_types, &return_type, args, span);
                 match resolved_return {
                     Some(TypeExpr::Result(ok, err)) => Some(((*ok).clone(), (*err).clone())),
@@ -894,9 +979,14 @@ impl TypeChecker {
             // runtime -- was never type-checked at all.
             Expr::FunctionCall { name, args, .. } => {
                 let func = self.lookup_function(name)?;
+                if !matches!(func.return_type, TypeExpr::Result(_, _)) {
+                    return None;
+                }
                 for (param, arg) in func.params.iter().zip(args.iter()) {
                     if let TypeExpr::Fn(expected_params, expected_return, expected_effect) = &param.ty {
                         self.check_fn_typed_arg(expected_params, expected_return, *expected_effect, arg, &param.name, span);
+                    } else if param.ty != TypeExpr::Void {
+                        self.check_value_argument(&param.ty, arg, &param.name, span);
                     }
                 }
                 match func.return_type {
@@ -1387,7 +1477,23 @@ impl TypeChecker {
                 TypeExpr::Enum(enum_name) => {
                     closure_checker.enum_bindings.insert(param.name.clone(), enum_name.clone());
                 }
-                _ => {}
+                TypeExpr::Result(ok, err) => {
+                    closure_checker.result_bindings.insert(param.name.clone(), ((**ok).clone(), (**err).clone()));
+                    closure_checker.bindings.insert(param.name.clone(), LetDecl {
+                        name: param.name.clone(),
+                        annotation: param.ty.clone(),
+                        expr: Expr::Variable(param.name.clone()),
+                        span,
+                    });
+                }
+                _ => {
+                    closure_checker.bindings.insert(param.name.clone(), LetDecl {
+                        name: param.name.clone(),
+                        annotation: param.ty.clone(),
+                        expr: Expr::Variable(param.name.clone()),
+                        span,
+                    });
+                }
             }
         }
 
@@ -1398,12 +1504,8 @@ impl TypeChecker {
 
         self.report.diagnostics.extend(closure_checker.report.diagnostics);
 
-        // Mirrors `check_function`'s own return-type validation exactly
-        // (same two shapes it validates, same "unwrapped tail auto-wraps
-        // at the boundary" rule for `Result`) -- see its own doc comment
-        // for the full rationale. Anything else (`Void`/`DnaFile`/`File`/
-        // `Str`/`Fn`) isn't validated here either, the same pre-existing
-        // gap `check_function` already has for those return types.
+        // Mirrors `check_function`'s return validation, including the
+        // "unwrapped tail auto-wraps at the boundary" rule for Result.
         let ok = match return_type {
             TypeExpr::Result(expected_ok, expected_err) => match desugared_body.last() {
                 Some(Declaration::Let(last_binding))
@@ -1424,7 +1526,11 @@ impl TypeChecker {
                 }
                 _ => false,
             },
-            _ => true,
+            TypeExpr::Void => true,
+            expected => desugared_body.iter().rev().find_map(|declaration| match declaration {
+                Declaration::Let(binding) => Some(&binding.annotation),
+                _ => None,
+            }) == Some(expected),
         };
 
         if !ok {
@@ -1503,7 +1609,8 @@ impl TypeChecker {
                 TypeExpr::Fn(expected_params, expected_return, expected_effect) => {
                     self.check_fn_typed_arg(expected_params, expected_return, *expected_effect, arg, name, span);
                 }
-                _ => {}
+                TypeExpr::Void => {}
+                _ => self.check_value_argument(expected, arg, name, span),
             }
         }
         for t in type_params {
@@ -1516,6 +1623,60 @@ impl TypeChecker {
             }
         }
         Some(substitute_pool_state(return_type, &substitution))
+    }
+
+    /// Checks an ordinary (non-Pool, non-Fn) call argument against its
+    /// declared parameter type. String literals are contextually valid
+    /// `File` arguments as well as `Str`; every other shape is exact.
+    fn check_value_argument(&mut self, expected: &TypeExpr, arg: &Expr, param_name: &str, span: Span) {
+        let actual = match arg {
+            Expr::StringLiteral(_) => Some(TypeExpr::Str),
+            Expr::Variable(name) => self.bindings.get(name).map(|binding| binding.annotation.clone())
+                .or_else(|| self.result_bindings.get(name).map(|(ok, err)| TypeExpr::Result(Box::new(ok.clone()), Box::new(err.clone()))))
+                .or_else(|| self.enum_bindings.get(name).map(|name| TypeExpr::Enum(name.clone())))
+                .or_else(|| self.pool_bindings.get(name).map(|pool| TypeExpr::Pool(PoolType {
+                    state: pool.state.clone(),
+                    error_rate_percent: Some(pool.error_rate_percent),
+                })))
+                .or_else(|| self.strands.contains_key(name).then_some(TypeExpr::Strand))
+                .or_else(|| self.sequences.contains_key(name).then_some(TypeExpr::Sequence)),
+            Expr::FunctionCall { name, args, .. } => {
+                if let Some((type_params, params, return_type)) = self.closures.get(name).cloned() {
+                    self.check_closure_call_args(name, &type_params, &params, &return_type, args, span)
+                } else if let Some(function) = self.lookup_function(name) {
+                    let return_type = function.return_type.clone();
+                    // Scalar-returning calls still route through the
+                    // shared call checker so nested calls cannot evade
+                    // arity, generic, Pool, or argument validation.
+                    let _ = self.infer_expr(arg, span);
+                    Some(return_type)
+                } else {
+                    let _ = self.infer_expr(arg, span);
+                    None
+                }
+            }
+            Expr::Try(inner) => self.check_try(inner, span),
+            Expr::Match { .. } => self.check_match(arg, span),
+            Expr::EnumConstruct { enum_name, variant, payload } => {
+                self.check_enum_construct(enum_name, variant, payload.as_deref(), span)
+            }
+            Expr::StoreExpr(_) => Some(TypeExpr::Result(Box::new(TypeExpr::DnaFile), Box::new(TypeExpr::Str))),
+            Expr::DeleteExpr(_) => Some(TypeExpr::Result(Box::new(TypeExpr::Void), Box::new(TypeExpr::Str))),
+            Expr::Ok(_) | Expr::Err(_) => self.infer_result_expr(arg, span)
+                .map(|(ok, err)| TypeExpr::Result(Box::new(ok), Box::new(err))),
+            _ => None,
+        };
+        let compatible = actual.as_ref().is_some_and(|actual| {
+            actual == expected || (matches!(expected, TypeExpr::File) && matches!(actual, TypeExpr::Str))
+        });
+        if !compatible {
+            let actual = actual.as_ref().map(crate::docgen::render_type)
+                .unwrap_or_else(|| "an unsupported value".to_string());
+            self.report.error(span, "E-ARG-TYPE-MISMATCH", format!(
+                "argument for parameter '{}' expects {}, but got {}",
+                param_name, crate::docgen::render_type(expected), actual
+            ));
+        }
     }
 
     /// Validates one `Fn(...)`-typed argument -- either a bare
@@ -1751,6 +1912,8 @@ impl TypeChecker {
                         }
                     } else if let TypeExpr::Fn(expected_params, expected_return, expected_effect) = &param.ty {
                         self.check_fn_typed_arg(expected_params, expected_return, *expected_effect, arg, &param.name, span);
+                    } else if param.ty != TypeExpr::Void {
+                        self.check_value_argument(&param.ty, arg, &param.name, span);
                     }
                 }
 
@@ -1971,7 +2134,23 @@ impl TypeChecker {
                 TypeExpr::Enum(enum_name) => {
                     body_checker.enum_bindings.insert(param.name.clone(), enum_name.clone());
                 }
-                _ => {}
+                TypeExpr::Result(ok, err) => {
+                    body_checker.result_bindings.insert(param.name.clone(), ((**ok).clone(), (**err).clone()));
+                    body_checker.bindings.insert(param.name.clone(), LetDecl {
+                        name: param.name.clone(),
+                        annotation: param.ty.clone(),
+                        expr: Expr::Variable(param.name.clone()),
+                        span: func.span,
+                    });
+                }
+                _ => {
+                    body_checker.bindings.insert(param.name.clone(), LetDecl {
+                        name: param.name.clone(),
+                        annotation: param.ty.clone(),
+                        expr: Expr::Variable(param.name.clone()),
+                        span: func.span,
+                    });
+                }
             }
         }
 
@@ -2079,6 +2258,28 @@ impl TypeChecker {
                         func.name, crate::docgen::render_type(expected_ok), crate::docgen::render_type(expected_err)
                     ));
                 }
+            }
+        }
+
+        // Every remaining non-Void return shape uses the same implicit
+        // return convention as runtime execution: the last `let` value
+        // (operations after it do not replace it). Pool and Result have
+        // richer validation above; ordinary values compare directly.
+        if !matches!(func.return_type, TypeExpr::Void | TypeExpr::Pool(_) | TypeExpr::Result(_, _)) {
+            let actual = desugared_body.iter().rev().find_map(|declaration| match declaration {
+                Declaration::Let(binding) => Some((&binding.annotation, binding.span)),
+                _ => None,
+            });
+            if actual.is_none_or(|(actual, _)| actual != &func.return_type) {
+                let (span, produced) = actual.map_or((func.span, "no value".to_string()), |(actual, span)| {
+                    (span, crate::docgen::render_type(actual))
+                });
+                self.report.error(span, "E-RETURN-TYPE-MISMATCH", format!(
+                    "function '{}' is declared to return {} but its body produces {}",
+                    func.name,
+                    crate::docgen::render_type(&func.return_type),
+                    produced
+                ));
             }
         }
 

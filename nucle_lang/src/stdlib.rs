@@ -81,10 +81,12 @@ fn protect_decl() -> FunctionDecl {
         name: "protect".to_string(),
         type_params: Vec::new(),
         params: vec![
-            FnParam { name: "data".to_string(), ty: TypeExpr::Void },
-            FnParam { name: "guarantee".to_string(), ty: TypeExpr::Void },
+            FnParam { name: "data".to_string(), ty: TypeExpr::File },
+            FnParam { name: "guarantee".to_string(), ty: TypeExpr::Recovery },
         ],
-        return_type: TypeExpr::Void,
+        // `protect data for guarantee` preserves the protected file as
+        // its value so it can be bound and passed directly to `store`.
+        return_type: TypeExpr::DnaFile,
         body: Vec::new(),
         span: Span::default(),
         doc: Some("Marks `data` as protected under the named recovery `guarantee`. See docs/stdlib.md.".to_string()),

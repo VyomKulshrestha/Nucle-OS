@@ -43,7 +43,7 @@ fn pool_of_a_declared_type_param_parses_as_pool_state_var() {
 
 #[test]
 fn non_generic_function_has_an_empty_type_params_list() {
-    let program = parse("fn archive_illumina_only(target: Pool<Illumina>) returns Void { let x: Void = protect target for target }");
+    let program = parse("fn archive_illumina_only(target: Pool<Illumina>) returns Void {}");
     let Declaration::Function(func) = &program.declarations[0] else { panic!("expected a function") };
     assert!(func.type_params.is_empty());
     assert!(matches!(&func.params[0].ty, TypeExpr::Pool(PoolType { state: PoolState::Profile(Profile::Illumina), .. })));
@@ -81,7 +81,6 @@ fn same_type_param_bound_to_two_different_profiles_in_one_call_is_rejected() {
     let src = format!(
         "{POOLS}
 fn combine<P>(a: Pool<P, 0.35%>, b: Pool<P, 0.35%>) returns Void {{
-    let x: Void = protect a for a
 }}
 
 let noisy_illumina: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
@@ -97,7 +96,6 @@ fn same_type_param_bound_consistently_across_two_params_is_accepted() {
     let src = format!(
         "{POOLS}
 fn combine<P>(a: Pool<P, 0.35%>, b: Pool<P, 0.35%>) returns Void {{
-    let x: Void = protect a for a
 }}
 
 let a: Pool<Illumina, 0.35%> = simulate illumina_archive under Illumina
@@ -116,7 +114,6 @@ fn existing_non_generic_profile_mismatch_still_reports_arg_type_mismatch() {
     let src = format!(
         "{POOLS}
 fn archive_illumina_only(target: Pool<Illumina>) returns Void {{
-    let x: Void = protect target for target
 }}
 
 let noisy_nanopore: Pool<Nanopore, 5%> = simulate nanopore_archive under Nanopore
