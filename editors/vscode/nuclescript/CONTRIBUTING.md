@@ -78,7 +78,8 @@ command palette) and open any `.nsl` file — e.g. anything under
 
 ## Testing the grammar
 
-`npm test` runs [`vscode-tmgrammar-snap`](https://github.com/PanAeon/vscode-tmgrammar-test)
+`npm test` first compiles the extension and runs the Test Explorer
+discovery unit tests, then runs [`vscode-tmgrammar-snap`](https://github.com/PanAeon/vscode-tmgrammar-test)
 against every file in `docs/examples/`, snapshotting the token scope for
 each line. Snapshots live alongside the tested files
 (`docs/examples/*.nsl.snap`) and are checked into the repo — a change to
@@ -119,7 +120,7 @@ open the NucleScript extension → **Update** → drag in the new `.vsix`.
    `VSCE_PAT` (GitHub repo → Settings → Secrets and variables → Actions)
    — one-time setup, skip if already done.
 2. **Push a release tag** matching `nucle-lsp-v<version>` (the exact
-   version in `package.json`, e.g. `nucle-lsp-v0.1.1`). This triggers
+   version in `package.json`, e.g. `nucle-lsp-v0.1.12`). This triggers
    [`.github/workflows/release-vscode-extension.yml`](../../.github/workflows/release-vscode-extension.yml)
    (also runnable manually via `workflow_dispatch` for an existing tag),
    which builds `nucle-lsp` for Windows/Linux/macOS (x64 and arm64) and

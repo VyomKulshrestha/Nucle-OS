@@ -8,6 +8,21 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 - Nothing yet.
 
+## [0.1.12]
+
+- Added context-aware completion, find references, guarded
+  prepare/rename, semantic tokens, and UTF-16-correct LSP ranges.
+- Added native VS Code Test Explorer integration backed by
+  `nucle test --json`, including source-mapped failures, dirty-file saves,
+  cancellation, and unit-tested top-level test discovery.
+- Updated the bundled CLI fallback to the verified NucleOS v0.1.26
+  release so formatting, running, and Test Explorer use current syntax.
+- Refreshed all 24 TextMate grammar snapshots and patched the transitive
+  `brace-expansion` vulnerability; `npm audit` now reports zero findings.
+- Aligned editor behavior with the compiler's completed value checking:
+  whole-program function resolution, ordinary argument/return validation,
+  scalar Result/enum/match values, and strict `protect` typing.
+
 ## [0.1.11]
 
 - **Fixed: the auto-downloaded `nucle-cli` binary was stale.**
@@ -19,11 +34,7 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
   extension's own example files
   ([`recovery_plan.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/recovery_plan.nsl),
   [`effect_annotated_closure.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/effect_annotated_closure.nsl)).
-  Now pinned to v0.1.8, which also picks up the main repo's new
-  concurrent hardware-submission model (`nucle_hardware`'s `Provider`
-  trait, `nucle hardware export` accepting multiple sources) — a
-  CLI/backend change with no new `.nsl` syntax, so nothing else in this
-  extension needed updating for it.
+  This was later advanced to the verified v0.1.26 release in v0.1.12.
 
 ## [0.1.10]
 

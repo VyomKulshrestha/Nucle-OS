@@ -78,9 +78,9 @@ protect data for guarantee
 | | |
 |---|---|
 | **Effect** | `Pure` (always confirmed) |
-| **Parameter `data`** | The value to protect (a `File`/binding name) |
-| **Parameter `guarantee`** | The recovery guarantee to protect it under (typically a `Recovery`-typed parameter) |
-| **Result** | Untyped (`None`) -- `protect` doesn't itself infer a `Pool<...>` type; it's typically the last expression before a `store` |
+| **Parameter `data`** | A `File` value to protect |
+| **Parameter `guarantee`** | The `Recovery` guarantee to protect it under |
+| **Result** | `DnaFile` -- the protected file value is preserved so it can be bound and passed directly to `store` |
 
 Marks a value as protected under a named recovery guarantee, most useful
 inside a reusable function that takes the guarantee as a parameter rather

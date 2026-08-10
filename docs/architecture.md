@@ -76,6 +76,23 @@ result is a plain, control-flow-free `Program` — `middle` never sees an
 [docs/grammar.md](grammar.md#control-flow-if--for) for the full semantics
 and a worked example.
 
+### Whole-program name and value soundness
+
+Top-level function signatures are collected before any body is checked,
+so forward calls and mutually recursive signatures resolve independently
+of declaration order. Effect analysis uses a least fixed point for call
+cycles: a recursive back-edge contributes no new effect, while any real
+hardware/destructive operation in the cycle still propagates normally.
+
+Value checking covers every expression context, not only probabilistic
+`Pool` bindings. Ordinary `let` annotations, function and closure
+arguments, nested calls, and every non-`Void` implicit return are checked
+against their declared types. Result- and enum-producing calls reuse the
+same authoritative arity/generic/argument validator as Pool/scalar calls.
+`protect` is a strict `protect(File, Recovery) -> DnaFile` intrinsic and
+preserves its input file value at runtime. Scalars likewise compose across
+`Ok`, computed `Err`, enum payloads, and match arms.
+
 ### Structured error handling (`Result<T, E>` / `?`)
 
 The one place NucleScript actually has a runtime, as opposed to a
@@ -127,7 +144,7 @@ failure inside a function aborts that function unconditionally (the same
 all-or-nothing contract the top-level form always had), which a caller
 catches through the ordinary `?`/`match` machinery. Paired with making
 `Expr::StringLiteral` a real, unconditional `Value::Str` (previously an
-inert placeholder except inside `Err(...)`) — what makes a `File`/`Str`-
+inert placeholder) — what makes a `File`/`Str`-
 typed *parameter*'s argument become a real, bound value inside the
 callee's own `env`, which `store <ident> into <pool>`'s existing "file
 variable" syntax (accepted since it was written, never actually resolved)
@@ -333,22 +350,18 @@ handles a bare bound name fine. Generalized to delegate directly to
 Result-shaped, enum-shaped, Pool-shaped, or already-bare — a strictly
 more general and correct fix, verified not to break any existing test.
 
-**Two real gaps surfaced by hands-on testing of the shipped example, one
-fixed, one accepted as a genuine, narrower limitation.** (1) Enum-typed
+**Two real gaps surfaced by hands-on testing of the shipped example, now
+both closed.** (1) Enum-typed
 function/closure parameters were invisible to scope — no `LetDecl`
 registers a parameter, so the existing `pool_bindings`/`result_bindings`
 convention had no equivalent for an enum-typed parameter until a new
 `enum_bindings: HashMap<String, String>` field was added, populated in
 `check_let`'s new `Expr::EnumConstruct` branch and both param-seeding
-loops (`check_function`/`check_closure_expr`). (2) `Err(...)`'s payload
-must always be a literal string, even inside a user-enum match arm — a
-bound `Str` variable (a user enum's own payload, or an outer arm's
-binding) can never be re-wrapped into a fresh `Err(...)`, since the only
-mechanism for resolving `Err`'s missing `Ok` side is the sibling-arm
-trick within the *same* `Result` match, which has no equivalent for a
-user-enum match. Not fixed (would need new syntax/mechanism, out of
-scope here) — the shipped example is instead designed so every arm
-produces its `Result` through a real, self-contained fallible expression.
+loops (`check_function`/`check_closure_expr`). (2) Scalar values are now
+inferred uniformly across `Ok`, `Err`, enum payloads, and match arms:
+string literals, bound `Str` values, and validated scalar-returning calls
+all compose without special-case syntax, and codegen evaluates computed
+`Err` messages into a real runtime `Result::Err`.
 
 `effects.rs`/`middle.rs`/`sim_backend.rs` all generalized their `Expr::
 Match` handling from two hardcoded arms to a fold over `arms` (effect =
@@ -589,10 +602,16 @@ implements:
 - `textDocument/definition` — same lookup, returning the declaration's
   span as the jump target.
 - `textDocument/documentSymbol` — the whole `SymbolTable` as an outline.
+- `textDocument/completion` — context-aware keywords, types, profiles,
+  codecs, built-ins, and symbols from the compiler-owned table.
+- `textDocument/references` and `textDocument/prepareRename`/`rename` —
+  whole-document identifier references and a guarded rename that refuses
+  keywords, built-ins, and unresolved names.
+- `textDocument/semanticTokens/full` — declaration/reference classes for
+  functions, variables, types, enums, enum members, parameters, and
+  properties, with all LSP positions converted to UTF-16 code units.
 
-Deliberately out of scope for this first pass: completion, rename, and
-semantic tokens (already covered by the TextMate grammar). Verified with
-an in-memory duplex-pipe integration test
+Verified with in-memory duplex-pipe integration tests
 (`nucle_lsp/tests/diagnostics.rs`) that speaks the real Content-Length-
 framed JSON-RPC protocol — not just unit tests of the internal Rust
 functions — and cross-checks the published diagnostics against
@@ -697,9 +716,13 @@ also catch a genuine VFS failure (a `retrieve`/`delete` erroring out), not
 just a failed assertion. `nucle_cli`'s `Test` command reports `cargo
 test`-style pass/fail output (or `--json`).
 
-Not implemented: wiring `nucle test --json` into VS Code's native Test
-Explorer API, an optional stretch goal the plan itself flagged as likely
-to slip — the CLI command was the stated acceptance bar.
+The VS Code extension now wires `nucle test --json` into a native
+`TestController`. A brace/string/comment-aware discovery pass registers
+top-level `test "..." { ... }` blocks in source order; runs save dirty
+documents, invoke the resolved `nucle-cli`, map failed test spans back to
+source, stream output, and honor cancellation. The discovery/parser layer
+has its own Node unit tests so editor behavior is verified without
+requiring an Extension Host process.
 
 ### Doc comments and `nucle doc`
 

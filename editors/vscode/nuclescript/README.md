@@ -17,6 +17,11 @@ NucleScript, the declarative DNA-storage operations language for
 - **Go to Definition** — jump from a use site to its declaration.
 - **Document outline** — every top-level symbol, for the breadcrumb and
   outline views.
+- **Completion, references, and safe rename** — context-aware language
+  items, whole-document references, and guarded refactoring that refuses
+  keywords, built-ins, and unresolved names.
+- **Semantic tokens** — compiler-aware classification for functions,
+  variables, types, enums, enum members, parameters, and properties.
 - **Format Document / format on save** — NucleScript's one canonical,
   zero-configuration style. Enable format-on-save the normal VS Code way:
   ```json
@@ -27,6 +32,9 @@ NucleScript, the declarative DNA-storage operations language for
   actually executes the program: encode, store, retrieve, simulate,
   whatever the file does, with output in an integrated terminal — the
   same as pressing Run in any other language extension.
+- **Native Test Explorer** — discovers top-level `test "..." { ... }`
+  blocks, runs them through `nucle test --json`, saves dirty files first,
+  reports failures at their source locations, and supports cancellation.
 - **`Result<T, E>` / `?`** — highlighting, diagnostics, hover, and Run
   File all understand NucleScript's error propagation: `store`/`delete`
   can produce a catchable `Result<T, Str>` instead of aborting the whole
@@ -68,16 +76,13 @@ NucleScript, the declarative DNA-storage operations language for
   and `nucle doc` all understand the new syntax.
 - **`Ok(...)`/`Err(...)` constructors, explicit `::<Illumina>()` type
   arguments, and real parameter values** — `Result` values can now be
-  built directly (`Ok(saved)`, `Err("reason")`), composed with nested
+  built directly (`Ok("ready")`, `Err(reason)`), composed with nested
   `match`/`?`, and a generic call can spell out its type argument
   explicitly when inference alone can't resolve it. A statement-form
   `store`/`retrieve`/`delete` inside a function body, and a `File`/`Str`-
   typed parameter's real argument value, now genuinely reach `nucle run`
   — not just type-check. Highlighting, diagnostics, hover, formatting,
   and `nucle doc` all understand the new syntax.
-
-Not yet included: autocomplete, rename/refactoring, and semantic-token
-highlighting (syntax highlighting already covers most of that).
 
 ## Getting started
 
@@ -146,8 +151,8 @@ time they're needed:
 
 | Tool | Needed for | If no prebuilt binary exists for your platform |
 |---|---|---|
-| `nucle-lsp` | diagnostics, hover, go to definition, outline | Windows/Linux x64 and Apple Silicon Mac are covered. Otherwise, build it (`cargo build -p nucle_lsp --release` from a [NucleOS](https://github.com/VyomKulshrestha/Nucle-OS) checkout) and point `nuclescript.serverPath` at it. |
-| `nucle-cli` | Format Document / format on save, and **Run File** | Windows/Linux x64 and Mac (Intel or Apple Silicon, via Rosetta) are covered. Otherwise, build it (`cargo build -p nucle_cli --release`) and point `nuclescript.cliPath` at it. |
+| `nucle-lsp` | diagnostics, hover, navigation, completion, references, rename, semantic tokens, outline | Windows/Linux x64 and Apple Silicon Mac are covered. Otherwise, build it (`cargo build -p nucle_lsp --release` from a [NucleOS](https://github.com/VyomKulshrestha/Nucle-OS) checkout) and point `nuclescript.serverPath` at it. |
+| `nucle-cli` | Format Document / format on save, **Run File**, and Test Explorer | Windows/Linux x64 and Mac (Intel or Apple Silicon, via Rosetta) are covered. Otherwise, build it (`cargo build -p nucle_cli --release`) and point `nuclescript.cliPath` at it. |
 
 Already have `nucle-lsp`/`nucle-cli` on `PATH` (e.g. a local Rust build)?
 That's used automatically instead of downloading anything — see

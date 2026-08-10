@@ -349,10 +349,9 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   re-wrapped into `Ok(T)` at the call boundary, so a caller always sees
   an ordinary `Result<T, E>` value regardless of which shape the callee
   used internally.
-- **`Str`** is the one new primitive type this adds, meaningful only as
-  `Result<_, Str>`'s error slot -- every VFS failure is a plain message
-  string (`nucle_vfs`'s own `Result<T, String>`, unchanged), and nothing
-  else in the language expects a `Str`.
+- **`Str`** is the language's scalar string type. It is the standard
+  `Result<_, Str>` error slot, and can also be used in bindings,
+  parameters, returns, enum payloads, constructors, and match arms.
 - **Effect analysis treats a `?` exactly like an `if`'s untaken branch**:
   conservatively, always. A function's effect is the join across *every*
   declaration in its body, whether or not an earlier `?` might
@@ -365,15 +364,15 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   produced and propagated, never branched on from within the same
   program; building on it (retrying a different pool, logging why) needed
   a second, independent function call from the caller.
-- **`Ok(<expr>)`/`Err(<string literal>)` construct a `Result`
+- **`Ok(<expr>)`/`Err(<str-expression>)` construct a `Result`
   directly**, rather than only ever receiving one from `store`/`delete`/a
-  `Result`-returning call. `Ok(...)`'s payload is any expression already
-  resolvable to a concrete type -- a bound variable of any shape, `?`, a
-  `Result`-shaped expression, or a `Pool`-shaped one; its missing `Err`
+  `Result`-returning call. `Ok(...)`'s payload is any typed value
+  expression -- including a literal, bound value, validated call, `?`,
+  nested match, Result, enum, or Pool; its missing `Err`
   side defaults to `Str` (the only error type anywhere in the language).
-  `Err(...)`'s payload is restricted to a string literal -- the only way
-  to author a *new* `Str` value -- and its missing `Ok` side has no
-  default, coming instead from the enclosing `let`'s annotation, a
+  `Err(...)` accepts any expression that resolves to `Str`, including a
+  literal, bound value, or `Str`-returning call. Its missing `Ok` side has
+  no default, coming instead from the enclosing `let`'s annotation, a
   sibling `Ok` match arm's already-resolved type, or the enclosing
   function/closure's declared return type; a bare `Err(...)` with none of
   those reports `E-ERR-CONSTRUCTOR-AMBIGUOUS`:
@@ -603,9 +602,8 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   match happens to still be `Result`-shaped (none used `?`), the match's
   own value is itself a still-wrapped `Result` a caller can `?`/re-match
   later.
-- **An arm's body is one of a fixed, closed set of shapes** (never a bare
-  literal, the same restriction `Ok(...)`'s own payload has --
-  `E-MATCH-ARM-UNTYPABLE` otherwise): the pattern's own bound name
+- **An arm's body is one typed expression** (`E-MATCH-ARM-UNTYPABLE`
+  otherwise): a scalar literal/binding/call, the pattern's own bound name
   (`Ok(file) => file`, or `Info(msg) => msg` for a user enum whose
   variant shares its payload type); `Ok(<pattern>)`/`Err(<pattern>)`
   re-wrapping the arm's own bound value (using the scrutinee's *declared*
@@ -646,15 +644,10 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   arm that needs a fallback operation writes it directly as its one
   expression, as `(store ... into ...)?` does above; it doesn't get its
   own local `let` sequence the way a function body does.
-- **A genuine, narrower limitation remains**: `Err(...)`'s payload must
-  always be a literal string, even inside a user-enum match arm -- a
-  bound `Str` variable (a user enum's own payload, or an outer match
-  arm's own binding) can never be re-wrapped into a fresh `Err(...)`,
-  since the only mechanism for resolving `Err`'s missing `Ok` side is the
-  `Ok`/`Err` sibling-arm trick within the *same* `Result` match, which
-  doesn't apply to a user-enum match at all. Writing around this means
-  producing the `Err` through a real, self-contained fallible expression
-  (e.g. `(store ... into ...)?`) rather than hand-crafting the message.
+- **Computed error values compose normally**: a bound `Str` from a user
+  enum payload, an outer match binding, or a `Str`-returning function can
+  be wrapped directly with `Err(value)` whenever the surrounding
+  `Result<T, Str>` context supplies the missing `Ok` type.
 - **Effect analysis joins the scrutinee and every arm unconditionally**,
   the same conservative "every declaration in this join counts" rule
   `if`/`?` already follow -- a `Destructive` operation in only one arm
