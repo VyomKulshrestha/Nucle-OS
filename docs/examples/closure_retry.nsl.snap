@@ -6,6 +6,18 @@
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >// Result binding from its enclosing function.
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>//
+#^^ source.nuclescript comment.line.double-slash.nuclescript
+>// Each "must fail" call below targets a filename that genuinely doesn't
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// exist under docs/examples/ -- a real, universally reliable `Err`,
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// independent of pool state -- rather than relying on storing the same
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// filename twice, since `dna_write` now versions a repeated filename
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// instead of rejecting it as a duplicate.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >
 >pool primary: DnaPool {
 #^^^^ source.nuclescript keyword.control.nuclescript
@@ -151,24 +163,30 @@
 >}
 #^^ source.nuclescript
 >
->/// Passes an inline closure literal directly as an argument -- no
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->/// capture needed here, the closure's body only stores a fixed file.
+>/// Passes an inline closure literal directly as an argument, capturing
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// this function's own `target` parameter -- the closure's body only
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->fn archive_with_retry() returns Result<DnaFile, Str> {
+>/// stores whichever file it was given.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archive_with_retry(target: File) returns Result<DnaFile, Str> {
 #^^ source.nuclescript keyword.control.nuclescript
 #  ^ source.nuclescript
 #   ^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
-#                     ^^^ source.nuclescript
-#                        ^^^^^^^ source.nuclescript keyword.control.nuclescript
-#                               ^ source.nuclescript
-#                                ^^^^^^ source.nuclescript storage.type.nuclescript
-#                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
-#                                       ^^^^^^^ source.nuclescript storage.type.nuclescript
-#                                              ^^ source.nuclescript
-#                                                ^^^ source.nuclescript storage.type.nuclescript
-#                                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
-#                                                    ^^^ source.nuclescript
+#                     ^ source.nuclescript
+#                      ^^^^^^ source.nuclescript variable.other.nuclescript
+#                            ^^ source.nuclescript
+#                              ^^^^ source.nuclescript storage.type.nuclescript
+#                                  ^^ source.nuclescript
+#                                    ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                   ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                          ^^ source.nuclescript
+#                                                            ^^^ source.nuclescript storage.type.nuclescript
+#                                                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                ^^^ source.nuclescript
 >    let result: Result<DnaFile, Str> = retry_once(fn() -> Result<DnaFile, Str> {
 #^^^^ source.nuclescript
 #    ^^^ source.nuclescript keyword.control.nuclescript
@@ -197,7 +215,7 @@
 #                                                                          ^^^ source.nuclescript storage.type.nuclescript
 #                                                                             ^ source.nuclescript keyword.operator.comparison.nuclescript
 #                                                                              ^^^ source.nuclescript
->            let attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+>            let attempt: Result<DnaFile, Str> = store target into primary
 #^^^^^^^^^^^^ source.nuclescript
 #            ^^^ source.nuclescript keyword.control.nuclescript
 #               ^ source.nuclescript
@@ -214,13 +232,11 @@
 #                                               ^ source.nuclescript
 #                                                ^^^^^ source.nuclescript keyword.control.nuclescript
 #                                                     ^ source.nuclescript
-#                                                      ^ source.nuclescript string.quoted.double.nuclescript
-#                                                       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
-#                                                                   ^ source.nuclescript string.quoted.double.nuclescript
-#                                                                    ^ source.nuclescript
-#                                                                     ^^^^ source.nuclescript keyword.control.nuclescript
-#                                                                         ^ source.nuclescript
-#                                                                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                      ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                            ^ source.nuclescript
+#                                                             ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                 ^ source.nuclescript
+#                                                                  ^^^^^^^ source.nuclescript variable.other.nuclescript
 >    })
 #^^^^^^^ source.nuclescript
 >}
@@ -232,21 +248,25 @@
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >/// not a parameter of its own.
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->fn archive_with_logged_fallback() returns Result<DnaFile, Str> {
+>fn archive_with_logged_fallback(target: File) returns Result<DnaFile, Str> {
 #^^ source.nuclescript keyword.control.nuclescript
 #  ^ source.nuclescript
 #   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
-#                               ^^^ source.nuclescript
-#                                  ^^^^^^^ source.nuclescript keyword.control.nuclescript
-#                                         ^ source.nuclescript
-#                                          ^^^^^^ source.nuclescript storage.type.nuclescript
-#                                                ^ source.nuclescript keyword.operator.comparison.nuclescript
-#                                                 ^^^^^^^ source.nuclescript storage.type.nuclescript
-#                                                        ^^ source.nuclescript
-#                                                          ^^^ source.nuclescript storage.type.nuclescript
-#                                                             ^ source.nuclescript keyword.operator.comparison.nuclescript
-#                                                              ^^^ source.nuclescript
->    let primary_attempt: Result<DnaFile, Str> = store "sample_a.txt" into primary
+#                               ^ source.nuclescript
+#                                ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                      ^^ source.nuclescript
+#                                        ^^^^ source.nuclescript storage.type.nuclescript
+#                                            ^^ source.nuclescript
+#                                              ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                     ^ source.nuclescript
+#                                                      ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                             ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                                    ^^ source.nuclescript
+#                                                                      ^^^ source.nuclescript storage.type.nuclescript
+#                                                                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                          ^^^ source.nuclescript
+>    let primary_attempt: Result<DnaFile, Str> = store target into primary
 #^^^^ source.nuclescript
 #    ^^^ source.nuclescript keyword.control.nuclescript
 #       ^ source.nuclescript
@@ -263,13 +283,11 @@
 #                                               ^ source.nuclescript
 #                                                ^^^^^ source.nuclescript keyword.control.nuclescript
 #                                                     ^ source.nuclescript
-#                                                      ^ source.nuclescript string.quoted.double.nuclescript
-#                                                       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
-#                                                                   ^ source.nuclescript string.quoted.double.nuclescript
-#                                                                    ^ source.nuclescript
-#                                                                     ^^^^ source.nuclescript keyword.control.nuclescript
-#                                                                         ^ source.nuclescript
-#                                                                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                      ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                            ^ source.nuclescript
+#                                                             ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                 ^ source.nuclescript
+#                                                                  ^^^^^^^ source.nuclescript variable.other.nuclescript
 >    let fallback: Fn() -> Result<DnaFile, Str> = fn() -> Result<DnaFile, Str> {
 #^^^^ source.nuclescript
 #    ^^^ source.nuclescript keyword.control.nuclescript
@@ -367,8 +385,8 @@
 >}
 #^^ source.nuclescript
 >
->/// Self-recursion: `attempt_or_retry` calls itself by its own bound
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// Self-recursion: `attempt_with_fallback` calls itself by its own bound
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >/// name on a caught failure -- mirrors `retry_once`'s own two-attempt
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >/// shape, but self-contained instead of parameter-passed. The recursive
@@ -393,21 +411,25 @@
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >/// this `let` finishes binding, does not contain itself on its own.
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->fn archive_with_self_retry() returns Result<DnaFile, Str> {
+>fn archive_with_self_retry(target: File) returns Result<DnaFile, Str> {
 #^^ source.nuclescript keyword.control.nuclescript
 #  ^ source.nuclescript
 #   ^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
-#                          ^^^ source.nuclescript
-#                             ^^^^^^^ source.nuclescript keyword.control.nuclescript
-#                                    ^ source.nuclescript
-#                                     ^^^^^^ source.nuclescript storage.type.nuclescript
-#                                           ^ source.nuclescript keyword.operator.comparison.nuclescript
-#                                            ^^^^^^^ source.nuclescript storage.type.nuclescript
-#                                                   ^^ source.nuclescript
-#                                                     ^^^ source.nuclescript storage.type.nuclescript
-#                                                        ^ source.nuclescript keyword.operator.comparison.nuclescript
-#                                                         ^^^ source.nuclescript
->    let attempt_with_fallback: Fn(File) -> Result<DnaFile, Str> = fn(target: File) -> Result<DnaFile, Str> {
+#                          ^ source.nuclescript
+#                           ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                 ^^ source.nuclescript
+#                                   ^^^^ source.nuclescript storage.type.nuclescript
+#                                       ^^ source.nuclescript
+#                                         ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                ^ source.nuclescript
+#                                                 ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                        ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                               ^^ source.nuclescript
+#                                                                 ^^^ source.nuclescript storage.type.nuclescript
+#                                                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                     ^^^ source.nuclescript
+>    let attempt_with_fallback: Fn(File) -> Result<DnaFile, Str> = fn(inner_target: File) -> Result<DnaFile, Str> {
 #^^^^ source.nuclescript
 #    ^^^ source.nuclescript keyword.control.nuclescript
 #       ^ source.nuclescript
@@ -430,20 +452,20 @@
 #                                                                 ^ source.nuclescript
 #                                                                  ^^ source.nuclescript keyword.control.nuclescript
 #                                                                    ^ source.nuclescript
-#                                                                     ^^^^^^ source.nuclescript variable.other.nuclescript
-#                                                                           ^^ source.nuclescript
-#                                                                             ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                     ^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
 #                                                                                 ^^ source.nuclescript
-#                                                                                   ^^ source.nuclescript keyword.operator.arrow.nuclescript
-#                                                                                     ^ source.nuclescript
-#                                                                                      ^^^^^^ source.nuclescript storage.type.nuclescript
-#                                                                                            ^ source.nuclescript keyword.operator.comparison.nuclescript
-#                                                                                             ^^^^^^^ source.nuclescript storage.type.nuclescript
-#                                                                                                    ^^ source.nuclescript
-#                                                                                                      ^^^ source.nuclescript storage.type.nuclescript
-#                                                                                                         ^ source.nuclescript keyword.operator.comparison.nuclescript
-#                                                                                                          ^^^ source.nuclescript
->        let attempt: Result<DnaFile, Str> = store target into primary
+#                                                                                   ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                       ^^ source.nuclescript
+#                                                                                         ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                                                                                           ^ source.nuclescript
+#                                                                                            ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                   ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                                                                          ^^ source.nuclescript
+#                                                                                                            ^^^ source.nuclescript storage.type.nuclescript
+#                                                                                                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                                                ^^^ source.nuclescript
+>        let attempt: Result<DnaFile, Str> = store inner_target into primary
 #^^^^^^^^ source.nuclescript
 #        ^^^ source.nuclescript keyword.control.nuclescript
 #           ^ source.nuclescript
@@ -460,11 +482,11 @@
 #                                           ^ source.nuclescript
 #                                            ^^^^^ source.nuclescript keyword.control.nuclescript
 #                                                 ^ source.nuclescript
-#                                                  ^^^^^^ source.nuclescript variable.other.nuclescript
-#                                                        ^ source.nuclescript
-#                                                         ^^^^ source.nuclescript keyword.control.nuclescript
-#                                                             ^ source.nuclescript
-#                                                              ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                  ^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                              ^ source.nuclescript
+#                                                               ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                   ^ source.nuclescript
+#                                                                    ^^^^^^^ source.nuclescript variable.other.nuclescript
 >        let saved: DnaFile = match attempt {
 #^^^^^^^^ source.nuclescript
 #        ^^^ source.nuclescript keyword.control.nuclescript
@@ -508,7 +530,7 @@
 #^^^^^^^^^^ source.nuclescript
 >    }
 #^^^^^^ source.nuclescript
->    let result: Result<DnaFile, Str> = attempt_with_fallback("sample_f.txt")
+>    let result: Result<DnaFile, Str> = attempt_with_fallback(target)
 #^^^^ source.nuclescript
 #    ^^^ source.nuclescript keyword.control.nuclescript
 #       ^ source.nuclescript
@@ -525,18 +547,16 @@
 #                                      ^ source.nuclescript
 #                                       ^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
 #                                                            ^ source.nuclescript
-#                                                             ^ source.nuclescript string.quoted.double.nuclescript
-#                                                              ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
-#                                                                          ^ source.nuclescript string.quoted.double.nuclescript
-#                                                                           ^^ source.nuclescript
+#                                                             ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                   ^^ source.nuclescript
 >}
 #^^ source.nuclescript
 >
->// First call: `primary` is empty, so `retry_once`'s first attempt
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// First call: a real, existing file, so `retry_once`'s first attempt
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >// already succeeds -- the retry path isn't needed yet.
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->let first: Result<DnaFile, Str> = archive_with_retry()
+>let first: Result<DnaFile, Str> = archive_with_retry("sample_a.txt")
 #^^^ source.nuclescript keyword.control.nuclescript
 #   ^ source.nuclescript
 #    ^^^^^ source.nuclescript variable.other.nuclescript
@@ -551,15 +571,19 @@
 #                                ^ source.nuclescript keyword.operator.assignment.nuclescript
 #                                 ^ source.nuclescript
 #                                  ^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
-#                                                    ^^^ source.nuclescript
+#                                                    ^ source.nuclescript
+#                                                     ^ source.nuclescript string.quoted.double.nuclescript
+#                                                      ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                  ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                   ^^ source.nuclescript
 >
->// Second call: `primary` already has `sample_a.txt` (from `first`), so
+>// Second call: a nonexistent target, so `archive_with_logged_fallback`'s
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// own attempt fails and its captured-binding fallback into `secondary`
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// `archive_with_logged_fallback`'s own attempt fails and its captured-
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// binding fallback into `secondary` succeeds instead.
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->let second: Result<DnaFile, Str> = archive_with_logged_fallback()
+>// succeeds instead.
+#^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let second: Result<DnaFile, Str> = archive_with_logged_fallback("this_file_does_not_exist.txt")
 #^^^ source.nuclescript keyword.control.nuclescript
 #   ^ source.nuclescript
 #    ^^^^^^ source.nuclescript variable.other.nuclescript
@@ -574,19 +598,23 @@
 #                                 ^ source.nuclescript keyword.operator.assignment.nuclescript
 #                                  ^ source.nuclescript
 #                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
-#                                                               ^^^ source.nuclescript
+#                                                               ^ source.nuclescript
+#                                                                ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                             ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                              ^^ source.nuclescript
 >
->// Third call: `primary` still has `sample_a.txt`, so `retry_once` calls
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// `attempt_fn` a *second* time -- and since retrying the identical
+>// Third call: a nonexistent target again, so `retry_once` calls
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// `attempt_fn` a *second* time -- and since the target still doesn't
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// exist on the second attempt either, this demonstrates the honest
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// store against the identical pool state fails identically, this
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// demonstrates the honest limit noted on `retry_once` itself: a second
+>// limit noted on `retry_once` itself: a second real failure propagates
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// real failure propagates as `Err`, it isn't papered over.
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->let third: Result<DnaFile, Str> = archive_with_retry()
+>// as `Err`, it isn't papered over.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let third: Result<DnaFile, Str> = archive_with_retry("this_file_does_not_exist.txt")
 #^^^ source.nuclescript keyword.control.nuclescript
 #   ^ source.nuclescript
 #    ^^^^^ source.nuclescript variable.other.nuclescript
@@ -601,15 +629,17 @@
 #                                ^ source.nuclescript keyword.operator.assignment.nuclescript
 #                                 ^ source.nuclescript
 #                                  ^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
-#                                                    ^^^ source.nuclescript
+#                                                    ^ source.nuclescript
+#                                                     ^ source.nuclescript string.quoted.double.nuclescript
+#                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                  ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                   ^^ source.nuclescript
 >
->// Fourth call: `primary` is still empty of `sample_f.txt`, so
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// `attempt_with_fallback`'s first (non-recursive) attempt already
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// succeeds.
-#^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->let fourth: Result<DnaFile, Str> = archive_with_self_retry()
+>// Fourth call: a real, existing file, so `attempt_with_fallback`'s first
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// (non-recursive) attempt already succeeds.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let fourth: Result<DnaFile, Str> = archive_with_self_retry("sample_f.txt")
 #^^^ source.nuclescript keyword.control.nuclescript
 #   ^ source.nuclescript
 #    ^^^^^^ source.nuclescript variable.other.nuclescript
@@ -624,17 +654,21 @@
 #                                 ^ source.nuclescript keyword.operator.assignment.nuclescript
 #                                  ^ source.nuclescript
 #                                   ^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
-#                                                          ^^^ source.nuclescript
+#                                                          ^ source.nuclescript
+#                                                           ^ source.nuclescript string.quoted.double.nuclescript
+#                                                            ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                        ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                         ^^ source.nuclescript
 >
->// Fifth call: `sample_f.txt` already exists, so `attempt_with_fallback`
+>// Fifth call: a nonexistent target, so `attempt_with_fallback` actually
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// actually recurses into itself once, with a different filename -- a
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->// real second attempt (not the identical one retried forever), which
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// recurses into itself once, with a different, real filename -- a real
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// second attempt (not the identical one retried forever), which
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >// succeeds, proving the recursion both runs for real and terminates.
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
->let fifth: Result<DnaFile, Str> = archive_with_self_retry()
+>let fifth: Result<DnaFile, Str> = archive_with_self_retry("this_file_does_not_exist.txt")
 #^^^ source.nuclescript keyword.control.nuclescript
 #   ^ source.nuclescript
 #    ^^^^^ source.nuclescript variable.other.nuclescript
@@ -649,5 +683,9 @@
 #                                ^ source.nuclescript keyword.operator.assignment.nuclescript
 #                                 ^ source.nuclescript
 #                                  ^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
-#                                                         ^^^ source.nuclescript
+#                                                         ^ source.nuclescript
+#                                                          ^ source.nuclescript string.quoted.double.nuclescript
+#                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                       ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                        ^^ source.nuclescript
 >
