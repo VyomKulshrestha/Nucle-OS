@@ -725,7 +725,7 @@ fn completion_items(symbols: &SymbolTable) -> Vec<CompletionItem> {
                 variant
                     .payload
                     .as_ref()
-                    .map(|payload| describe_type(payload))
+                    .map(describe_type)
                     .unwrap_or_else(|| name.clone()),
             );
         }
