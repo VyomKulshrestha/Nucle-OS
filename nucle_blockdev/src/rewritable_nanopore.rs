@@ -108,6 +108,7 @@ pub struct RewritableNanoporeBlockDevice {
 #[derive(Serialize, Deserialize)]
 struct RewritableNanoporeImage {
     format_version: u32,
+    backend: String,
     config: RewritableNanoporeConfig,
     blocks: Vec<Option<StoredGroups>>,
     write_generation: Vec<u64>,
@@ -132,6 +133,7 @@ impl RewritableNanoporeBlockDevice {
             path,
             &RewritableNanoporeImage {
                 format_version: IMAGE_FORMAT_VERSION,
+                backend: "rewritable-nanopore".to_string(),
                 config: self.config.clone(),
                 blocks: self.blocks.clone(),
                 write_generation: self.write_generation.clone(),
@@ -148,6 +150,9 @@ impl RewritableNanoporeBlockDevice {
                 "unsupported rewritable-nanopore image version {} (expected {})",
                 image.format_version, IMAGE_FORMAT_VERSION
             ));
+        }
+        if image.backend != "rewritable-nanopore" {
+            return Err(format!("invalid rewritable-nanopore image backend '{}'", image.backend));
         }
         let expected = image.config.capacity_blocks as usize;
         if image.blocks.len() != expected || image.write_generation.len() != expected {
@@ -183,6 +188,10 @@ impl BlockDevice for RewritableNanoporeBlockDevice {
 
     fn is_rewritable(&self) -> bool {
         true
+    }
+
+    fn written_blocks(&self) -> usize {
+        self.blocks.iter().filter(|block| block.is_some()).count()
     }
 
     fn read_block(&self, lba: u64) -> Result<Vec<u8>, BlockDeviceError> {

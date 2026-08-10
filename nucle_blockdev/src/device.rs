@@ -49,6 +49,9 @@ pub trait BlockDevice {
     /// [`crate::rewritable_nanopore`] backend).
     fn is_rewritable(&self) -> bool;
 
+    /// Number of logical block addresses that currently contain data.
+    fn written_blocks(&self) -> usize;
+
     /// Read the block at `lba`, running it through this device's
     /// error-correction layer. Returns exactly `block_size()` bytes on
     /// success.

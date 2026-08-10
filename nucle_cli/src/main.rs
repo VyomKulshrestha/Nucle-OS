@@ -218,6 +218,12 @@ enum Commands {
     #[command(name = "tenants")]
     Tenants,
 
+    /// Create and operate persistent simulated molecular block devices
+    Block {
+        #[command(subcommand)]
+        action: BlockAction,
+    },
+
     /// Simulate synthesis/sequencing noise on data
     Simulate {
         /// Input file to simulate
@@ -430,6 +436,45 @@ enum HardwareSubcommand {
     },
 }
 
+#[derive(Subcommand, Debug, Clone)]
+enum BlockAction {
+    /// Create a new persistent block-device image
+    Create {
+        image: String,
+        /// Backend: synthesis-array or rewritable-nanopore
+        #[arg(long)]
+        backend: String,
+        #[arg(long, default_value_t = 4096)]
+        block_size: usize,
+        #[arg(long, default_value_t = 1024)]
+        capacity_blocks: u64,
+        #[arg(long)]
+        parity: Option<usize>,
+        #[arg(long)]
+        coverage: Option<u32>,
+        /// Override the illustrative simulated operation latency
+        #[arg(long)]
+        latency_ms: Option<u64>,
+        /// Override synthesis-array parallelism (ignored by rewritable-nanopore)
+        #[arg(long)]
+        array_parallelism: Option<usize>,
+        /// Replace an existing image
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show a persisted device's geometry and occupancy
+    Info { image: String },
+    /// Write exactly one block from a file
+    Write { image: String, lba: u64, file: String },
+    /// Read exactly one block into a file
+    Read {
+        image: String,
+        lba: u64,
+        #[arg(short, long)]
+        output: String,
+    },
+}
+
 fn main() {
     let cli = Cli::parse();
     let tenant = resolve_tenant(cli.tenant.as_deref());
@@ -461,6 +506,7 @@ fn main() {
         Commands::Scan { prefix } => cmd_scan(prefix.as_deref().unwrap_or(""), &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Serve { port, bind } => cmd_serve(&bind, port, &pool_dir, passphrase.as_deref()),
         Commands::Tenants => cmd_tenants(&resolve_base_pool_dir(cli.pool_dir.as_deref()), cli.json),
+        Commands::Block { action } => cmd_block(action, cli.json),
         Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
@@ -1157,6 +1203,159 @@ fn cmd_tenants(base_pool_dir: &std::path::Path, json: bool) {
     } else {
         for name in &names {
             println!("  {}", name);
+        }
+    }
+}
+
+fn block_failure(message: impl std::fmt::Display) -> ! {
+    eprintln!("Block-device operation failed: {}", message);
+    std::process::exit(1);
+}
+
+fn cmd_block(action: BlockAction, json: bool) {
+    use nucle_blockdev::{BlockDevice, RewritableNanoporeBlockDevice, RewritableNanoporeConfig};
+    use nucle_blockdev::{SynthesisArrayBlockDevice, SynthesisArrayConfig};
+
+    match action {
+        BlockAction::Create {
+            image,
+            backend,
+            block_size,
+            capacity_blocks,
+            parity,
+            coverage,
+            latency_ms,
+            array_parallelism,
+            force,
+        } => {
+            let path = std::path::Path::new(&image);
+            if path.exists() && !force {
+                block_failure(format!("image '{}' already exists; use --force to replace it", path.display()));
+            }
+            if block_size == 0 || capacity_blocks == 0 {
+                block_failure("block-size and capacity-blocks must both be greater than zero");
+            }
+
+            match backend.as_str() {
+                "synthesis-array" => {
+                    let mut config = SynthesisArrayConfig::new(block_size, capacity_blocks);
+                    if let Some(parity) = parity { config.parity_strands_per_block = parity; }
+                    if let Some(coverage) = coverage { config.coverage_depth = coverage.max(1); }
+                    if let Some(ms) = latency_ms { config.write_latency = std::time::Duration::from_millis(ms); }
+                    if let Some(parallelism) = array_parallelism {
+                        if parallelism == 0 { block_failure("array-parallelism must be greater than zero"); }
+                        config.array_parallelism = parallelism;
+                    }
+                    SynthesisArrayBlockDevice::new(config).save(path).unwrap_or_else(|e| block_failure(e));
+                }
+                "rewritable-nanopore" => {
+                    if array_parallelism.is_some() {
+                        block_failure("array-parallelism only applies to the synthesis-array backend");
+                    }
+                    let mut config = RewritableNanoporeConfig::new(block_size, capacity_blocks);
+                    if let Some(parity) = parity { config.parity_strands_per_block = parity; }
+                    if let Some(coverage) = coverage { config.coverage_depth = coverage.max(1); }
+                    if let Some(ms) = latency_ms { config.op_latency = std::time::Duration::from_millis(ms); }
+                    RewritableNanoporeBlockDevice::new(config).save(path).unwrap_or_else(|e| block_failure(e));
+                }
+                other => block_failure(format!(
+                    "unknown backend '{}'; expected synthesis-array or rewritable-nanopore",
+                    other
+                )),
+            }
+
+            if json {
+                println!("{}", serde_json::json!({
+                    "status": "created",
+                    "image": image,
+                    "backend": backend,
+                    "block_size": block_size,
+                    "capacity_blocks": capacity_blocks,
+                }));
+            } else {
+                println!(
+                    "✓ Created {} block-device image '{}' ({} blocks × {} B)",
+                    backend, image, capacity_blocks, block_size
+                );
+            }
+        }
+        BlockAction::Info { image } => {
+            let path = std::path::Path::new(&image);
+            let backend = nucle_blockdev::image_backend(path).unwrap_or_else(|e| block_failure(e));
+            let (block_size, capacity_blocks, rewritable, written_blocks) = match backend {
+                "synthesis-array" => {
+                    let device = SynthesisArrayBlockDevice::load(path).unwrap_or_else(|e| block_failure(e));
+                    (device.block_size(), device.capacity_blocks(), device.is_rewritable(), device.written_blocks())
+                }
+                "rewritable-nanopore" => {
+                    let device = RewritableNanoporeBlockDevice::load(path).unwrap_or_else(|e| block_failure(e));
+                    (device.block_size(), device.capacity_blocks(), device.is_rewritable(), device.written_blocks())
+                }
+                _ => unreachable!("image_backend only returns supported backends"),
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+                    "image": image,
+                    "backend": backend,
+                    "block_size": block_size,
+                    "capacity_blocks": capacity_blocks,
+                    "capacity_bytes": block_size as u128 * capacity_blocks as u128,
+                    "written_blocks": written_blocks,
+                    "rewritable": rewritable,
+                })).unwrap());
+            } else {
+                println!("Image:          {}", image);
+                println!("Backend:        {}", backend);
+                println!("Block size:     {} bytes", block_size);
+                println!("Capacity:       {} blocks", capacity_blocks);
+                println!("Written blocks: {}", written_blocks);
+                println!("Rewritable:     {}", if rewritable { "yes" } else { "no" });
+            }
+        }
+        BlockAction::Write { image, lba, file } => {
+            let path = std::path::Path::new(&image);
+            let data = fs::read(&file).unwrap_or_else(|e| block_failure(format!("failed to read '{}': {e}", file)));
+            let backend = nucle_blockdev::image_backend(path).unwrap_or_else(|e| block_failure(e));
+            match backend {
+                "synthesis-array" => {
+                    let mut device = SynthesisArrayBlockDevice::load(path).unwrap_or_else(|e| block_failure(e));
+                    device.write_block(lba, &data).unwrap_or_else(|e| block_failure(e));
+                    device.save(path).unwrap_or_else(|e| block_failure(e));
+                }
+                "rewritable-nanopore" => {
+                    let mut device = RewritableNanoporeBlockDevice::load(path).unwrap_or_else(|e| block_failure(e));
+                    device.write_block(lba, &data).unwrap_or_else(|e| block_failure(e));
+                    device.save(path).unwrap_or_else(|e| block_failure(e));
+                }
+                _ => unreachable!("image_backend only returns supported backends"),
+            }
+            if json {
+                println!("{}", serde_json::json!({"status": "written", "image": image, "lba": lba, "bytes": data.len()}));
+            } else {
+                println!("✓ Wrote {} bytes to block {} in '{}'", data.len(), lba, image);
+            }
+        }
+        BlockAction::Read { image, lba, output } => {
+            let path = std::path::Path::new(&image);
+            let backend = nucle_blockdev::image_backend(path).unwrap_or_else(|e| block_failure(e));
+            let data = match backend {
+                "synthesis-array" => SynthesisArrayBlockDevice::load(path)
+                    .unwrap_or_else(|e| block_failure(e))
+                    .read_block(lba)
+                    .unwrap_or_else(|e| block_failure(e)),
+                "rewritable-nanopore" => RewritableNanoporeBlockDevice::load(path)
+                    .unwrap_or_else(|e| block_failure(e))
+                    .read_block(lba)
+                    .unwrap_or_else(|e| block_failure(e)),
+                _ => unreachable!("image_backend only returns supported backends"),
+            };
+            fs::write(&output, &data)
+                .unwrap_or_else(|e| block_failure(format!("failed to write '{}': {e}", output)));
+            if json {
+                println!("{}", serde_json::json!({"status": "read", "image": image, "lba": lba, "bytes": data.len(), "output": output}));
+            } else {
+                println!("✓ Read {} bytes from block {} into '{}'", data.len(), lba, output);
+            }
         }
     }
 }

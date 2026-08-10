@@ -60,3 +60,9 @@ mod support;
 pub use device::{BlockDevice, BlockDeviceError};
 pub use rewritable_nanopore::{RewritableNanoporeBlockDevice, RewritableNanoporeConfig};
 pub use synthesis_array::{SynthesisArrayBlockDevice, SynthesisArrayConfig};
+
+/// Reads only a persisted image's small header and returns its backend
+/// identifier without decoding the full simulated medium.
+pub fn image_backend(path: &std::path::Path) -> Result<&'static str, String> {
+    persistence::backend(path)
+}

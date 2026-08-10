@@ -1,8 +1,22 @@
 //! Shared atomic JSON persistence helpers for simulated block devices.
 
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+#[derive(Deserialize)]
+struct ImageHeader {
+    backend: String,
+}
+
+pub fn backend(path: &Path) -> Result<&'static str, String> {
+    let header: ImageHeader = load_json(path)?;
+    match header.backend.as_str() {
+        "synthesis-array" => Ok("synthesis-array"),
+        "rewritable-nanopore" => Ok("rewritable-nanopore"),
+        other => Err(format!("unsupported block-device backend '{other}' in '{}'", path.display())),
+    }
+}
 
 pub fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {

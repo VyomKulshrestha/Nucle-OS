@@ -92,6 +92,7 @@ pub struct SynthesisArrayBlockDevice {
 #[derive(Serialize, Deserialize)]
 struct SynthesisArrayImage {
     format_version: u32,
+    backend: String,
     config: SynthesisArrayConfig,
     blocks: Vec<Option<StoredGroups>>,
 }
@@ -110,6 +111,7 @@ impl SynthesisArrayBlockDevice {
             path,
             &SynthesisArrayImage {
                 format_version: IMAGE_FORMAT_VERSION,
+                backend: "synthesis-array".to_string(),
                 config: self.config.clone(),
                 blocks: self.blocks.clone(),
             },
@@ -125,6 +127,9 @@ impl SynthesisArrayBlockDevice {
                 "unsupported synthesis-array image version {} (expected {})",
                 image.format_version, IMAGE_FORMAT_VERSION
             ));
+        }
+        if image.backend != "synthesis-array" {
+            return Err(format!("invalid synthesis-array image backend '{}'", image.backend));
         }
         if image.blocks.len() as u64 != image.config.capacity_blocks {
             return Err(format!(
@@ -205,6 +210,10 @@ impl BlockDevice for SynthesisArrayBlockDevice {
 
     fn is_rewritable(&self) -> bool {
         false
+    }
+
+    fn written_blocks(&self) -> usize {
+        self.blocks.iter().filter(|block| block.is_some()).count()
     }
 
     fn read_block(&self, lba: u64) -> Result<Vec<u8>, BlockDeviceError> {
