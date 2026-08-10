@@ -1511,7 +1511,7 @@ mod tests {
     }
 
     #[test]
-    fn a_migration_logs_as_a_read_delete_write_trail() {
+    fn a_migration_logs_as_a_read_and_versioned_write_trail() {
         let dir = scratch_pool_dir("audit_migration");
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -1520,11 +1520,11 @@ mod tests {
         crate::migrate::migrate_object(&mut os, "m.txt", Some(3), None).unwrap();
 
         let events = crate::audit::read_events(&dir).unwrap();
-        // 1 initial write, then migrate's own read + delete + write.
-        assert_eq!(events.len(), 4);
+        // 1 initial write, then migrate's own read + versioned write.
+        assert_eq!(events.len(), 3);
         assert_eq!(
             events.iter().map(|e| e.operation.as_str()).collect::<Vec<_>>(),
-            vec!["write", "read", "delete", "write"]
+            vec!["write", "read", "write"]
         );
         assert!(events.iter().all(|e| e.success));
         assert!(events.iter().all(|e| e.filename == "m.txt"));

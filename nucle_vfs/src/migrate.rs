@@ -1,7 +1,8 @@
 //! # DNA File Migration
 //!
 //! Provides tools to re-encode stored DNA files with different parameters
-//! (such as redundancy) while maintaining manifest history for audit.
+//! (such as redundancy) while maintaining both readable content versions
+//! and manifest history for audit.
 
 use crate::syscall::{CodecKind, NucleOS};
 use crate::file::StorageManifest;
@@ -17,8 +18,11 @@ pub const SUPPORTED_CODEC: &str = "ternary-rotating-cipher";
 
 /// Re-encodes a stored file under new parameters.
 ///
-/// Decodes the file, deletes the old strands/catalog entries, writes it again,
-/// and appends the old manifest to the file's manifest history.
+/// Decodes the file and writes it again under the same name. `dna_write`
+/// treats that write as the next content version, so the old catalog entry
+/// and strands remain available through `dna_history`/`dna_read_version`.
+/// The old storage manifest is also appended to the new current version's
+/// manifest history for callers that use that older metadata-only audit API.
 ///
 /// `new_codec`, if given, must name a codec NucleOS's storage pipeline can
 /// actually produce ([`SUPPORTED_CODECS`]) — migrating to anything else is
@@ -54,17 +58,17 @@ pub fn migrate_object(
         history.push(m.clone());
     }
 
-    // 3. Delete old file
-    os.dna_delete(filename)?;
-
-    // 4. Determine new redundancy (per-stripe RS parity count, not the
+    // 3. Determine new redundancy (per-stripe RS parity count, not the
     // possibly-larger total parity strand count on multi-stripe files)
     let redundancy_val = new_redundancy.unwrap_or(old_file.rs_parity_per_stripe);
 
-    // 5. Write new file
+    // 4. Write the migrated representation as the next version. Do not
+    // delete first: deletion removes the entire content-version chain,
+    // which would make migration silently destroy readable history.
     let _write_result = os.dna_write_with_codec(filename, &data, redundancy_val, codec_kind)?;
 
-    // 6. Update the new catalog entry with the old history
+    // 5. Update the new current entry with the legacy manifest-history
+    // trail as well. Content history is already retained by Catalog::register.
     let new_manifest = if let Some(new_file) = os.catalog.get_by_name_mut(filename) {
         new_file.manifest_history = history;
         new_file.manifest.clone()

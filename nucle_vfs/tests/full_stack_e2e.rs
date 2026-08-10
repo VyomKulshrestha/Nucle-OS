@@ -185,9 +185,22 @@ fn test_migrate_preserves_history() {
     assert_eq!(new_manifest.redundancy, 4);
 
     let updated_file = os.catalog.get_by_name("migrate_test.txt").unwrap();
+    assert_eq!(updated_file.version, 2);
     assert_eq!(updated_file.manifest_history.len(), 1);
     assert_eq!(updated_file.manifest_history[0].archive_id, initial_manifest.archive_id);
     assert_eq!(updated_file.manifest_history[0].redundancy, 2);
+
+    // Migration is a new representation of the same logical file, not a
+    // destructive delete-and-recreate. Both content versions remain readable.
+    assert_eq!(
+        os.dna_history("migrate_test.txt")
+            .iter()
+            .map(|v| v.version)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(os.dna_read_version("migrate_test.txt", 1).unwrap(), original);
+    assert_eq!(os.dna_read_version("migrate_test.txt", 2).unwrap(), original);
 
     // Verify roundtrip still works
     let recovered = os.dna_read("migrate_test.txt").unwrap();

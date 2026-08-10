@@ -10,10 +10,9 @@
 //! leave one trailing malformed line, never corrupt an earlier entry.
 //!
 //! A migration (`migrate::migrate_object`) doesn't get its own event
-//! kind: it's implemented as a `dna_read` + `dna_delete` + `dna_write`
-//! against the same filename, and each of those already appends its own
-//! event, so a migration shows up as that same three-event trail with no
-//! extra bookkeeping needed here.
+//! kind: it's implemented as a `dna_read` + versioned `dna_write` against
+//! the same filename, and both already append their own events. The old
+//! content remains readable as a prior version rather than being deleted.
 
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
