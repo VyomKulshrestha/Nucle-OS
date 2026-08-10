@@ -52,6 +52,7 @@
 
 pub mod blob;
 pub mod device;
+mod persistence;
 pub mod rewritable_nanopore;
 pub mod synthesis_array;
 mod support;

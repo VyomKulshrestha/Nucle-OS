@@ -46,10 +46,14 @@
 use crate::device::{BlockDevice, BlockDeviceError};
 use crate::support::{self, StoredGroups};
 use nucle_synth::profiles::HardwareProfile;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::time::Duration;
 
+const IMAGE_FORMAT_VERSION: u32 = 1;
+
 /// Configuration for a [`RewritableNanoporeBlockDevice`].
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RewritableNanoporeConfig {
     pub block_size: usize,
     pub capacity_blocks: u64,
@@ -101,6 +105,15 @@ pub struct RewritableNanoporeBlockDevice {
     read_counter: std::sync::atomic::AtomicU64,
 }
 
+#[derive(Serialize, Deserialize)]
+struct RewritableNanoporeImage {
+    format_version: u32,
+    config: RewritableNanoporeConfig,
+    blocks: Vec<Option<StoredGroups>>,
+    write_generation: Vec<u64>,
+    read_counter: u64,
+}
+
 impl RewritableNanoporeBlockDevice {
     pub fn new(config: RewritableNanoporeConfig) -> Self {
         let capacity_blocks = config.capacity_blocks;
@@ -110,6 +123,45 @@ impl RewritableNanoporeBlockDevice {
             write_generation: vec![0; capacity_blocks as usize],
             read_counter: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Atomically persists the complete simulated medium, including the
+    /// counters used to keep later read-noise draws and rewrites distinct.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        crate::persistence::save_json(
+            path,
+            &RewritableNanoporeImage {
+                format_version: IMAGE_FORMAT_VERSION,
+                config: self.config.clone(),
+                blocks: self.blocks.clone(),
+                write_generation: self.write_generation.clone(),
+                read_counter: self.read_counter.load(std::sync::atomic::Ordering::Relaxed),
+            },
+        )
+    }
+
+    /// Loads and validates a previously saved rewritable-nanopore image.
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let image: RewritableNanoporeImage = crate::persistence::load_json(path)?;
+        if image.format_version != IMAGE_FORMAT_VERSION {
+            return Err(format!(
+                "unsupported rewritable-nanopore image version {} (expected {})",
+                image.format_version, IMAGE_FORMAT_VERSION
+            ));
+        }
+        let expected = image.config.capacity_blocks as usize;
+        if image.blocks.len() != expected || image.write_generation.len() != expected {
+            return Err(format!(
+                "invalid rewritable-nanopore image: {} block slots and {} generations for capacity {}",
+                image.blocks.len(), image.write_generation.len(), image.config.capacity_blocks
+            ));
+        }
+        Ok(Self {
+            config: image.config,
+            blocks: image.blocks,
+            write_generation: image.write_generation,
+            read_counter: std::sync::atomic::AtomicU64::new(image.read_counter),
+        })
     }
 
     fn validate_lba(&self, lba: u64) -> Result<(), BlockDeviceError> {
@@ -195,6 +247,43 @@ mod tests {
         let mut config = RewritableNanoporeConfig::new(block_size, capacity_blocks);
         config.op_latency = Duration::from_millis(5); // keep tests fast
         RewritableNanoporeBlockDevice::new(config)
+    }
+
+    #[test]
+    fn saved_image_reopens_with_data_and_rewrite_generation_intact() {
+        let path = std::env::temp_dir().join(format!(
+            "nucle_blockdev_rewritable_persistence_{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut device = test_device(16, 4);
+        device.write_block(1, &[3u8; 16]).unwrap();
+        device.save(&path).unwrap();
+
+        let mut reopened = RewritableNanoporeBlockDevice::load(&path).unwrap();
+        assert_eq!(reopened.read_block(1).unwrap(), vec![3u8; 16]);
+        reopened.write_block(1, &[8u8; 16]).unwrap();
+        assert_eq!(reopened.read_block(1).unwrap(), vec![8u8; 16]);
+        reopened.save(&path).unwrap();
+
+        let reopened_again = RewritableNanoporeBlockDevice::load(&path).unwrap();
+        assert_eq!(reopened_again.read_block(1).unwrap(), vec![8u8; 16]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn malformed_device_image_is_rejected_clearly() {
+        let path = std::env::temp_dir().join(format!(
+            "nucle_blockdev_malformed_persistence_{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"{ definitely not a device image").unwrap();
+        let err = match RewritableNanoporeBlockDevice::load(&path) {
+            Ok(_) => panic!("malformed image should not load"),
+            Err(err) => err,
+        };
+        assert!(err.contains("failed to parse device image"));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

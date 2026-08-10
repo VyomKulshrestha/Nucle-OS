@@ -25,6 +25,7 @@ use nucle_ecc::pipeline::consensus_then_rs_decode;
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
 use nucle_synth::noise::{NoiseEngine, SimulationConfig};
 use nucle_synth::profiles::HardwareProfile;
+use serde::{Deserialize, Serialize};
 
 /// A block's on-medium representation: the codec-encoded data strands
 /// plus (if any redundancy was configured) Reed-Solomon parity strands,
@@ -33,7 +34,7 @@ use nucle_synth::profiles::HardwareProfile;
 /// "ground truth" copy each backend stores -- noisy read/write copies
 /// are derived from it on demand via [`noisy_copies`], never stored
 /// themselves.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StoredBlock {
     pub data_strands: Vec<DnaStrand>,
     pub parity_strands: Vec<DnaStrand>,
@@ -43,7 +44,7 @@ pub struct StoredBlock {
 /// What a backend actually stores per block: one group of
 /// (independently-noised, per [`noisy_copies`]) coverage copies per
 /// logical data/parity strand, ready to be consensus-voted at read time.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StoredGroups {
     pub data_groups: Vec<Vec<DnaStrand>>,
     pub parity_groups: Vec<Vec<DnaStrand>>,

@@ -39,10 +39,14 @@
 use crate::device::{BlockDevice, BlockDeviceError};
 use crate::support::{self, StoredGroups};
 use nucle_synth::profiles::HardwareProfile;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::time::Duration;
 
+const IMAGE_FORMAT_VERSION: u32 = 1;
+
 /// Configuration for a [`SynthesisArrayBlockDevice`].
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SynthesisArrayConfig {
     pub block_size: usize,
     pub capacity_blocks: u64,
@@ -85,10 +89,50 @@ pub struct SynthesisArrayBlockDevice {
     blocks: Vec<Option<StoredGroups>>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SynthesisArrayImage {
+    format_version: u32,
+    config: SynthesisArrayConfig,
+    blocks: Vec<Option<StoredGroups>>,
+}
+
 impl SynthesisArrayBlockDevice {
     pub fn new(config: SynthesisArrayConfig) -> Self {
         let capacity_blocks = config.capacity_blocks;
         Self { config, blocks: vec![None; capacity_blocks as usize] }
+    }
+
+    /// Atomically persists the complete simulated medium. A successful
+    /// return means a later process can reopen the same write-once image
+    /// without losing either its blocks or its AlreadyWritten invariant.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        crate::persistence::save_json(
+            path,
+            &SynthesisArrayImage {
+                format_version: IMAGE_FORMAT_VERSION,
+                config: self.config.clone(),
+                blocks: self.blocks.clone(),
+            },
+        )
+    }
+
+    /// Loads a previously saved synthesis-array image and validates its
+    /// format and address-space dimensions before accepting it.
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let image: SynthesisArrayImage = crate::persistence::load_json(path)?;
+        if image.format_version != IMAGE_FORMAT_VERSION {
+            return Err(format!(
+                "unsupported synthesis-array image version {} (expected {})",
+                image.format_version, IMAGE_FORMAT_VERSION
+            ));
+        }
+        if image.blocks.len() as u64 != image.config.capacity_blocks {
+            return Err(format!(
+                "invalid synthesis-array image: {} block slots for capacity {}",
+                image.blocks.len(), image.config.capacity_blocks
+            ));
+        }
+        Ok(Self { config: image.config, blocks: image.blocks })
     }
 
     /// Writes several blocks, modeling the array's real parallelism: the
@@ -187,6 +231,27 @@ mod tests {
         let mut config = SynthesisArrayConfig::new(block_size, capacity_blocks);
         config.write_latency = Duration::from_millis(5); // keep tests fast
         SynthesisArrayBlockDevice::new(config)
+    }
+
+    #[test]
+    fn saved_image_reopens_with_data_and_write_once_state_intact() {
+        let path = std::env::temp_dir().join(format!(
+            "nucle_blockdev_synthesis_persistence_{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut device = test_device(16, 4);
+        let data = vec![7u8; 16];
+        device.write_block(2, &data).unwrap();
+        device.save(&path).unwrap();
+
+        let mut reopened = SynthesisArrayBlockDevice::load(&path).unwrap();
+        assert_eq!(reopened.read_block(2).unwrap(), data);
+        assert!(matches!(
+            reopened.write_block(2, &[9u8; 16]),
+            Err(BlockDeviceError::AlreadyWritten { lba: 2 })
+        ));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

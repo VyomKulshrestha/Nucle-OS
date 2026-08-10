@@ -11,3 +11,5 @@ nucle_codec = { path = "../nucle_codec" }
 nucle_ecc = { path = "../nucle_ecc" }
 nucle_synth = { path = "../nucle_synth" }
 thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
