@@ -13,7 +13,7 @@
 //!
 //! The tradeoff their public reporting also describes: both encoding
 //! (write) and decoding (read) go through "a compact electronic device
-//! paired with a molecular-scale [nanopore] detector" -- one physical
+//! paired with a molecular-scale \[nanopore\] detector" -- one physical
 //! sensor, read serially, not the Atlas/imec array's "millions of
 //! individual synthesis sites" running in parallel. So unlike
 //! `SynthesisArrayBlockDevice`, this backend has no parallelism knob to

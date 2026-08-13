@@ -282,7 +282,7 @@ impl ReedSolomon {
     /// Data strands are evaluations of P(x) at x = 0, 1, ..., k-1.
     /// Parity strands are evaluations of P(x) at x = k, k+1, ..., k+n-1.
     ///
-    /// Inputs larger than [`MAX_BLOCK_SYMBOLS`] minus the parity count are
+    /// Inputs larger than `MAX_BLOCK_SYMBOLS` minus the parity count are
     /// split into independent stripes, each producing its own full set of
     /// parity strands — otherwise `x`-coordinates beyond 255 would wrap
     /// around a `u8` and collide with earlier ones.

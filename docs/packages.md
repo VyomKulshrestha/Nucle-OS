@@ -122,7 +122,7 @@ nucle package lock
       "name": "@nuclescript/presets",
       "version": "0.1.0",
       "import_source": "nuclescript/presets",
-      "checksum": "<sha256 of manifest.json + presets.nsl>"
+      "checksum": "<sha256 of package.json + presets.nsl>"
     }
   ]
 }
@@ -153,7 +153,7 @@ nucle package inspect "@nuclescript/presets"
 
 Manifest validation rules enforced:
 - **Core Fields**: Non-empty `name`, `version`, and `import` source.
-- **Export Entries**: Each export must specify a non-empty `name`, `description`, and a known `kind` (`PoolSchema`, `Pipeline`, or `RecoveryProfile`).
+- **Export Entries**: Each export must specify a non-empty `name`, `description`, and a known `kind` (`PoolSchema`, `Pipeline`, `RecoveryProfile`, or `Function`; snake-case spellings and `fn` are accepted aliases).
 - **Resolver Verification**: Each exported item must successfully resolve against the package's internal presets structure.
 
 Validate an import in a NucleScript program:

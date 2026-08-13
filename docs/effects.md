@@ -59,9 +59,11 @@ error: binding 'result' has Destructive effect and requires explicit hardware co
 
 Adding `confirm physical_key` to the `delete` inside `purge()` (not at the
 call site — the confirmation lives where the effect originates) makes both
-errors disappear. A (mutually) recursive function is resolved conservatively:
-if the effect can't be fully determined because it depends on itself, it's
-treated as `Destructive` and unconfirmed rather than silently `Pure`.
+errors disappear. Recursive and mutually recursive functions are resolved as
+a least fixed point: a recursive back-edge contributes the neutral `Pure`
+effect, while every concrete operation in the component is still joined. A
+genuinely pure recursive component therefore remains `Pure`; a cycle that
+contains a delete still resolves to `Destructive` and requires confirmation.
 
 See `docs/examples/failures/unconfirmed_function_delete.nsl` for a runnable
 version of this example, and `nucle_lang/tests/functions.rs` for the

@@ -36,7 +36,7 @@ service AcquisitionService {
 
     // Watches for status changes within MinKNOW. Status states are defined from MinknowStatus enum.
     // This is a bi-directional stream where the incoming response stream will return every time the status has changed
-    // and the request stream is used to stop the watcher. Refer to http://www.grpc.io/docs/tutorials/basic/python.html
+    // and the request stream is used to stop the watcher. Refer to <http://www.grpc.io/docs/tutorials/basic/python.html>
     // to see how bi-directional streaming works in grpc, but essentially when calling this function the user will have
     // to pass in a generator that will eventually yield a WatchForStatusChangeRequest(stop=True) to the cpp side.
     // A wrapper class for this is provided in the Python code.

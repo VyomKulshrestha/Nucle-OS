@@ -1,7 +1,7 @@
 //! A write-once block device modeled on the Atlas/imec approach: a dense
 //! electrochemical DNA-synthesis array on a CMOS ASIC. Per imec's public
-//! description of the partnership, the chip "orchestrat[es] and
-//! controll[s] millions of individual synthesis sites" -- real
+//! description of the partnership, the chip "orchestrat\[es\] and
+//! controll\[s\] millions of individual synthesis sites" -- real
 //! parallelism across many independent synthesis cells, but each cell
 //! physically synthesizes a strand base-by-base and, once synthesized,
 //! that strand can't be un-synthesized. That's the two defining

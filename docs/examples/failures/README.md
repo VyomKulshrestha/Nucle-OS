@@ -4,15 +4,22 @@ This directory documents standard failure modes, warnings, and error diagnostics
 
 ## 1. Codec Constraint Violations
 When encoding sequence data, if the sequence does not satisfy biological requirements (GC content 40-60%, homopolymers ≤ 3 nucleotides):
-- **Raw Fountain Codec**: Can generate homopolymer runs up to 30nt or extreme GC content (e.g. 20% GC) when unscreened.
-- **Screened Fountain Codec**: If screening budget (screening attempts) is exhausted without finding a valid strand, it fails with:
-  `Fountain encoding failed: max screening attempts reached`
+- **Raw Fountain Codec**: Can generate long homopolymer runs or extreme GC
+  content when unscreened (`nucle stress -s 256` currently observes runs up to
+  67nt on its pathological distributions).
+- **Screened Fountain Codec**: If the screening budget is exhausted before the
+  target droplet count is reached, the current encoder logs a warning and
+  returns the partial collection. A downstream decode may then fail with
+  `no strands to decode` or an insufficient-droplet error.
 
 ## 2. Synthesis and Sequencing Noise Failures
 When simulating imperfect hardware profiles (e.g. Oxford Nanopore or Illumina) without sufficient coverage depth or error correction:
 - **Low Coverage Depth**: Causes strand dropout. If dropout exceeds the Reed-Solomon parity strand budget, retrieval fails with:
   `Retrieve failed: ECC decoding failed` or `no data strands after ECC decode`
-- **High Base-Error Rate**: Substitutions and indels corrupt individual strands. Since TernaryCodec lacks packet headers for self-alignment and error correction, base mutations lead to:
+- **High Base-Error Rate**: Substitutions and indels corrupt individual
+  strands. The ternary decoder is strict, and indels change strand length; if
+  coverage consensus and outer-code redundancy cannot repair the damage,
+  retrieval fails with:
   `codec decoding failed: decoding error` or `content hash mismatch`
 
 ## 3. CRISPR Retrieval Failures
@@ -23,8 +30,8 @@ If primer design has cross-reactivity or melting temperature mismatch, CRISPR se
 ## 4. Runnable Failure-Mode Examples
 
 These `.nsl` programs are compiled by `nucle_lang`'s own test suite and are safe
-to run directly (`nucle run <path>`, `nucle check <path>` once available) to see
-the exact diagnostics a developer would hit:
+to inspect directly with `nucle check <path>` (or run with `nucle run <path>`,
+which stops at the same compile-time diagnostics):
 
 - [`missing_confirmation.nsl`](missing_confirmation.nsl) — a `Destructive`
   delete without the required `confirm physical_key` token. Fails type

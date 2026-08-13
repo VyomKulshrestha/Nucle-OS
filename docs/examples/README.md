@@ -9,6 +9,7 @@ nucle run docs/examples/store.nsl
 
 | Source file | Demonstrates |
 |---|---|
+| `hero.nsl` | Compact end-to-end language showcase used by the root README: Yin-Yang pool, probabilistic recovery, pipeline store, and exact roundtrip verification |
 | `minimal.nsl` | Smallest runnable NucleScript program: pool, store, retrieve |
 | `store.nsl` | Pool declaration plus store operation with tags and redundancy |
 | `retrieve_query.nsl` | Declarative retrieval query over stored metadata |
@@ -22,15 +23,19 @@ nucle run docs/examples/store.nsl
 | `probabilistic_recovery.nsl` | Probabilistic `Pool<P, E>` typing and consensus error propagation |
 | `effect_confirmations.nsl` | Synthesis, sequencing, and destructive effect confirmations |
 | `preset_imports.nsl` | Built-in preset imports for package registry readiness |
-| `yinyang_schema.nsl` | Future codec schema parsing with current-backend compatibility warning |
+| `yinyang_schema.nsl` | Yin-Yang pool schema executed through the supported VFS storage backend |
 | `control_flow.nsl` | Compile-time `if`/`for`: a boolean-combined error-rate condition picking a recovery branch, and a `for` loop unrolled into a `store` |
 | `archive_fn.nsl` | A reusable, `///`-documented `fn` wrapping `protect ... for ...`, plus a `test { ... }`/`assert` block verifying `consensus_vote` actually reduces the inferred error rate — run with `nucle test archive_fn.nsl`, or `nucle doc archive_fn.nsl` for its generated Markdown |
 | `result_fallback_store.nsl` | `Result<T, E>` + `?`: two functions storing the same file into different pools, each propagating a real VFS failure via `?` instead of aborting the run, plus a top-level binding holding a still-wrapped `Result` |
 | `generic_pool_recovery.nsl` | Generics: one `fn recover_from<P>(...)` called with a `Pool<Illumina>` and a `Pool<Nanopore>` argument in the same program — fails to type-check without a type parameter |
+| `explicit_type_args_and_file_param.nsl` | Explicit `::<Illumina>` type arguments plus a real `File` parameter value flowing into statement-form storage |
 | `match_result_fallback.nsl` | Pattern matching: `match attempt { Ok(file) => file, Err(reason) => ... }` branches on a caught `Result` directly inside one function — calling it twice in one run exercises both the `Ok` arm and the `Err` arm's fallback store |
+| `recovery_plan.nsl` | User-defined enums, payload binding, nested `Result`/enum matches, and exhaustive wildcard handling |
 | `closure_retry.nsl` | Closures: a genuinely higher-order `fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>)` that calls whatever closure it's given, and a `let`-bound closure that captures a `Result` binding from its enclosing function |
+| `effect_annotated_closure.nsl` | Effect-annotated `Fn(...)` types that preserve destructive confirmation requirements through indirect closure calls |
 
-`sample_a.txt` and `sample_b.txt` are small payloads used by the examples.
+`patient_records_2026.csv` and `sample_a.txt` through the other `sample_*.txt`
+files are small payloads used by the examples.
 
 Use `nucle plan <source.nsl>` for examples that demonstrate compile-time
 analysis, probabilistic typing, effects, optimizer notes, or the simulation

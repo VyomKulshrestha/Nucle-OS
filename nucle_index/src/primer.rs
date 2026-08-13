@@ -63,7 +63,7 @@ impl PrimerPair {
 
     /// Tag a data strand with this primer pair.
     ///
-    /// Result: [forward_primer][data][reverse_complement_of_reverse]
+    /// Result: `[forward_primer][data][reverse_complement_of_reverse]`
     pub fn tag_strand(&self, data: &DnaStrand) -> DnaStrand {
         let mut tagged = Vec::with_capacity(
             self.forward.len() + data.len() + self.reverse.len(),

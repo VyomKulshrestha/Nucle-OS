@@ -1,4 +1,4 @@
-// Schema accepts future codecs; current executable backend warns and maps to VFS
+// Yin-Yang is supported end to end by the VFS storage backend.
 pool archive: DnaPool {
     codec: YinYang,
     redundancy: 3x,
@@ -7,5 +7,5 @@ pool archive: DnaPool {
 
 store "sample_a.txt" into archive {
     redundancy: 3x,
-    tag: ["future-codec"]
+    tag: ["yin-yang"]
 }

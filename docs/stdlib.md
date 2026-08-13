@@ -43,9 +43,11 @@ consensus_vote(source, coverage: N)
 | **Result** | `Pool<Recovered, E%>`, where `E` is computed from `source`'s inferred error rate and `coverage` via `probabilistic::consensus_error_rate_percent` |
 
 Majority-vote across `coverage` independently-noisy copies of the same
-strand, correcting substitution/indel errors that Reed-Solomon parity
-alone can't (parity reconstructs a strand that's entirely *missing*, not
-one that came back *wrong but present*). See
+strand, correcting substitution/indel errors before the outer code. The
+current Reed-Solomon decoder can reconstruct known erasures and correct
+residual same-length wrong-but-present strands, but it cannot repair the
+length shifts introduced by indels; consensus alignment handles those first.
+See
 [`nucle_ecc::consensus`](../nucle_ecc/src/consensus.rs) for the real
 partial-order-alignment implementation this models the error-rate
 reduction of.

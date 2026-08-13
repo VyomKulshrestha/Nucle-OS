@@ -280,8 +280,9 @@ E>`'s existing `match`/`Ok`/`Err` machinery to run through the same
 general engine as a real user `enum` — not for `Result` to become
 literally an instance of the `enum` mechanism. `Expr::Ok`/`Expr::Err`
 stay their own dedicated, unprefixed `Expr` variants, untouched:
-`Err`'s payload has a bespoke string-literal-only restriction that
-doesn't generalize to arbitrary enum variants, and folding construction
+`Err`'s payload has a bespoke `Str`-typed restriction (literal, bound
+value, or `Str`-returning call) that doesn't generalize to arbitrary enum
+variants, and folding construction
 into one path would mean either a magic `enum_name == "Result"` special
 case or silently dropping that restriction. `Value::Result` similarly
 stays a distinct runtime representation; a new `Value::EnumInstance {
@@ -932,7 +933,37 @@ fn dna_delete(name: &str) -> Result<()>;
 
 **Per-tenant pool isolation.** A global `--tenant <name>`/`NUCLEOS_TENANT` resolves the pool directory to a `tenants/<name>/` subdirectory of whatever `--pool-dir`/`NUCLEOS_POOL_DIR`/the `.nucleos/` default would otherwise resolve to (`resolve_pool_dir` in `nucle_cli/src/main.rs`) — every existing command picks this up automatically with zero changes to its own body, since tenancy is purely an input-resolution concern, not something threaded through `nucle_vfs`'s business logic at all (`NucleOS`/`dna_write`/`dna_read`/etc. have no notion of "tenant" and never will). This is real isolation via separate storage, deliberately not a shared pool with per-file tenant tags and access filtering: each tenant gets its own wholly independent `state.json`/`audit.log`/`key.json`/`config.json`, so there's no shared mutable state for a filtering bug to leak across tenants with, and every existing feature (persistence, concurrency safety, capacity limits, the audit log, encryption at rest, integrity scanning, the metrics exporter) already works per-tenant for free, unmodified. Omitting `--tenant` is byte-for-byte today's pre-tenancy behavior, unchanged. A tenant name becomes a literal path component, so `validate_tenant_name` rejects anything empty, `.`/`..`, or containing a path separator, before it ever reaches `std::path::Path::join` — a real path-traversal footgun otherwise, not just a cosmetic check. `nucle tenants` lists the tenant names that already have data (a plain `read_dir` over the base directory's `tenants/` folder, ignoring `--tenant` itself, since this command's job is enumerating tenants rather than operating inside one).
 
-**Rewrite/versioning.** `dna_write` on a filename that already exists used to be rejected outright ("file '<name>' already exists") — genuinely write-once at the file level, independent of whether the underlying medium (in `nucle_blockdev`'s terms) is write-once or rewritable. That's gone: a repeat write now stores the new content as the *next version* rather than erroring. `Catalog` gained a `version_history: HashMap<filename, Vec<DnaFile>>` alongside its existing current-only `files`/`name_index` maps — `register()` archives whatever was current into that filename's history instead of deleting it, so `list()`/`dna_stat()`/`dna_list()` still only ever see one entry per filename (the current version), not one per historical write, with zero change to their own callers. Nothing physically disappears on a rewrite: the new version's strands land under a fresh, content-addressed `file_id` and a fresh primer (both already naturally unique per write, before this feature existed), so the old version's strands simply keep occupying their own, still-addressable slot in the pool — a rewrite is additive to the pool's real footprint, not a strand-for-strand swap, matching a real "write another copy, don't erase the old one" medium far more honestly than an in-place mutation would. `dna_history(filename)` lists every version oldest-first, ending with the current one; `dna_read_version(filename, version)` runs the exact same CRISPR/consensus/RS/codec decode pipeline `dna_read` does, just against a specific version's own `DnaFile` (both share a new private `decode_dna_file` rather than duplicating that pipeline). `dna_delete` was changed to remove the *entire* version chain (`Catalog::take_all_versions`, `DeleteResult::versions_removed`) — a history entry with no current version to point back to would be an orphan nothing else in this crate expects, so there's no "delete just the current version, keep history around headless" mode. A superseded version's search index entry is dropped at write time (search should only ever surface a filename's current version, the same "one visible entry per name" principle `Catalog::register` already applies), while its catalog/pool data stays fully intact.
+### Rewrite and versioning
+
+`dna_write` on a filename that already exists used to be rejected outright
+("file '<name>' already exists") — genuinely write-once at the file level,
+independent of whether the underlying medium (in `nucle_blockdev`'s terms) is
+write-once or rewritable. That's gone: a repeat write now stores the new
+content as the *next version* rather than erroring. `Catalog` gained a
+`version_history: HashMap<filename, Vec<DnaFile>>` alongside its existing
+current-only `files`/`name_index` maps — `register()` archives whatever was
+current into that filename's history instead of deleting it, so `list()`/
+`dna_stat()`/`dna_list()` still only ever see one entry per filename (the
+current version), not one per historical write, with zero change to their own
+callers. Nothing physically disappears on a rewrite: the new version's strands
+land under a fresh, content-addressed `file_id` and a fresh primer (both already
+naturally unique per write, before this feature existed), so the old version's
+strands simply keep occupying their own, still-addressable slot in the pool —
+a rewrite is additive to the pool's real footprint, not a strand-for-strand
+swap, matching a real "write another copy, don't erase the old one" medium far
+more honestly than an in-place mutation would. `dna_history(filename)` lists
+every version oldest-first, ending with the current one;
+`dna_read_version(filename, version)` runs the exact same CRISPR/consensus/RS/
+codec decode pipeline `dna_read` does, just against a specific version's own
+`DnaFile` (both share a new private `decode_dna_file` rather than duplicating
+that pipeline). `dna_delete` removes the *entire* version chain
+(`Catalog::take_all_versions`, `DeleteResult::versions_removed`) — a history
+entry with no current version to point back to would be an orphan nothing else
+in this crate expects, so there's no "delete just the current version, keep
+history around headless" mode. A superseded version's search index entry is
+dropped at write time (search should only ever surface a filename's current
+version, the same "one visible entry per name" principle `Catalog::register`
+already applies), while its catalog/pool data stays fully intact.
 
 Migration and rename obey that same lifecycle. `migrate_object` reads the current bytes and writes the re-encoded representation as the next version; it no longer deletes first, so the pre-migration versions remain readable. `dna_rename` changes the logical name on the current record and every historical record while retaining archive IDs, primers, and pool strands, and refreshes the current search entry under the new name. Collisions are rejected before mutation.
 

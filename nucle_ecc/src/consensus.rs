@@ -8,7 +8,7 @@
 //! Typical coverage: 5–20× per strand in DNA storage systems.
 //!
 //! Consensus is built with **partial-order alignment (POA)**: reads are
-//! folded one at a time into a single growing DAG (a [`PoaGraph`]) rather
+//! folded one at a time into a single growing DAG (a `PoaGraph`) rather
 //! than each read being realigned pairwise against one arbitrarily-picked
 //! "reference" read. That distinction matters once a single read carries
 //! *several* indels (routine under Nanopore-grade noise on a 150+nt
@@ -653,7 +653,7 @@ impl PoaGraph {
 ///
 /// # Algorithm
 ///
-/// 1. Seed a [`PoaGraph`] from the read whose length is closest to the
+/// 1. Seed a `PoaGraph` from the read whose length is closest to the
 ///    group's median (a reasonable "typical" starting point).
 /// 2. Fold every other read into the graph one at a time: align it
 ///    against the graph built so far, reinforcing nodes it agrees with

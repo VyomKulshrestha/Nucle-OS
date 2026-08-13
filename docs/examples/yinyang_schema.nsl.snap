@@ -1,5 +1,5 @@
->// Schema accepts future codecs; current executable backend warns and maps to VFS
-#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// Yin-Yang is supported end to end by the VFS storage backend.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
 >pool archive: DnaPool {
 #^^^^ source.nuclescript keyword.control.nuclescript
 #    ^ source.nuclescript
@@ -44,14 +44,14 @@
 #              ^^ source.nuclescript
 #                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
 #                  ^^ source.nuclescript
->    tag: ["future-codec"]
+>    tag: ["yin-yang"]
 #^^^^ source.nuclescript
 #    ^^^ source.nuclescript keyword.control.nuclescript
 #       ^^^ source.nuclescript
 #          ^ source.nuclescript string.quoted.double.nuclescript
-#           ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
-#                       ^ source.nuclescript string.quoted.double.nuclescript
-#                        ^^ source.nuclescript
+#           ^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^^ source.nuclescript
 >}
 #^^ source.nuclescript
 >

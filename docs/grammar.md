@@ -536,10 +536,11 @@ let plan: RecoveryPlan = RecoveryPlan::Fallback
 - **Deliberate non-unification with `Result`/`Ok`/`Err`**: `enum` is a
   parallel mechanism, not `Result`'s generalization. `Ok(...)`/`Err(...)`
   keep their own dedicated, unprefixed construction syntax and
-  `Value::Result`'s own runtime representation, untouched — `Err`'s
-  string-literal-only payload restriction doesn't generalize to a real
-  `enum`'s variants, and every existing `.nsl` file's bare `Ok(x)`/
-  `Err("msg")` needed to keep working with zero parser changes. The
+  `Value::Result`'s own runtime representation, untouched. `Err(...)`
+  requires a `Str`-typed payload (a literal, bound `Str`, or `Str`-returning
+  call), while a user enum variant uses whatever payload type its declaration
+  specifies; every existing `.nsl` file's bare `Ok(x)`/`Err("msg")` keeps
+  working unchanged. The
   unification the user-facing behavior actually gets is entirely at the
   **matching** layer (below) — construction and runtime storage for
   `Result` and a user `enum` stay genuinely distinct.

@@ -100,7 +100,7 @@ resumable job lifecycle.
 
 ## Verification snapshot
 
-Measured from local `main` on 10 August 2026:
+Measured from local `main` on 13 August 2026:
 
 - `cargo build --workspace --all-targets`: pass.
 - `cargo test --workspace --no-fail-fast`: 729 discovered, 728 passed, one

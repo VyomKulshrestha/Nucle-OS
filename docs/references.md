@@ -23,17 +23,25 @@ The paper also introduced **overlapping segments** with 75-nt windows sharing a 
 | Homopolymer-free guarantee | Enforced structurally by the rotation rule; validated by `nucle_codec::constraints::ConstraintValidator` |
 | Overlapping windows | `TernaryConfig { overlap: true, segment_size: 75, overlap_size: 25 }` — toggled via `TernaryConfig::with_overlap()` |
 | GC content targeting | `ConstraintConfig` with `gc_min: 0.40, gc_max: 0.60` — strands outside range are flagged |
-| Information density | Achieved **1.58 bits/nt** theoretical; benchmarked at **1.156 bits/nt** effective (with headers/framing) via `nucle bench` |
+| Information density | **1.58 bits/nt** theoretical; the current built-in 89-byte `nucle bench` payload measures **1.099 bits/nt** without overlap and **0.628 bits/nt** with overlap |
 
-### Density gap: 1.156 vs 1.58 bits/nt
+### Density gap: 1.099 vs 1.58 bits/nt
 
-The theoretical limit of the ternary rotating cipher is log₂(3) ≈ 1.58 bits/nt — each nucleotide encodes one trit. In practice, NucleOS measures **1.156 bits/nt** effective density. The gap comes from three sources:
+The theoretical limit of the ternary rotating cipher is log₂(3) ≈ 1.58
+bits/nt — each nucleotide encodes one trit. On the current 89-byte built-in
+benchmark payload, NucleOS measures **1.099 bits/nt** with overlap disabled;
+the default overlap configuration measures **0.628 bits/nt** because it emits
+additional overlapping segments. The non-overlap gap comes from three
+sources:
 
 1. **Segment framing** — each strand carries a segment index header (4 bytes = 16 nt) that doesn't encode user data but is required for reassembly.
 2. **Length prefix** — a 4-byte big-endian length header is prepended to the payload so the decoder knows the original file size.
 3. **Padding** — the last segment is zero-padded to the fixed segment size, wasting nucleotides on small inputs.
 
-These overheads are proportionally smaller on larger files. A 1 MB file achieves closer to ~1.45 bits/nt. This is consistent with Goldman et al.'s reported results — they achieved ~1.28 bits/nt on their 739 KB test file after accounting for indexing and overlap redundancy.
+These overheads are proportionally smaller on larger files. Goldman et al.
+reported lower effective density than the theoretical limit once indexing and
+overlap redundancy were included; NucleOS therefore reports the measured
+effective figure and labels which overlap configuration produced it.
 
 This gap is **not a bug** — it's the real engineering cost of making DNA storage work. Any production codec needs headers for reassembly, and reporting effective density (not theoretical) is the honest metric.
 
@@ -77,10 +85,16 @@ Strands that violate biological constraints (GC content, homopolymers) are simpl
 
 NucleOS's fountain codec uses a raw 2-bit nucleotide mapping (`A=00, T=01, G=10, C=11`) for the byte-to-DNA conversion. Unlike the ternary cipher (which eliminates homopolymers by construction), the fountain codec relies on **post-hoc constraint screening** — exactly as described in the Erlich paper.
 
-With `screen_constraints: true` (the default), each generated droplet is checked against biological constraints. Invalid strands are discarded and the encoder tries the next PRNG seed. The rateless property guarantees that valid strands exist, but the rejection rate depends on the data distribution:
+With `screen_constraints: true` (the default), each generated droplet is
+checked against biological constraints. Invalid strands are discarded and the
+encoder tries the next PRNG seed until it fills the target or exhausts
+`num_droplets * max_screening_attempts`. The current encoder then returns the
+partial collection (and logs a warning) rather than raising an encode error;
+downstream decode fails if too few usable droplets were produced. The rejection
+rate depends strongly on the data distribution:
 
 - **Random / binary data**: ~30-50% rejection rate, works well
-- **Highly structured data** (e.g., all-zero, short ASCII): can produce heavily biased nucleotide distributions where most droplets fail GC checks, causing slow encoding or encoder timeout
+- **Highly structured data** (e.g., all-zero, short ASCII): can produce heavily biased nucleotide distributions where most droplets fail GC checks, causing slow encoding or screening-budget exhaustion
 
 This is a known limitation of the 2-bit mapping approach. A production system would use a more sophisticated byte-to-nucleotide scheme (e.g., the Yin-Yang codec from Ping et al. 2022) that provides better GC balance by construction.
 
@@ -110,7 +124,7 @@ The Yin-Yang codec encodes **2 bits per nucleotide** using two complementary map
 | Set intersection | `intersect()` — yields exactly 1 nucleotide per (bit_a, bit_b, prev) triple |
 | Bitstream splitting | Each byte → 4 nucleotides: high bit of each pair → Yang, low bit → Yin |
 | Rule selection (paper uses 1,536 configs) | NucleOS uses a fixed canonical rule; the paper's rule search is omitted for simplicity |
-| Information density | **2.0 bits/nt** theoretical; benchmarked at **1.855 bits/nt** effective (with index headers) |
+| Information density | **2.0 bits/nt** theoretical; **1.798 bits/nt** on the current 89-byte `nucle bench` payload and **1.855 bits/nt** in `nucle stress -s 256` |
 
 ### Stress test findings
 
