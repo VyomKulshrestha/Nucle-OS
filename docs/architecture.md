@@ -2,33 +2,34 @@
 
 ## Design Philosophy
 
-Nucle-OS follows the same bottom-up layered architecture as FerrumOS(https://github.com/VyomKulshrestha/Ferrum-OS). Each layer is a separate Rust crate with well-defined responsibilities and clean interfaces to adjacent layers. Dependencies flow strictly upward — lower layers never depend on higher layers.
+Nucle-OS follows the same bottom-up layered architecture as [FerrumOS](https://github.com/VyomKulshrestha/Ferrum-OS). Each layer is a separate Rust crate with well-defined responsibilities and clean interfaces to adjacent layers. Dependencies flow toward foundational crates — lower layers never depend on higher application layers.
 
 ## Layer Dependency Graph
 
-```
-nucle_cli
-    ├── nucle_agent
-    │       └── nucle_vfs
-    │               └── nucle_index
-    │                       └── nucle_ecc
-    │                               ├── nucle_codec
-    │                               └── nucle_synth
-    │                                       └── nucle_codec
-    ├── nucle_hardware
-    │       └── nucle_lang (below)
-    └── nucle_lang
-            ├── nucle_vfs
-            │       └── nucle_index
-            │               └── nucle_ecc
-            │                       ├── nucle_codec
-            │                       └── nucle_synth
-            │                               └── nucle_codec
-            ├── nucle_codec
-            └── nucle_synth
+```text
+nucle-cli
+├── nucle_agent ───────────────→ nucle_vfs
+├── nucle_blockdev ────────────→ nucle_codec, nucle_ecc, nucle_synth
+├── nucle_hardware ────────────→ nucle_lang
+├── nucle_lang ────────────────→ nucle_vfs, nucle_codec, nucle_synth
+└── direct core dependencies ──→ nucle_codec, nucle_ecc, nucle_index,
+                                 nucle_synth, nucle_vfs
+
+nucle_lsp ─────────────────────→ nucle_lang
+nucle_playground ──────────────→ nucle_demo_core, nucle_lang
+nucle_wasm ────────────────────→ nucle_demo_core, nucle_lang
+nucle_demo_core ───────────────→ nucle_codec, nucle_ecc, nucle_synth
+
+nucle_vfs ─────────────────────→ nucle_index, nucle_ecc, nucle_codec, nucle_synth
+nucle_index ───────────────────→ nucle_ecc, nucle_codec, nucle_synth
+nucle_ecc ─────────────────────→ nucle_codec, nucle_synth
+nucle_synth ───────────────────→ nucle_codec
+nucle_codec                     (foundation)
 ```
 
-Dependencies flow strictly downward. No layer ever imports from a layer above it.
+This graph reflects normal (non-dev) dependencies from `cargo metadata`.
+Dependencies flow toward lower-level crates; no core layer imports a higher
+application layer.
 
 ## NucleScript Language Layer
 
@@ -169,7 +170,7 @@ undeclared-name mistakes, a "did you mean X?" suggestion via edit-distance
 matching against names actually in scope. `nucle check` renders this as a
 rustc-style snippet — `file:line:column`, the offending source line, and a
 `^^^` underline — and the playground API exposes the same structured data
-as JSON, so both a CLI and a future editor integration read from one
+as JSON, so both the CLI and current editor integration read from one
 diagnostic shape, not two that can drift.
 
 > See [docs/grammar.md](grammar.md) for the full formal syntax reference,
@@ -833,7 +834,18 @@ DNA → [Basecalling] → [Clustering] → [Consensus] → [Inner decode] → [O
 
 ### Current status
 
-The outer code (RS strand-level erasure recovery) and the consensus stage are both implemented and wired together in `dna_read`. The ternary decoder is still strict — it rejects a noise-corrupted strand rather than attempting soft decoding, and RS alone only recovers a strand that's entirely missing, never one that survived corrupted — but neither of those strands ever reaches the decoder directly anymore: `dna_write` records which stored strands are coverage copies of the same logical strand (via `PoolEntry::source_index`), and `dna_read` groups them and runs `nucle_ecc::consensus::build_consensus` per group before RS decode, correcting substitution errors regardless of which individual copy has them. A logical strand with zero surviving copies still becomes an erasure for RS, same as before. This requires actual sequencing coverage (`coverage_depth > 1` in `SimulationConfig`) to have multiple independent reads to vote across — a single read has nothing to vote against.
+The consensus stage and combined error-and-erasure Reed-Solomon outer code are
+both implemented and wired together in `dna_read`. The ternary decoder remains
+strict — it rejects a noise-corrupted strand rather than attempting soft
+decoding — so `dna_write` records which stored strands are coverage copies of
+the same logical strand (via `PoolEntry::source_index`), and `dna_read` groups
+them and runs `nucle_ecc::consensus::build_consensus` per group before RS
+decode. Consensus corrects substitution/indel noise across copies;
+Berlekamp-Welch then corrects residual same-length wrong-but-present strands
+and reconstructs known missing strands within the bound
+`2*errors + erasures <= parity_count`. Actual consensus still requires
+sequencing coverage (`coverage_depth > 1` in `SimulationConfig`) — a single
+read has nothing to vote against.
 
 **Illumina worked first; Nanopore required several additional fixes before it also passed.** The historical investigation is retained here because each incorrect intermediate diagnosis produced a useful regression test. First diagnosis: `build_consensus` voted by raw position, which breaks under indels. Fixed by aligning each read to the reference before voting (Needleman-Wunsch). Second, bigger diagnosis: `nucle_index::primer::PrimerPair::{matches_forward, untag_strand}` matched primers by exact position, so a single indel landing inside a primer — routine at Nanopore's ~4%/base indel rate — made CRISPR retrieval drop the whole strand before it ever reached consensus; this, not the voting algorithm, was the dominant blocker. Fixed via bounded edit-distance boundary search (`nucle_index::primer::tests::test_untag_tolerates_*`).
 

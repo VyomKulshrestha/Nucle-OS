@@ -123,7 +123,7 @@ Implements multiple codec strategies:
 ### Layer 3 — Error Correction (`nucle_ecc`)
 
 DNA is a noisy channel with insertion/deletion-heavy error profiles — unlike disk or network. This layer provides:
-- **Reed-Solomon outer code** — strand-level erasure recovery
+- **Reed-Solomon outer code** — combined strand-level error and erasure recovery
 - **Fountain/LT erasure codes** — rateless recovery from arbitrary strand loss
 - **Consensus sequencing** — majority voting across multiple strand copies
 - **Full repair pipeline** — orchestrated multi-stage error correction
@@ -198,7 +198,7 @@ $ nucle bench
 ║ dna-fountain         │    0.824 │  26.0% │   29 │  ✗  │  ✓   ║
 ╚══════════════════════════════════════════════════════════════════╝
   Best density:    yin-yang (1.798 bits/nt)
-  Fastest encode:  yin-yang (5 μs)
+  Fastest encode:  yin-yang (4 μs)
 
   Bio = all strands pass biological constraints (GC 40–60%, homopolymer ≤ 3)
   R/T = encode → decode roundtrip produces identical data
@@ -225,10 +225,11 @@ $ nucle bench
 `nucle bench` benchmarks codecs in isolation; `nucle benchmark` runs the real
 write → simulate-noise → read pipeline against the standard fixtures in
 `docs/examples/fixtures/`, reporting GC distribution, homopolymer violations,
-and a real Monte-Carlo recovery probability and cost estimate — not
-placeholders:
+the observed recovery result, and a profile-based synthesis-cost estimate —
+not placeholders. (`nucle bench` and the playground's Benchmark Explorer are
+the commands that run the 20-trial Monte-Carlo recovery estimate.)
 
-The figures below were re-measured on 10 August 2026 from the current local
+The figures below were re-measured on 13 August 2026 from the current local
 `main` build. Encoding timings are machine-dependent; density, GC,
 homopolymer, error-rate, recovery, strand-count, and cost fields are the
 reproducible comparison values.
@@ -250,8 +251,8 @@ $ nucle benchmark --profile pristine -r 4
 
 Under a noisy channel like Illumina, this used to fail recovery: the ternary
 decoder is strict and rejects substitution-corrupted strands rather than
-soft-decoding them, and Reed-Solomon alone only recovers a strand that's
-entirely missing, never one that survived corrupted. The fix is consensus
+soft-decoding them, and the Reed-Solomon implementation at that point was
+erasure-only. The first fix was consensus
 voting across coverage copies — sequencing each strand multiple times and
 majority-voting corrects substitution errors regardless of which copy has
 them — and it's now wired into the real `dna_read` path (`nucle_ecc::consensus`
@@ -376,45 +377,48 @@ still FAILs — expected, not a regression, since 4 parity strands is
 genuinely low redundancy at Nanopore's per-base rate, and raising `-r`
 is exactly the intended knob for that tradeoff, not a bug to fix.
 
-### End-to-End Roundtrip: Encode → Noise → Recover
+### Codec Roundtrip and Noise Simulation
 
 ```
-$ nucle encode README.md -o readme.dna
-✓ Encoded README.md → readme.dna (2277 strands)
+$ nucle encode docs/examples/fixtures/small_text.txt -o small_text.dna
+✓ Encoded docs/examples/fixtures/small_text.txt → small_text.dna (4 strands)
 
-$ nucle simulate README.md -p illumina
+$ nucle simulate docs/examples/fixtures/small_text.txt -p illumina
 ╔══════════════════════════════════════╗
 ║     Synthesis Simulation Results     ║
 ╠══════════════════════════════════════╣
 ║ Profile:                    illumina ║
 ║ Coverage:                          1×║
-║ Input:                  2277 strands ║
-║ Output:                 2277 strands ║
-║ Error rate:                  0.37%   ║
-║ Surviving:                   96.3%   ║
+║ Input:                         4 strands ║
+║ Output:                        4 strands ║
+║ Error rate:                  0.2058% ║
+║ Surviving:                    75.0%  ║
 ╚══════════════════════════════════════╝
 
-$ nucle decode readme.dna -o recovered.txt -s 56915
-✓ Decoded readme.dna → recovered.txt (56915 bytes)
+$ nucle decode small_text.dna -o recovered.txt -s 96
+✓ Decoded small_text.dna → recovered.txt (96 bytes)
 ```
 
-**56,915 bytes → 2,277 DNA strands × 162 nt avg = 368,874 nucleotides. Illumina noise: 0.37% error rate, 3.7% strand loss — 100% data recovery.**
+`encode`/`decode` above prove the codec-only roundtrip. `simulate` separately
+reports a deterministic sample from the selected channel; it does not write a
+noisy `.dna` file for the following `decode` command. Use `nucle benchmark`
+(shown above) or `nucle pipeline` for an actual noise → ECC → recovery result.
 
 ### Realistic Sequencing: 10× Coverage with Consensus
 
 Real sequencing runs at 10–50× coverage — you sequence the pool many times and consensus-vote across copies. This is the realistic scenario:
 
 ```
-$ nucle simulate README.md -p illumina -c 10
+$ nucle simulate docs/examples/fixtures/small_text.txt -p illumina -c 10
 ╔══════════════════════════════════════╗
 ║     Synthesis Simulation Results     ║
 ╠══════════════════════════════════════╣
 ║ Profile:                    illumina ║
 ║ Coverage:                         10×║
-║ Input:                  2277 strands ║
-║ Output:                22770 strands ║
-║ Error rate:                  0.36%   ║
-║ Surviving:                   96.1%   ║
+║ Input:                         4 strands ║
+║ Output:                       40 strands ║
+║ Error rate:                  0.2822% ║
+║ Surviving:                    87.5%  ║
 ╚══════════════════════════════════════╝
 ```
 
@@ -423,23 +427,24 @@ $ nucle simulate README.md -p illumina -c 10
 ### Full Stack: Store with ECC + CRISPR
 
 ```
-$ nucle store README.md -r 4
-✓ Stored 'README.md' (56915 bytes → 2277 data + 40 parity = 2317 strands,
-  1.02× redundancy, primer=P0000)
+$ nucle store docs/examples/fixtures/small_text.txt -r 4
+✓ Stored 'docs/examples/fixtures/small_text.txt' (96 bytes → 4 data + 4 parity = 8 strands,
+  2.00× redundancy, primer=P0000, version=1)
 
 ╔══════════════════════════════════════╗
 ║         NucleOS Pool Status          ║
 ╠══════════════════════════════════════╣
 ║ Files:               1               ║
-║ Total strands:    2317               ║
-║ Data strands:     2277               ║
-║ Parity strands:     40               ║
-║ Nucleotides:    487474               ║
-║ Avg strand len:    210 nt            ║
-║ Redundancy:      1.02×              ║
+║ Total strands:       8               ║
+║ Data strands:        4               ║
+║ Parity strands:      4               ║
+║ Nucleotides:      3560               ║
+║ Avg strand len:    445 nt            ║
+║ Redundancy:      2.00×              ║
+║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   README.md (56915 B, 2277d+40p strands)║
+║   docs/examples/fixtures/small_text.txt (ID: archive-495f, 96 B, 4d+4p strands, 2.0×)║
 ╚══════════════════════════════════════╝
 ```
 
