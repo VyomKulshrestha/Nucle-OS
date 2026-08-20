@@ -316,7 +316,6 @@ impl std::fmt::Display for SimulationStep {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::*;
 
     #[test]
     fn simulation_backend_emits_probabilistic_steps() {

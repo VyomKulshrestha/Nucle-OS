@@ -23,7 +23,7 @@ use std::fmt;
 ///
 /// These parameters are tuned to match real-world synthesis and
 /// sequencing platform requirements.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConstraintConfig {
     /// Minimum GC content fraction (default: 0.40).
     pub gc_min: f64,

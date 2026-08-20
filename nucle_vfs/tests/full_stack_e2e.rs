@@ -5,7 +5,8 @@
 //!
 //! Also tests the agent interface for natural language → execution.
 
-use nucle_vfs::syscall::NucleOS;
+use nucle_codec::constraints::ConstraintValidator;
+use nucle_vfs::syscall::{CodecKind, NucleOS};
 use nucle_agent::executor::Executor;
 use nucle_agent::planner::Planner;
 use nucle_agent::tools::ToolName;
@@ -207,29 +208,158 @@ fn test_migrate_preserves_history() {
     assert_eq!(recovered, original);
 }
 
-/// Migrating to an unsupported codec must fail clearly, not silently no-op:
-/// NucleOS's storage pipeline implements Ternary and YinYang end-to-end,
-/// but not the raw Fountain codec.
+/// Fountain migration is additive in both directions: each representation
+/// keeps its own codec metadata and remains independently readable.
 #[test]
-fn test_migrate_rejects_unsupported_codec() {
+fn test_migrate_to_and_from_fountain_preserves_codec_history() {
     let mut os = NucleOS::new(10);
-    os.dna_write("codec_migrate.txt", b"codec migration test", 2).unwrap();
+    let original = b"codec migration test";
+    os.dna_write("codec_migrate.txt", original, 2).unwrap();
 
-    let result = nucle_vfs::migrate::migrate_object(&mut os, "codec_migrate.txt", None, Some("fountain"));
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("not supported"));
+    let fountain = nucle_vfs::migrate::migrate_object(
+        &mut os,
+        "codec_migrate.txt",
+        None,
+        Some("fountain"),
+    ).unwrap();
+    assert_eq!(fountain.codec, "dna-fountain");
 
-    // Migrating to a genuinely supported codec should work and actually
-    // switch the file's stored codec, not just accept the name.
-    let result = nucle_vfs::migrate::migrate_object(
+    let yin_yang = nucle_vfs::migrate::migrate_object(
         &mut os,
         "codec_migrate.txt",
         None,
         Some("yin-yang"),
+    ).unwrap();
+    assert_eq!(yin_yang.codec, "yin-yang");
+
+    let history = os.dna_history("codec_migrate.txt");
+    assert_eq!(
+        history.iter().map(|version| version.codec.as_str()).collect::<Vec<_>>(),
+        vec!["ternary-rotating-cipher", "dna-fountain", "yin-yang"]
     );
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().codec, "yin-yang");
-    assert_eq!(os.dna_read("codec_migrate.txt").unwrap(), b"codec migration test");
+    for version in 1..=3 {
+        assert_eq!(os.dna_read_version("codec_migrate.txt", version).unwrap(), original);
+    }
+}
+
+/// Unsupported migration input must fail before adding a version or changing
+/// the current representation.
+#[test]
+fn test_migrate_rejects_unsupported_codec_without_mutating_history() {
+    let mut os = NucleOS::new(10);
+    os.dna_write("codec_migrate.txt", b"codec migration test", 2).unwrap();
+
+    let result = nucle_vfs::migrate::migrate_object(
+        &mut os,
+        "codec_migrate.txt",
+        None,
+        Some("imaginary"),
+    );
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("not supported"));
+    assert_eq!(os.dna_history("codec_migrate.txt").len(), 1);
+    assert_eq!(
+        os.catalog.get_by_name("codec_migrate.txt").unwrap().codec,
+        "ternary-rotating-cipher"
+    );
+}
+
+#[test]
+fn test_fountain_vfs_rejects_empty_input_without_registering_a_file() {
+    let mut os = NucleOS::new(10);
+    let result = os.dna_write_with_codec(
+        "empty.bin",
+        b"",
+        2,
+        nucle_vfs::syscall::CodecKind::Fountain,
+    );
+
+    assert!(result.unwrap_err().contains("empty input data"));
+    assert!(os.catalog.get_by_name("empty.bin").is_none());
+    assert_eq!(os.dna_stat().total_strands, 0);
+}
+
+#[test]
+fn test_fountain_pool_persists_screened_config_and_recovers_known_erasures() {
+    let mut os = NucleOS::new(10);
+    let original: Vec<u8> = (0..=255).collect();
+    os.dna_write_with_codec("screened.bin", &original, 4, CodecKind::Fountain)
+        .unwrap();
+
+    let file = os.catalog.get_by_name("screened.bin").unwrap().clone();
+    let config = file
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.fountain_config.as_ref())
+        .expect("Fountain parameters must be persisted per representation");
+    assert!(config.screen_constraints);
+    let persisted_config = config.clone();
+
+    let state_dir = std::env::temp_dir().join(format!(
+        "nucle_vfs_fountain_metadata_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&state_dir);
+    os.persist(&state_dir).unwrap();
+    let reopened = NucleOS::open(&state_dir, 10).unwrap();
+    assert_eq!(
+        reopened
+            .catalog
+            .get_by_name("screened.bin")
+            .unwrap()
+            .manifest
+            .as_ref()
+            .unwrap()
+            .fountain_config
+            .as_ref(),
+        Some(&persisted_config)
+    );
+    let _ = std::fs::remove_dir_all(&state_dir);
+
+    let primer = os.primers.get(&file.primer_id).unwrap();
+    let validator = ConstraintValidator::new(config.constraint_config.clone());
+    for entry in os.pool.get_file_strands(&file.file_id) {
+        if entry.is_parity {
+            continue;
+        }
+        let core = primer.untag_strand(&entry.strand).unwrap();
+        assert!(
+            validator.is_valid(&core),
+            "every stored Fountain droplet must pass its persisted screen"
+        );
+        assert!(
+            validator.is_valid(&entry.strand),
+            "the primer-tagged physical Fountain strand must also pass the screen"
+        );
+    }
+
+    let data_ids: Vec<u64> = os
+        .pool
+        .get_file_strand_ids(&file.file_id)
+        .into_iter()
+        .filter(|id| !os.pool.get_strand(*id).unwrap().is_parity)
+        .collect();
+    for index in [0, 5, 11, 20] {
+        assert!(os.pool.remove_strand(data_ids[index]));
+    }
+
+    assert_eq!(os.dna_read("screened.bin").unwrap(), original);
+}
+
+#[test]
+fn test_fountain_pool_extension_adds_droplets_as_a_readable_new_version() {
+    let mut os = NucleOS::new(10);
+    let original = b"rateless Fountain pools can create later droplet batches";
+    let first = os
+        .dna_write_with_codec("extend.bin", original, 3, CodecKind::Fountain)
+        .unwrap();
+    let extended = os.dna_extend_fountain("extend.bin", 10).unwrap();
+
+    assert_eq!(extended.version, 2);
+    assert_eq!(extended.data_strand_count, first.data_strand_count + 10);
+    assert_eq!(os.dna_history("extend.bin").len(), 2);
+    assert_eq!(os.dna_read_version("extend.bin", 1).unwrap(), original);
+    assert_eq!(os.dna_read_version("extend.bin", 2).unwrap(), original);
 }
 
 /// Recovery manifest test: verify that reading a file populates the last recovery manifest correctly.

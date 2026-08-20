@@ -14,14 +14,14 @@
 //!
 //! ## Properties
 //!
-//! - **Rateless**: Can generate unlimited encoded strands
+//! - **Rateless**: Can generate deterministic continuation batches on demand
 //! - **Near-optimal density**: ~1.57 bits/nucleotide
-//! - **Erasure resilient**: Any sufficient subset of strands can reconstruct
+//! - **Erasure resilient**: Any full-rank surviving equation set reconstructs
 //! - **Constraint-aware**: Rejects strands violating biological constraints
 //!
 //! ## Decoding
 //!
-//! Uses belief propagation (peeling decoder):
+//! Uses belief propagation (peeling decoder) with GF(2) elimination fallback:
 //! 1. Find a droplet that XOR'd only one segment → that segment is solved
 //! 2. XOR the solved segment out of all other droplets
 //! 3. Repeat until all segments are solved
@@ -42,7 +42,7 @@ use serde::{Serialize, Deserialize};
 // ---------------------------------------------------------------------------
 
 /// Configuration for the DNA Fountain codec.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FountainConfig {
     /// Size of each data segment in bytes.
     /// Smaller = more segments = more flexible XOR combinations.
@@ -74,7 +74,7 @@ impl Default for FountainConfig {
         Self {
             segment_size: 16,  // 16 bytes per segment
             overhead: 1.50,    // 50% overhead — screening rejects some strands
-            max_screening_attempts: 1000,
+            max_screening_attempts: 10_000,
             screen_constraints: true,  // Enforce biological constraints (per Erlich 2017)
             constraint_config: ConstraintConfig::default(),
             seed: 42,
@@ -194,7 +194,19 @@ pub struct FountainCodec {
     config: FountainConfig,
 }
 
+/// A deterministic continuation of a Fountain stream.
+///
+/// Call [`FountainCodec::encode_batch`] again with `next_seed` to create more
+/// independent droplets without changing the data or codec configuration.
+#[derive(Debug, Clone)]
+pub struct FountainBatch {
+    pub strands: StrandCollection,
+    pub next_seed: u64,
+}
+
 impl FountainCodec {
+    const WHITENING_KEY: u64 = 0xD1B5_4A32_D192_ED03;
+
     /// Create a new fountain codec with the given configuration.
     pub fn new(config: FountainConfig) -> Self {
         Self { config }
@@ -208,6 +220,43 @@ impl FountainCodec {
     /// Access the configuration.
     pub fn config(&self) -> &FountainConfig {
         &self.config
+    }
+
+    fn feistel_round(value: u32, round: u32) -> u32 {
+        value
+            .wrapping_add(0x9E37_79B9u32.wrapping_mul(round + 1))
+            .rotate_left(7 + round)
+            .wrapping_mul(0x85EB_CA6B)
+    }
+
+    /// Reversible scrambling prevents small sequential droplet seeds from
+    /// becoming long A-rich prefixes under the 2-bit DNA mapping.
+    fn permute_seed(seed: u64) -> u64 {
+        let mut left = (seed >> 32) as u32;
+        let mut right = seed as u32;
+        for round in 0..6 {
+            let next = left ^ Self::feistel_round(right, round);
+            left = right;
+            right = next;
+        }
+        ((left as u64) << 32) | right as u64
+    }
+
+    fn unpermute_seed(encoded: u64) -> u64 {
+        let mut left = (encoded >> 32) as u32;
+        let mut right = encoded as u32;
+        for round in (0..6).rev() {
+            let previous_right = left;
+            let previous_left = right ^ Self::feistel_round(left, round);
+            left = previous_left;
+            right = previous_right;
+        }
+        ((left as u64) << 32) | right as u64
+    }
+
+    fn whiten_payload(seed: u64, data: &[u8]) -> Vec<u8> {
+        let mut rng = StdRng::seed_from_u64(seed ^ Self::WHITENING_KEY);
+        data.iter().map(|byte| byte ^ rng.gen::<u8>()).collect()
     }
 
     /// Split data into fixed-size segments, padding the last one.
@@ -282,12 +331,14 @@ impl FountainCodec {
     fn droplet_to_strand(droplet: &Droplet) -> DnaStrand {
         let mut nucleotides = Vec::new();
 
-        // Encode seed (8 bytes = 32 nt)
-        let seed_bytes = droplet.seed.to_be_bytes();
+        // Scramble the seed and payload before the 2-bit mapping. This is
+        // reversible, but avoids deterministic A-rich headers and lets the
+        // biological screen work for arbitrary binary input.
+        let seed_bytes = Self::permute_seed(droplet.seed).to_be_bytes();
         nucleotides.extend(Self::bytes_to_nucleotides(&seed_bytes));
 
-        // Encode payload
-        nucleotides.extend(Self::bytes_to_nucleotides(&droplet.data));
+        let whitened = Self::whiten_payload(droplet.seed, &droplet.data);
+        nucleotides.extend(Self::bytes_to_nucleotides(&whitened));
 
         DnaStrand::new(nucleotides)
     }
@@ -297,6 +348,7 @@ impl FountainCodec {
         strand: &DnaStrand,
         num_segments: usize,
         segment_size: usize,
+        legacy_raw: bool,
     ) -> Result<Droplet, DnaError> {
         let bases = strand.bases();
 
@@ -309,7 +361,7 @@ impl FountainCodec {
 
         let seed_nucs = &bases[0..32];
         let seed_bytes = Self::nucleotides_to_bytes(seed_nucs)?;
-        let seed = u64::from_be_bytes([
+        let encoded_seed = u64::from_be_bytes([
             seed_bytes[0],
             seed_bytes[1],
             seed_bytes[2],
@@ -319,21 +371,31 @@ impl FountainCodec {
             seed_bytes[6],
             seed_bytes[7],
         ]);
+        let seed = if legacy_raw {
+            encoded_seed
+        } else {
+            Self::unpermute_seed(encoded_seed)
+        };
 
         // Payload is everything after the seed
         let payload_nucs = &bases[32..];
-        let data = Self::nucleotides_to_bytes(payload_nucs)?;
+        let encoded_data = Self::nucleotides_to_bytes(payload_nucs)?;
 
         // A noisy channel (deletion/truncation) can shorten the payload
         // below the expected segment size — that's a corrupted strand,
         // not a bug, so report it as a decoding error instead of panicking.
-        if data.len() < segment_size {
+        if encoded_data.len() < segment_size {
             return Err(DnaError::DecodingError(format!(
                 "strand payload too short: expected {} bytes, got {}",
                 segment_size,
-                data.len()
+                encoded_data.len()
             )));
         }
+        let data = if legacy_raw {
+            encoded_data
+        } else {
+            Self::whiten_payload(seed, &encoded_data)
+        };
 
         // Reconstruct the segment indices using the same PRNG
         let mut rng = StdRng::seed_from_u64(seed);
@@ -430,6 +492,149 @@ impl FountainCodec {
 
         Ok(solved.into_iter().map(|s| s.unwrap()).collect())
     }
+
+    /// Solve the droplet equations over GF(2). This recovers every full-rank
+    /// surviving set, including sets where the peeling decoder has no
+    /// degree-one equation and stalls.
+    fn gaussian_decode(
+        droplets: &[Droplet],
+        num_segments: usize,
+        segment_size: usize,
+    ) -> Result<Vec<Vec<u8>>, DnaError> {
+        let mut rows: Vec<(Vec<bool>, Vec<u8>)> = droplets
+            .iter()
+            .map(|droplet| {
+                let mut coefficients = vec![false; num_segments];
+                for &index in &droplet.segment_indices {
+                    coefficients[index] = true;
+                }
+                (coefficients, droplet.data[..segment_size].to_vec())
+            })
+            .collect();
+        let mut pivot_rows = vec![None; num_segments];
+        let mut next_row = 0;
+
+        for (column, pivot_row) in pivot_rows.iter_mut().enumerate() {
+            let Some(pivot) = (next_row..rows.len()).find(|&row| rows[row].0[column]) else {
+                continue;
+            };
+            rows.swap(next_row, pivot);
+
+            for row in 0..rows.len() {
+                if row == next_row || !rows[row].0[column] {
+                    continue;
+                }
+                let pivot_coefficients = rows[next_row].0.clone();
+                let pivot_data = rows[next_row].1.clone();
+                for (coefficient, pivot_coefficient) in rows[row].0[column..]
+                    .iter_mut()
+                    .zip(&pivot_coefficients[column..])
+                {
+                    *coefficient ^= *pivot_coefficient;
+                }
+                for (value, pivot_value) in rows[row].1.iter_mut().zip(&pivot_data) {
+                    *value ^= *pivot_value;
+                }
+            }
+
+            *pivot_row = Some(next_row);
+            next_row += 1;
+        }
+
+        if pivot_rows.iter().any(Option::is_none) {
+            return Err(DnaError::DecodingError(format!(
+                "fountain equations are rank deficient: rank {}/{}; generate or retain more droplets",
+                next_row, num_segments
+            )));
+        }
+
+        Ok(pivot_rows
+            .into_iter()
+            .map(|row| rows[row.unwrap()].1.clone())
+            .collect())
+    }
+
+    fn decode_droplets(
+        &self,
+        strands: &StrandCollection,
+        num_segments: usize,
+        segment_size: usize,
+        legacy_raw: bool,
+    ) -> Result<Vec<u8>, DnaError> {
+        let droplets = strands
+            .strands
+            .iter()
+            .map(|strand| Self::strand_to_droplet(strand, num_segments, segment_size, legacy_raw))
+            .collect::<Result<Vec<_>, _>>()?;
+        let segments = Self::peeling_decode(&mut droplets.clone(), num_segments, segment_size)
+            .or_else(|_| Self::gaussian_decode(&droplets, num_segments, segment_size))?;
+        let all_data: Vec<u8> = segments.into_iter().flatten().collect();
+        if all_data.len() < 4 {
+            return Err(DnaError::DecodingError("decoded data has no length header".into()));
+        }
+        let original_len = u32::from_be_bytes(all_data[..4].try_into().unwrap()) as usize;
+        let data_end = 4usize.saturating_add(original_len);
+        if data_end > all_data.len() {
+            return Err(DnaError::DecodingError("decoded length header exceeds payload".into()));
+        }
+        Ok(all_data[4..data_end].to_vec())
+    }
+
+    /// Generate an exact screened batch beginning at `start_seed`.
+    ///
+    /// Persist `next_seed` and pass it to a later call to extend the same
+    /// rateless stream. Failure is atomic: this never reports a partial batch
+    /// as a successful encoding.
+    pub fn encode_batch(
+        &self,
+        data: &[u8],
+        start_seed: u64,
+        droplet_count: usize,
+    ) -> Result<FountainBatch, DnaError> {
+        if data.is_empty() {
+            return Err(DnaError::EncodingError("empty input data".into()));
+        }
+        if droplet_count == 0 {
+            return Err(DnaError::EncodingError("droplet count must be positive".into()));
+        }
+
+        let mut payload = Vec::with_capacity(4 + data.len());
+        payload.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        payload.extend_from_slice(data);
+        let segments = Self::segment_data(&payload, self.config.segment_size);
+        let validator = self.config.screen_constraints.then(|| {
+            ConstraintValidator::new(self.config.constraint_config.clone())
+        });
+        let mut strands = StrandCollection::new(data.len());
+        let mut seed = start_seed;
+        let max_attempts = droplet_count.saturating_mul(self.config.max_screening_attempts);
+
+        for _ in 0..max_attempts {
+            let droplet_seed = seed;
+            seed = seed.wrapping_add(1);
+            let mut rng = StdRng::seed_from_u64(droplet_seed);
+            let degree = sample_degree(&mut rng, segments.len());
+            let indices = select_segments(&mut rng, segments.len(), degree);
+            let droplet = Droplet {
+                seed: droplet_seed,
+                data: Self::xor_segments(&segments, &indices),
+                segment_indices: indices,
+            };
+            let strand = Self::droplet_to_strand(&droplet);
+            if validator.as_ref().is_some_and(|item| !item.is_valid(&strand)) {
+                continue;
+            }
+            strands.push(strand);
+            if strands.strand_count() == droplet_count {
+                return Ok(FountainBatch { strands, next_seed: seed });
+            }
+        }
+
+        Err(DnaError::EncodingError(format!(
+            "constraint screening produced only {}/{} droplets after {} attempts",
+            strands.strand_count(), droplet_count, max_attempts
+        )))
+    }
 }
 
 impl DnaCodec for FountainCodec {
@@ -441,79 +646,11 @@ impl DnaCodec for FountainCodec {
         if data.is_empty() {
             return Err(DnaError::EncodingError("empty input data".into()));
         }
-
-        // Step 1: Prepend a length header (4 bytes, u32 big-endian)
-        let original_len = data.len();
-        let mut payload = Vec::with_capacity(4 + data.len());
-        payload.extend_from_slice(&(original_len as u32).to_be_bytes());
-        payload.extend_from_slice(data);
-
-        // Step 2: Segment the data
-        let segments = Self::segment_data(&payload, self.config.segment_size);
-        let num_segments = segments.len();
-
-        // Step 3: Generate droplets
+        let num_segments = (data.len() + 4).div_ceil(self.config.segment_size);
         let num_droplets =
             (num_segments as f64 * self.config.overhead).ceil() as usize;
         let num_droplets = num_droplets.max(num_segments + 1); // Need at least k+1
-
-        let validator = if self.config.screen_constraints {
-            Some(ConstraintValidator::new(self.config.constraint_config.clone()))
-        } else {
-            None
-        };
-
-        let mut collection = StrandCollection::new(original_len);
-        let mut global_seed = self.config.seed;
-
-        let mut generated = 0;
-        let mut attempts = 0;
-
-        while generated < num_droplets
-            && attempts < num_droplets * self.config.max_screening_attempts
-        {
-            let droplet_seed = global_seed;
-            global_seed = global_seed.wrapping_add(1);
-            attempts += 1;
-
-            // Use the droplet seed to determine degree and segments
-            let mut rng = StdRng::seed_from_u64(droplet_seed);
-            let degree = sample_degree(&mut rng, num_segments);
-            let indices = select_segments(&mut rng, num_segments, degree);
-
-            // XOR the selected segments
-            let xor_data = Self::xor_segments(&segments, &indices);
-
-            let droplet = Droplet {
-                seed: droplet_seed,
-                data: xor_data,
-                segment_indices: indices,
-            };
-
-            // Convert to DNA strand
-            let strand = Self::droplet_to_strand(&droplet);
-
-            // Screen against biological constraints (if enabled)
-            if let Some(ref v) = validator {
-                if !v.is_valid(&strand) {
-                    continue; // Reject and try next seed
-                }
-            }
-
-            collection.push(strand);
-            generated += 1;
-        }
-
-        if generated < num_droplets {
-            log::warn!(
-                "fountain encoder: only generated {}/{} droplets after {} attempts",
-                generated,
-                num_droplets,
-                attempts
-            );
-        }
-
-        Ok(collection)
+        Ok(self.encode_batch(data, self.config.seed, num_droplets)?.strands)
     }
 
     fn decode(&self, strands: &StrandCollection) -> Result<Vec<u8>, DnaError> {
@@ -542,10 +679,27 @@ impl DnaCodec for FountainCodec {
         let payload_bytes = payload_nt / 4;
         let segment_size = payload_bytes.min(self.config.segment_size);
 
+        if strands.original_size > 0 {
+            let num_segments = (strands.original_size + 4).div_ceil(self.config.segment_size);
+            for legacy_raw in [false, true] {
+                if let Ok(decoded) = self.decode_droplets(
+                    strands,
+                    num_segments,
+                    segment_size,
+                    legacy_raw,
+                ) {
+                    return Ok(decoded);
+                }
+            }
+        }
+
         // Try different num_segments values
         // Start with estimate from strand count / overhead
-        let estimated_segments =
-            (strands.strand_count() as f64 / self.config.overhead).ceil() as usize;
+        let estimated_segments = if strands.original_size > 0 {
+            (strands.original_size + 4).div_ceil(self.config.segment_size)
+        } else {
+            (strands.strand_count() as f64 / self.config.overhead).ceil() as usize
+        };
 
         // Try a range around the estimate
         for num_seg_try in 1..=estimated_segments.max(strands.strand_count()) {
@@ -553,7 +707,7 @@ impl DnaCodec for FountainCodec {
             let mut decode_ok = true;
 
             for strand in &strands.strands {
-                match Self::strand_to_droplet(strand, num_seg_try, segment_size) {
+                match Self::strand_to_droplet(strand, num_seg_try, segment_size, true) {
                     Ok(d) => droplets.push(d),
                     Err(_) => {
                         decode_ok = false;
@@ -691,7 +845,7 @@ mod tests {
 
         let strand = FountainCodec::droplet_to_strand(&droplet);
         let recovered =
-            FountainCodec::strand_to_droplet(&strand, 10, 4).unwrap();
+            FountainCodec::strand_to_droplet(&strand, 10, 4, false).unwrap();
 
         assert_eq!(recovered.seed, droplet.seed);
         assert_eq!(recovered.data, droplet.data);
@@ -711,6 +865,85 @@ mod tests {
             "bits_per_nucleotide {} too low",
             bpn
         );
+    }
+
+    #[test]
+    fn test_screened_roundtrip_accepts_arbitrary_binary() {
+        let codec = FountainCodec::default_codec();
+        let data: Vec<u8> = (0..=255).collect();
+        let encoded = codec.encode(&data).unwrap();
+        let validator = ConstraintValidator::default_validator();
+
+        assert!(encoded.strands.iter().all(|strand| validator.is_valid(strand)));
+        assert_eq!(codec.decode(&encoded).unwrap(), data);
+    }
+
+    #[test]
+    fn test_rateless_batches_continue_without_repeating_seeds() {
+        let codec = FountainCodec::default_codec();
+        let data = vec![0xA5; 128];
+        let first = codec.encode_batch(&data, codec.config.seed, 12).unwrap();
+        let second = codec.encode_batch(&data, first.next_seed, 12).unwrap();
+        let first_seeds: Vec<u64> = first
+            .strands
+            .strands
+            .iter()
+            .map(|strand| FountainCodec::strand_to_droplet(strand, 9, 16, false).unwrap().seed)
+            .collect();
+        let second_seeds: Vec<u64> = second
+            .strands
+            .strands
+            .iter()
+            .map(|strand| FountainCodec::strand_to_droplet(strand, 9, 16, false).unwrap().seed)
+            .collect();
+        assert!(first_seeds.iter().all(|seed| !second_seeds.contains(seed)));
+
+        let mut combined = first.strands;
+        combined.strands.extend(second.strands.strands);
+        assert_eq!(codec.decode(&combined).unwrap(), data);
+    }
+
+    #[test]
+    fn test_full_rank_subset_recovers_after_droplet_loss() {
+        let codec = FountainCodec::new(FountainConfig::high_resilience());
+        let data: Vec<u8> = (0..192).map(|value| (value * 37) as u8).collect();
+        let mut encoded = codec.encode(&data).unwrap();
+        encoded.strands = encoded
+            .strands
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, strand)| (index % 5 != 0).then_some(strand))
+            .collect();
+
+        assert_eq!(codec.decode(&encoded).unwrap(), data);
+    }
+
+    #[test]
+    fn test_legacy_raw_fountain_strands_still_decode() {
+        let config = FountainConfig {
+            segment_size: 8,
+            overhead: 3.0,
+            ..FountainConfig::unscreened()
+        };
+        let codec = FountainCodec::new(config.clone());
+        let data = b"legacy fountain representation".to_vec();
+        let mut payload = (data.len() as u32).to_be_bytes().to_vec();
+        payload.extend_from_slice(&data);
+        let segments = FountainCodec::segment_data(&payload, config.segment_size);
+        let mut collection = StrandCollection::new(data.len());
+
+        for seed in config.seed..config.seed + (segments.len() * 3) as u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let degree = sample_degree(&mut rng, segments.len());
+            let indices = select_segments(&mut rng, segments.len(), degree);
+            let mut bases = FountainCodec::bytes_to_nucleotides(&seed.to_be_bytes());
+            bases.extend(FountainCodec::bytes_to_nucleotides(
+                &FountainCodec::xor_segments(&segments, &indices),
+            ));
+            collection.push(DnaStrand::new(bases));
+        }
+
+        assert_eq!(codec.decode(&collection).unwrap(), data);
     }
 
     #[test]

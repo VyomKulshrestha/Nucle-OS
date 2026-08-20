@@ -339,7 +339,7 @@ impl Planner {
 
     /// Extract a target codec name from input, e.g. "migrate x.bin to codec
     /// yin-yang". A small alias table maps the friendlier names a person
-    /// would actually type ("ternary", "yinyang") onto the exact strings
+    /// would actually type ("ternary", "fountain", "yinyang") onto the exact strings
     /// `nucle_vfs::migrate::migrate_object` accepts
     /// (`nucle_vfs::migrate::SUPPORTED_CODECS`) -- the raw CLI flag doesn't
     /// do this aliasing, but a natural-language agent should be friendlier
@@ -352,6 +352,7 @@ impl Planner {
 
         Some(match raw {
             "ternary" | "ternary-rotating-cipher" => "ternary-rotating-cipher".to_string(),
+            "fountain" | "dna-fountain" => "dna-fountain".to_string(),
             "yin-yang" | "yinyang" | "yin_yang" => "yin-yang".to_string(),
             other => other.to_string(),
         })
@@ -482,6 +483,13 @@ mod tests {
         assert_eq!(plan.steps[0].get_arg("filename"), Some("readme.txt"));
         assert_eq!(plan.steps[0].get_arg("codec"), Some("ternary-rotating-cipher"));
         assert_eq!(plan.steps[0].get_arg("redundancy"), None);
+    }
+
+    #[test]
+    fn test_plan_migrate_fountain_alias() {
+        let plan = Planner::plan("migrate readme.txt to codec fountain").unwrap();
+        assert_eq!(plan.steps[0].tool, ToolName::MigrateFile);
+        assert_eq!(plan.steps[0].get_arg("codec"), Some("dna-fountain"));
     }
 
     #[test]

@@ -809,10 +809,14 @@ DNA storage has a unique error profile unlike any digital channel:
 
 ### DNA Fountain (Erlich & Zielinski, 2017)
 - Luby Transform (LT) codes applied to DNA storage
-- Rateless: can generate unlimited encoded strands
-- Built-in screening rejects constraint-violating strands
+- `encode_batch(data, start_seed, count)` returns an exact screened batch and
+  the next seed, allowing deterministic continuation without repeated droplets
+- NucleOS can materialize a larger batch as a new immutable version with
+  `extend-fountain`, preserving the prior representation and history
+- Reversible seed/payload whitening makes constraint screening effective for
+  arbitrary binary input; the VFS also screens the final primer-tagged strand
 - Near-optimal density: ~1.57 bits/nucleotide
-- Natural erasure resilience — any sufficient subset of strands reconstructs data
+- Peeling falls back to GF(2) Gaussian elimination for every full-rank subset
 
 ### Yin-Yang Codec (Ping et al., 2022)
 - Two complementary mapping rules achieve GC balance by construction
@@ -829,8 +833,8 @@ Two-layer coding scheme (industry standard):
 2. **Outer code** (cross-strand): Handles strand dropouts and residual errors
 
 ```
-Data → [Outer RS/Fountain] → [Segmentation] → [Inner encoding] → [Constraint screening] → DNA
-DNA → [Basecalling] → [Clustering] → [Consensus] → [Inner decode] → [Outer decode] → Data
+Data → [Selected codec: Ternary/Fountain/Yin-Yang] → [Optional outer RS] → [Primers] → DNA
+DNA → [Primer retrieval] → [Consensus] → [Outer RS decode] → [Recorded codec decode] → Data
 ```
 
 ### Current status
@@ -847,6 +851,39 @@ and reconstructs known missing strands within the bound
 `2*errors + erasures <= parity_count`. Actual consensus still requires
 sequencing coverage (`coverage_depth > 1` in `SimulationConfig`) — a single
 read has nothing to vote against.
+
+**Fountain in the VFS.** `CodecKind::Fountain` is a real storage selection,
+not just a benchmark option. Writes and migrations store `dna-fountain` on the
+`DnaFile`, `StorageManifest`, `WriteResult`, and `VersionInfo` paths already
+used by the other codecs; `decode_dna_file` resolves that field independently
+for every current or historical version. This is why a
+Ternary → Fountain → Yin-Yang migration chain remains readable at all three
+versions after persistence and process restart.
+
+Each representation persists its complete `FountainConfig` (16-byte segments,
+1.5× initial overhead, deterministic seed 42, screening budget, and constraint
+thresholds by default). A reversible Feistel permutation of the seed and a
+seeded payload mask remove the A-rich raw-header failure without losing any
+information. Candidate cores are screened, then the VFS screens the complete
+primer-tagged molecule and continues the seed stream until the requested batch
+is full; budget exhaustion is an error, never a partial successful write.
+`encode_batch` exposes the continuation seed, and `dna_extend_fountain` /
+`nucle extend-fountain` re-encode a larger batch as the next immutable version.
+
+Decode first tries belief-propagation peeling, then solves the same droplet
+equations over GF(2), removing the old “peeling happened to stall” failure for
+full-rank sets. Pre-whitening raw Fountain strands are attempted as a legacy
+fallback. Tests cover arbitrary binary screening, non-repeating continuation
+batches, legacy decode, deterministic droplet loss, final primer-tagged
+constraints, four arbitrary known VFS erasures recovered by RS, persisted
+configuration, CLI process restarts, extension, and migration history.
+
+The remaining boundary is physical, not hidden software debt: these checks are
+in-silico filters, not a wet-lab synthesis or sequencing result. A finite stored
+batch also cannot recover a rank-deficient survivor set. The hard demonstrated
+pool guarantee comes from outer Reed-Solomon when requested:
+`2*errors + erasures <= parity_count`; Fountain adds rank-dependent recovery
+beyond that bound rather than a promise against unlimited arbitrary loss.
 
 **Illumina worked first; Nanopore required several additional fixes before it also passed.** The historical investigation is retained here because each incorrect intermediate diagnosis produced a useful regression test. First diagnosis: `build_consensus` voted by raw position, which breaks under indels. Fixed by aligning each read to the reference before voting (Needleman-Wunsch). Second, bigger diagnosis: `nucle_index::primer::PrimerPair::{matches_forward, untag_strand}` matched primers by exact position, so a single indel landing inside a primer — routine at Nanopore's ~4%/base indel rate — made CRISPR retrieval drop the whole strand before it ever reached consensus; this, not the voting algorithm, was the dominant blocker. Fixed via bounded edit-distance boundary search (`nucle_index::primer::tests::test_untag_tolerates_*`).
 
@@ -965,7 +1002,7 @@ dropped at write time (search should only ever surface a filename's current
 version, the same "one visible entry per name" principle `Catalog::register`
 already applies), while its catalog/pool data stays fully intact.
 
-Migration and rename obey that same lifecycle. `migrate_object` reads the current bytes and writes the re-encoded representation as the next version; it no longer deletes first, so the pre-migration versions remain readable. `dna_rename` changes the logical name on the current record and every historical record while retaining archive IDs, primers, and pool strands, and refreshes the current search entry under the new name. Collisions are rejected before mutation.
+Migration and rename obey that same lifecycle. `migrate_object` reads the current bytes and writes the re-encoded representation as the next version; it accepts Ternary, Fountain, and Yin-Yang targets and no longer deletes first, so the pre-migration versions remain readable with their own recorded codec. `dna_rename` changes the logical name on the current record and every historical record while retaining archive IDs, primers, and pool strands, and refreshes the current search entry under the new name. Collisions are rejected before mutation.
 
 This broke four shipped `docs/examples/*.nsl` programs and their execution tests in a genuinely instructive way: each one demonstrated `Result<T, E>`/`?`/closures'/pattern-matching's error-handling paths by storing the *same filename twice* and relying on the second write failing. Fixed by parameterizing the affected functions to take their target filename as an argument, calling each once with a real, existing file (the `Ok` path) and once with a filename that genuinely doesn't exist under `docs/examples/` (a real, universally reliable `Err` — `std::fs::read` failing — independent of pool state, capacity, or versioning) rather than trying to engineer a still-failing "duplicate write" through some other mechanism. A pool-capacity-based trigger was tried first and abandoned once measured directly: two real fixtures of deliberately different byte sizes (30 vs. 39 bytes) still encoded to byte-identical nucleotide counts under this codec's fixed strand sizing, so a capacity cap couldn't discriminate between "retry the same write" and "a different, smaller write" either — nonexistent-file was both simpler and the only approach that didn't depend on codec-specific size arithmetic at all. `WriteResult`/`DeleteResult` gained `version`/`versions_removed` fields, which meant regenerating `nucle_lang`'s `execution_baseline.txt` golden fixture (every "Stored '...'" line gained a `, version=N` suffix) — an expected, intentional diff the fixture's own test explicitly told me to regenerate, not a regression.
 
@@ -1032,7 +1069,7 @@ Where write-time and read-time noise get applied differs between the two backend
 
 **Honesty about the numbers.** Neither the Atlas/imec partnership announcement nor the Mizzou paper's public reporting states a per-write/per-read latency, array parallelism count, coverage/redundancy factor, or per-base error rate this crate could cite as confirmed. `write_latency`/`op_latency`/`array_parallelism`/`coverage_depth`, and the choice of which existing `nucle_synth::HardwareProfile` approximates each backend's error behavior, are all caller-configurable with an illustrative, clearly-documented default — the same honesty stance already established for `nucle_hardware`'s vendor adapters above, applied to a case where the "vendor" is a published research approach rather than a company with (partially) public API docs.
 
-**Verified:** 25 `nucle_blockdev` tests cover the device contract, write-once and rewritable behavior, corruption recovery, relative batch-latency savings, blob layout, versioned save/load, persistent Nanopore counters/generations, dimension validation, and malformed-image rejection. The current full workspace run discovered 729 tests: 728 passed and one intentionally expensive Nanopore test remained ignored.
+**Verified:** 25 `nucle_blockdev` tests cover the device contract, write-once and rewritable behavior, corruption recovery, relative batch-latency savings, blob layout, versioned save/load, persistent Nanopore counters/generations, dimension validation, and malformed-image rejection. The current inventory is 742 tests: 741 runnable and one intentionally expensive Nanopore test ignored. All 741 runnable tests passed in 98.4 seconds; workspace doctests passed separately in 4.5 seconds.
 
 ## `nucle doctor`
 

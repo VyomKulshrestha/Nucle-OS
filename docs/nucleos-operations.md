@@ -18,9 +18,25 @@ nucle --pool-dir ./archive pool
 ```
 
 Supported storage codecs are `ternary` (alias
-`ternary-rotating-cipher`, the default) and `yin-yang` (alias `yinyang`). The
-selected codec is persisted with each version and returned in JSON write
-results; reads select the decoder from that metadata.
+`ternary-rotating-cipher`, the default), `fountain` (canonical persisted name
+`dna-fountain`), and `yin-yang` (alias `yinyang`). The selected codec is
+persisted with each version and returned in JSON write results; reads select
+the decoder from that version's metadata.
+
+Fountain uses screened, deterministic rateless batches. Seed and payload
+whitening prevent binary headers or low-entropy content from defeating the DNA
+constraints; candidates must pass the persisted GC, local-GC, homopolymer,
+palindrome, and length profile both before and after primer tagging. Screening
+budget exhaustion and empty input are errors, never zero/partial-strand files.
+Peeling decode falls back to GF(2) elimination for any full-rank survivor set.
+
+Use `nucle extend-fountain report.bin --droplets 20` to materialize a larger
+batch. Extension is a new immutable version with freshly computed parity; the
+older physical representation stays readable. The software checks demonstrate
+constraint compliance, not successful physical synthesis. Recovery from a
+rank-deficient subset is impossible; the hard arbitrary known-erasure bound is
+provided by `-r/--redundancy` Reed-Solomon parity:
+`2*errors + erasures <= parity_count` after consensus.
 
 ## Version lifecycle
 
@@ -30,7 +46,9 @@ recovery manifest.
 
 ```bash
 nucle store report.bin --codec yin-yang
-nucle store report.bin --codec ternary -r 6
+nucle migrate report.bin --codec fountain
+nucle extend-fountain report.bin --droplets 20
+nucle migrate report.bin --codec ternary -r 6
 nucle history report.bin
 nucle retrieve report.bin --version 1
 nucle rename report.bin archive/2026/report.bin
@@ -100,11 +118,13 @@ resumable job lifecycle.
 
 ## Verification snapshot
 
-Measured from local `main` on 13 August 2026:
+Measured locally on 20 August 2026:
 
-- `cargo build --workspace --all-targets`: pass.
-- `cargo test --workspace --no-fail-fast`: 729 discovered, 728 passed, one
-  intentionally ignored.
+- The current inventory is 742 discovered tests: 741 runnable and one
+  intentionally expensive Nanopore test ignored.
+- All 741 runnable tests passed with
+  `cargo test --workspace --no-fail-fast -q --lib --tests --bins` in 98.4
+  seconds. Workspace doctests passed separately in 4.5 seconds.
 - NucleOS package Clippy (`--all-targets --no-deps -- -D warnings`): pass for
   all nine NucleOS packages.
 - `cargo audit`: no vulnerabilities across 276 dependencies.

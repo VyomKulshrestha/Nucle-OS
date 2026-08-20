@@ -5,6 +5,7 @@
 //! and management.
 
 use nucle_ecc::pipeline::RecoveryManifest;
+use nucle_codec::fountain::FountainConfig;
 use serde::{Serialize, Deserialize};
 use std::fmt;
 
@@ -26,6 +27,10 @@ pub struct StorageManifest {
     pub index_strategy: String,
     pub simulation_assumptions: Option<SimulationAssumptions>,
     pub created_at: i64,
+    /// Exact Fountain parameters used for this representation. Older state
+    /// files and non-Fountain codecs deserialize with `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fountain_config: Option<FountainConfig>,
     /// Manifest from the most recent successful `dna_read` of this object,
     /// stored per-object (keyed by this file's archive_id) rather than as
     /// session-global state, so retrieving a different file never overwrites it.

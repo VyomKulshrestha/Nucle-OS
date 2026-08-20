@@ -69,9 +69,9 @@ Strands that violate biological constraints (GC content, homopolymers) are simpl
 | Paper concept | Implementation |
 |---|---|
 | Fountain / LT coding | `nucle_codec::fountain::FountainCodec` — droplet generation with Robust Soliton degree distribution |
-| Peeling decoder | `FountainCodec::peeling_decode()` — iterative degree-1 resolution with XOR propagation |
-| Rateless property | `FountainConfig::overhead` controls over-generation (default 1.5×); `max_screening_attempts` limits retries |
-| Constraint screening | `FountainConfig::screen_constraints = true` — rejects and regenerates strands failing GC/homopolymer checks |
+| Decoder | `peeling_decode()` with `gaussian_decode()` fallback for full-rank sets |
+| Rateless property | `encode_batch(data, start_seed, count)` returns an exact batch and continuation seed; `overhead` selects the default batch size |
+| Constraint screening | Reversible seed/payload whitening, core screening, and VFS primer-tagged screening reject GC/local-GC/homopolymer/palindrome/length violations |
 | Erasure resilience | `nucle_ecc::fountain_code::FountainErasure` — outer-code layer that recovers from strand dropout |
 | Near-optimal density | Achieved **1.57 bits/nt** theoretical; benchmarked via `nucle bench` |
 
@@ -83,7 +83,7 @@ Strands that violate biological constraints (GC content, homopolymers) are simpl
 
 ### Constraint screening in practice
 
-NucleOS's fountain codec uses a raw 2-bit nucleotide mapping (`A=00, T=01, G=10, C=11`) for the byte-to-DNA conversion. Unlike the ternary cipher (which eliminates homopolymers by construction), the fountain codec relies on **post-hoc constraint screening** — exactly as described in the Erlich paper.
+NucleOS's Fountain codec reversibly whitens the seed and payload before the 2-bit nucleotide mapping (`A=00, T=01, G=10, C=11`), then applies **post-hoc constraint screening**. Whitening prevents low-entropy binary input from making nearly every candidate fail while preserving exact decoding. Pool writes additionally validate the primer-tagged molecule.
 
 With `screen_constraints: true` (the default), each generated droplet is
 checked against biological constraints. Invalid strands are discarded and the

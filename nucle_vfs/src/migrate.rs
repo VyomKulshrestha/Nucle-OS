@@ -10,7 +10,7 @@ use crate::file::StorageManifest;
 /// Codecs `dna_write`/`dna_read` implement end-to-end today.
 /// `migrate_object`'s `new_codec` parameter is checked against these so a
 /// migration request never silently no-ops on an unsupported target.
-pub const SUPPORTED_CODECS: &[&str] = &["ternary-rotating-cipher", "yin-yang"];
+pub const SUPPORTED_CODECS: &[&str] = &["ternary-rotating-cipher", "dna-fountain", "yin-yang"];
 
 /// Kept for compatibility with callers checking against a single name;
 /// prefer [`SUPPORTED_CODECS`] for the full list.

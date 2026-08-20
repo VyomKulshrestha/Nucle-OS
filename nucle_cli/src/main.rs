@@ -89,7 +89,7 @@ enum Commands {
         /// Number of RS parity strands for error correction
         #[arg(short, long, default_value = "2")]
         redundancy: usize,
-        /// Storage codec: ternary or yin-yang
+        /// Storage codec: ternary, fountain, or yin-yang
         #[arg(short, long, default_value = "ternary")]
         codec: String,
     },
@@ -133,9 +133,18 @@ enum Commands {
         /// New number of RS parity strands
         #[arg(short, long)]
         redundancy: Option<usize>,
-        /// New codec name: ternary-rotating-cipher or yin-yang
+        /// New codec name: ternary, fountain, or yin-yang
         #[arg(short, long)]
         codec: Option<String>,
+    },
+
+    /// Re-encode a Fountain file with more droplets as a new version
+    ExtendFountain {
+        /// Stored Fountain filename to extend
+        name: String,
+        /// Number of additional Fountain droplets
+        #[arg(short, long)]
+        droplets: usize,
     },
 
     /// Search for files in the storage pool
@@ -509,6 +518,7 @@ fn main() {
         }
         Commands::Delete { name, confirm } => cmd_delete(&name, confirm, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::ExtendFountain { name, droplets } => cmd_extend_fountain(&name, droplets, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Pool => cmd_pool(&pool_dir, passphrase.as_deref(), cli.json),
         Commands::List { prefix } => cmd_list(prefix.as_deref().unwrap_or(""), &pool_dir, passphrase.as_deref(), cli.json),
@@ -773,11 +783,13 @@ fn cmd_store(
         file
     };
 
-    let codec_kind = match codec {
-        "ternary" | "ternary-rotating-cipher" => nucle_vfs::syscall::CodecKind::Ternary,
-        "yin-yang" | "yinyang" => nucle_vfs::syscall::CodecKind::YinYang,
-        other => {
-            eprintln!("Store failed: unknown codec '{}'; expected ternary or yin-yang", other);
+    let codec_kind = match nucle_vfs::syscall::CodecKind::from_codec_name(codec) {
+        Some(kind) => kind,
+        None => {
+            eprintln!(
+                "Store failed: unknown codec '{}'; expected ternary, fountain, or yin-yang",
+                codec
+            );
             std::process::exit(1);
         }
     };
@@ -958,6 +970,33 @@ fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, pool_
         }
         Err(e) => {
             eprintln!("Migration failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_extend_fountain(
+    name: &str,
+    droplets: usize,
+    pool_dir: &std::path::Path,
+    passphrase: Option<&str>,
+    json: bool,
+) {
+    let mut os = open_pool(pool_dir, passphrase);
+    match os.dna_extend_fountain(name, droplets) {
+        Ok(result) => {
+            persist_pool(&mut os, pool_dir);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+            } else {
+                println!(
+                    "Extended '{}' to version {} with {} Fountain droplets.",
+                    name, result.version, result.data_strand_count
+                );
+            }
+        }
+        Err(error) => {
+            eprintln!("Fountain extension failed: {}", error);
             std::process::exit(1);
         }
     }

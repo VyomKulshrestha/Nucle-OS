@@ -20,6 +20,8 @@ use crate::pool::{DnaPool, PoolEntry};
 use crate::file::{DnaFile, StorageManifest, SimulationAssumptions};
 use crate::catalog::Catalog;
 use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
+use nucle_codec::constraints::ConstraintValidator;
+use nucle_codec::fountain::{FountainCodec, FountainConfig};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
@@ -46,23 +48,31 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecKind {
     Ternary,
+    Fountain,
     YinYang,
 }
 
 impl CodecKind {
-    fn to_boxed(self) -> Box<dyn DnaCodec> {
+    fn to_boxed_with_fountain_config(
+        self,
+        fountain_config: Option<FountainConfig>,
+    ) -> Box<dyn DnaCodec> {
         match self {
             Self::Ternary => Box::new(TernaryCodec::new(TernaryConfig::no_overlap())),
+            Self::Fountain => Box::new(FountainCodec::new(
+                fountain_config.unwrap_or_default(),
+            )),
             Self::YinYang => Box::new(YinYangCodec::new(YinYangConfig::default())),
         }
     }
 
-    /// Reverse-lookup from the name a codec reports via [`DnaCodec::name`],
-    /// as persisted on a [`DnaFile`]'s `codec` field.
+    /// Parse either a codec's canonical persisted name (reported by
+    /// [`DnaCodec::name`]) or a user-facing CLI alias.
     pub fn from_codec_name(name: &str) -> Option<Self> {
         match name {
-            "ternary-rotating-cipher" => Some(Self::Ternary),
-            "yin-yang" => Some(Self::YinYang),
+            "ternary" | "ternary-rotating-cipher" => Some(Self::Ternary),
+            "fountain" | "dna-fountain" => Some(Self::Fountain),
+            "yin-yang" | "yinyang" => Some(Self::YinYang),
             _ => None,
         }
     }
@@ -582,12 +592,85 @@ impl NucleOS {
         result
     }
 
+    /// Re-encode the current Fountain representation with additional
+    /// droplets as a new version. Historical versions and their strands stay
+    /// intact, matching normal NucleOS migration/version semantics.
+    pub fn dna_extend_fountain(
+        &mut self,
+        filename: &str,
+        additional_droplets: usize,
+    ) -> Result<WriteResult, String> {
+        if additional_droplets == 0 {
+            return Err("additional droplet count must be positive".into());
+        }
+        let current = self
+            .catalog
+            .get_by_name(filename)
+            .ok_or_else(|| format!("file '{}' not found", filename))?
+            .clone();
+        if CodecKind::from_codec_name(&current.codec) != Some(CodecKind::Fountain) {
+            return Err(format!(
+                "file '{}' uses codec '{}'; only Fountain representations can be extended",
+                filename, current.codec
+            ));
+        }
+
+        let data = self.dna_read(filename)?;
+        let mut config = current
+            .manifest
+            .as_ref()
+            .and_then(|manifest| manifest.fountain_config.clone())
+            .unwrap_or_default();
+        let segment_count = (data.len() + 4).div_ceil(config.segment_size);
+        let target_count = current.data_strand_count + additional_droplets;
+        // Keep ceil(k * overhead) equal to the requested integer despite
+        // floating-point boundary rounding.
+        config.overhead = (target_count as f64 - 0.25) / segment_count as f64;
+
+        let result = self.dna_write_with_codec_config_impl(
+            filename,
+            &data,
+            current.rs_parity_per_stripe,
+            CodecKind::Fountain,
+            Some(config),
+        );
+        let archive_id = result.as_ref().ok().map(|write| write.file_id.clone());
+        let detail = result
+            .as_ref()
+            .map(|write| {
+                format!(
+                    "extended to version {} with {} Fountain droplets",
+                    write.version, write.data_strand_count
+                )
+            })
+            .unwrap_or_else(|error| error.clone());
+        self.record_audit(
+            "extend-fountain",
+            filename,
+            archive_id,
+            result.is_ok(),
+            detail,
+        );
+        result
+    }
+
     fn dna_write_with_codec_impl(
         &mut self,
         filename: &str,
         data: &[u8],
         redundancy: usize,
         codec_kind: CodecKind,
+    ) -> Result<WriteResult, String> {
+        self.dna_write_with_codec_config_impl(filename, data, redundancy, codec_kind, None)
+    }
+
+    fn dna_write_with_codec_config_impl(
+        &mut self,
+        filename: &str,
+        data: &[u8],
+        redundancy: usize,
+        codec_kind: CodecKind,
+        fountain_config_override: Option<FountainConfig>,
     ) -> Result<WriteResult, String> {
         // A write to an existing filename is a new version, not a
         // rejected duplicate -- `Catalog::register` (below) archives
@@ -609,9 +692,52 @@ impl NucleOS {
             .clone();
 
         // ── Layer 1: Codec ── encode binary → DNA strands
-        let codec = codec_kind.to_boxed();
-        let encoded = codec.encode(data)
-            .map_err(|e| format!("encoding failed: {}", e))?;
+        let fountain_config = (codec_kind == CodecKind::Fountain)
+            .then(|| fountain_config_override.unwrap_or_default());
+        let codec = codec_kind.to_boxed_with_fountain_config(fountain_config.clone());
+        let encoded = if let Some(config) = fountain_config.as_ref() {
+            let fountain = FountainCodec::new(config.clone());
+            let validator = ConstraintValidator::new(config.constraint_config.clone());
+            let segment_count = (data.len() + 4).div_ceil(config.segment_size);
+            let target_count = ((segment_count as f64 * config.overhead).ceil() as usize)
+                .max(segment_count + 1);
+            let mut accepted = StrandCollection::new(data.len());
+            let mut next_seed = config.seed;
+
+            // Fountain screens droplet cores itself. Pool storage also screens
+            // the final primer-tagged molecule, including both boundaries,
+            // because those are the sequences that would actually be sent to
+            // synthesis rather than the unaddressed codec payload alone.
+            for _ in 0..config.max_screening_attempts {
+                let needed = target_count - accepted.strand_count();
+                let batch = fountain
+                    .encode_batch(data, next_seed, needed)
+                    .map_err(|e| format!("encoding failed: {}", e))?;
+                next_seed = batch.next_seed;
+                for strand in batch.strands.strands {
+                    if validator.is_valid(&primer_pair.tag_strand(&strand)) {
+                        accepted.push(strand);
+                        if accepted.strand_count() == target_count {
+                            break;
+                        }
+                    }
+                }
+                if accepted.strand_count() == target_count {
+                    break;
+                }
+            }
+            if accepted.strand_count() != target_count {
+                return Err(format!(
+                    "encoding failed: primer-aware Fountain screening produced {}/{} droplets",
+                    accepted.strand_count(), target_count
+                ));
+            }
+            accepted
+        } else {
+            codec
+                .encode(data)
+                .map_err(|e| format!("encoding failed: {}", e))?
+        };
 
         let data_strand_count = encoded.strands.len();
 
@@ -773,6 +899,7 @@ impl NucleOS {
             index_strategy: "primer-addressing".to_string(),
             simulation_assumptions,
             created_at: created_at as i64,
+            fountain_config,
             recovery_manifest: None,
         };
 
@@ -1045,7 +1172,11 @@ impl NucleOS {
         // (see `consensus_then_rs_decode_with_retry`'s doc comment).
         let codec_kind = CodecKind::from_codec_name(&dna_file.codec)
             .ok_or_else(|| format!("unknown codec '{}' recorded for this file", dna_file.codec))?;
-        let codec = codec_kind.to_boxed();
+        let fountain_config = dna_file
+            .manifest
+            .as_ref()
+            .and_then(|manifest| manifest.fountain_config.clone());
+        let codec = codec_kind.to_boxed_with_fountain_config(fountain_config);
         let is_valid = |strands: &[DnaStrand]| -> bool {
             if strands.is_empty() {
                 return false;

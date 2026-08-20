@@ -114,6 +114,26 @@ impl DnaPool {
         self.strands.get(&id)
     }
 
+    /// Stable IDs for every currently present strand belonging to a file.
+    pub fn get_file_strand_ids(&self, file_id: &str) -> Vec<u64> {
+        self.file_index.get(file_id).cloned().unwrap_or_default()
+    }
+
+    /// Remove one physical strand while keeping the file's remaining pool
+    /// index consistent. This models a known erasure for recovery workflows.
+    pub fn remove_strand(&mut self, id: u64) -> bool {
+        let Some(entry) = self.strands.remove(&id) else {
+            return false;
+        };
+        if let Some(ids) = self.file_index.get_mut(&entry.file_id) {
+            ids.retain(|candidate| *candidate != id);
+            if ids.is_empty() {
+                self.file_index.remove(&entry.file_id);
+            }
+        }
+        true
+    }
+
     /// Get all strands belonging to a file.
     pub fn get_file_strands(&self, file_id: &str) -> Vec<&PoolEntry> {
         self.file_index

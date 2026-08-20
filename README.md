@@ -111,20 +111,22 @@ Models the exact error distributions of real DNA synthesizers — substitution r
 
 ### Layer 2 — Encoding Engine (`nucle_codec`)
 
-Converts arbitrary binary files into valid DNA sequences with hard biological constraints enforced:
+Converts arbitrary binary files into DNA sequences. Fountain whitens its seed
+and payload before mapping, then screens both the droplet core and the final
+primer-tagged pool strand against the persisted constraint profile:
 - GC content balance (40–60%)
 - No homopolymer runs longer than 3 bases
 - No secondary structure formation (hairpins/palindromes)
 
 Implements multiple codec strategies:
 - **Ternary Rotating Cipher** (Goldman et al.) — ~1.58 bits/nt, zero homopolymers by construction
-- **DNA Fountain** (Erlich & Zielinski) — ~1.57 bits/nt, rateless, near-optimal density
+- **DNA Fountain** (Erlich & Zielinski) — screened, continuable seeded LT droplet batches with persisted parameters
 
 ### Layer 3 — Error Correction (`nucle_ecc`)
 
 DNA is a noisy channel with insertion/deletion-heavy error profiles — unlike disk or network. This layer provides:
 - **Reed-Solomon outer code** — combined strand-level error and erasure recovery
-- **Fountain/LT erasure codes** — rateless recovery from arbitrary strand loss
+- **Fountain/LT erasure codes** — peeling plus GF(2) elimination recovers any full-rank surviving equation set
 - **Consensus sequencing** — majority voting across multiple strand copies
 - **Full repair pipeline** — orchestrated multi-stage error correction
 
@@ -150,6 +152,8 @@ Abstracts all layers behind clean syscall-style interfaces:
 DNA storage needs a proper ABI. This layer provides it. `NucleOS::open(pool_dir, max_files)`/`persist(pool_dir)` make a pool durable across separate CLI invocations (not just one process's own memory) — see [Pool storage location](#pool-storage-location) below. `NucleOS::open_encrypted`/`enable_encryption`/`disable_encryption` add optional, passphrase-protected encryption at rest for that same durable state — see `nucle encrypt-pool`/`decrypt-pool` above.
 
 **Rewrite/versioning.** `dna_write`ing a filename that already exists no longer rejects it as a duplicate — it stores the new content as the next version (`WriteResult::version`) and archives the previous version rather than deleting it (old strands, old primer — nothing physically removed). `dna_read`/`dna_list`/`dna_stat` always resolve to the current version; `dna_history` and `dna_read_version` expose immutable history; migration writes a new representation without destroying older versions; `dna_rename` moves the complete logical chain without rewriting strands; and confirmed delete removes the complete chain. Primer addressing grows deterministically beyond the initial capacity without reusing old addresses. See [docs/architecture.md](docs/architecture.md#rewrite-and-versioning) and [docs/nucleos-operations.md](docs/nucleos-operations.md).
+
+**Fountain pools.** `nucle store --codec fountain` and `nucle migrate --codec fountain` use the same durable VFS, manifest, and immutable-version path as Ternary and Yin-Yang. Every version persists `dna-fountain` plus its exact `FountainConfig`; current and historical reads therefore use the parameters that produced that representation. The encoder uses reversible whitening, rejects candidates that fail GC, homopolymer, palindrome, length, or local-GC checks, rechecks the complete primer-tagged molecule, and fails atomically if it cannot fill the requested batch. `nucle extend-fountain NAME --droplets N` creates a larger screened representation as the next immutable version while retaining every prior version. Peeling now falls back to GF(2) elimination, so every full-rank surviving droplet set is recoverable. This is a real software/in-silico constraint guarantee, not evidence of successful wet-lab synthesis or sequencing. Arbitrary loss is guaranteed only within the separate outer Reed-Solomon bound `2*errors + erasures <= parity_count`; beyond it, Fountain recovery is rank-dependent. Empty inputs are rejected.
 
 ### Layer 6 — Agent Interface (`nucle_agent`)
 
@@ -967,8 +971,9 @@ nucle decode myfile.dna -o recovered.txt -s 1024
 # Store a file with error correction (4 parity strands)
 nucle store myfile.txt -r 4
 
-# Select either end-to-end storage codec (ternary is the default)
+# Select any end-to-end storage codec (ternary is the default)
 nucle store myfile.txt -r 4 --codec yin-yang
+nucle store archive.bin -r 4 --codec fountain
 
 # Retrieve a stored file
 nucle retrieve myfile.txt
@@ -985,7 +990,11 @@ nucle delete archive/myfile.txt --confirm
 
 # Migrate a stored file to new parameters (redundancy and/or codec)
 nucle migrate myfile.txt -r 6
-nucle migrate myfile.txt --codec ternary-rotating-cipher
+nucle migrate myfile.txt --codec fountain
+nucle migrate myfile.txt --codec ternary
+
+# Add more screened Fountain droplets as a new immutable version
+nucle extend-fountain archive.bin --droplets 20
 
 # Search for files
 nucle search "name:readme type:txt"
@@ -1145,19 +1154,19 @@ nucle agent "pool status"
 
 | Crate | Tests | What's Tested |
 |-------|------:|---------------|
-| `nucle_codec` | 62 (+3 doctests) | Nucleotide types, constraints, ternary codec (incl. a regression test proving the fixed strand-index header roundtrips past its old 81-strand capacity, and a test confirming encoding fails loudly instead of silently corrupting once truly past the new, much larger capacity), fountain codec, yin-yang codec, byte↔4-base packing roundtrip, benchmarks incl. GC distribution and homopolymer violation counts |
+| `nucle_codec` | 66 (+3 doctests) | Nucleotide types, constraints, ternary codec (incl. a regression test proving the fixed strand-index header roundtrips past its old 81-strand capacity, and a test confirming encoding fails loudly instead of silently corrupting once truly past the new, much larger capacity), screened/whitened Fountain roundtrip, continuation batches, full-rank loss recovery and legacy raw decode, yin-yang codec, byte↔4-base packing roundtrip, benchmarks incl. GC distribution and homopolymer violation counts |
 | `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
 | `nucle_ecc` | 39 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, metadata-similarity search |
-| `nucle_vfs` | 122 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, rewrite/versioning, historical reads, complete-chain deletion, metadata-only complete-chain rename, migration that preserves readable history, automatically growing deterministic primer addressing (including reopen with a smaller capacity hint and no address consumption on a refused write), per-object recovery manifests, fixture/Illumina/Nanopore roundtrips, durable atomic persistence, namespace prefixes, optimistic concurrency and file locking, capacity limits, audit logging, confirm-user policy, encryption at rest, integrity scanning, tenancy, and Prometheus metrics |
-| `nucle_agent` | 35 | Tool defs, planner, executor, including natural-language `migrate` (redundancy/codec extraction with a friendlier-than-the-CLI codec alias table) and `help` (regression-guarded against a fixed bug where it silently ran `pool_status` instead) |
+| `nucle_vfs` | 126 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, rewrite/versioning, historical reads, complete-chain deletion, metadata-only complete-chain rename, Ternary/Fountain/Yin-Yang migration with per-version codec metadata and readable history, primer-tagged Fountain screening, persisted configuration, RS-backed arbitrary erasure recovery, versioned droplet extension, rejected empty input without pool mutation, automatically growing deterministic primer addressing (including reopen with a smaller capacity hint and no address consumption on a refused write), per-object recovery manifests, fixture/Illumina/Nanopore roundtrips, durable atomic persistence, namespace prefixes, optimistic concurrency and file locking, capacity limits, audit logging, confirm-user policy, encryption at rest, integrity scanning, tenancy, and Prometheus metrics |
+| `nucle_agent` | 36 | Tool defs, planner, executor, including natural-language `migrate` (redundancy/codec extraction with aliases for Ternary, Fountain, and Yin-Yang) and `help` (regression-guarded against a fixed bug where it silently ran `pool_status` instead) |
 | `nucle_lang` | 262 | Lexer/parser, biological and probabilistic pool checks, effects, compile-time control flow, canonical formatting, `test`/`assert`, doc generation, package/lockfile APIs, functions/generics/closures, `Result<T, E>`/`?`, enums and exhaustive pattern matching, and effect-annotated function types. New soundness coverage validates whole-program forward and mutually-recursive signatures, ordinary binding/argument/return types, nested calls, Result/enum-producing call arity and generics, strict `protect(File, Recovery) -> DnaFile`, scalar `Ok`/computed `Err`/enum payloads/match arms, and real runtime execution of computed error messages. |
 | `nucle_hardware` | 49 | Confirmation gating (effectful/destructive rejection, count/message correctness, sync and async variants, and a dedicated proof that read-only `Qc`/`Recovery` requests never count as effectful), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation, the job-handle/concurrency model (`submit()` returning before a real simulated delay elapses, multiple concurrent jobs finishing in well under their sequential-sum time, `Pending`/`Running`/`Complete` status transitions), and the real vendor adapters: Twist/IDT/Illumina HTTP request-building/auth-header/status-classification against a local `tiny_http` stand-in server (order-then-poll round trips, completed/cancelled/aborted status mapping, a bounded-timeout failure against an unreachable endpoint), IDT's two-step OAuth2 token-then-order flow specifically, and Nanopore's `ProtocolState`-to-`JobStatus` mapping plus a real (but connection-refused) gRPC dial against an absent MinKNOW instance |
 | `nucle_blockdev` | 25 | The `BlockDevice` contract against both backends; write-once synthesis-array and rewritable-Nanopore behavior; real consensus + Reed-Solomon corruption recovery; batched array latency; blob layout; and atomic, versioned image save/load including backend dimensions, written blocks, Nanopore read counters, write generations, and malformed-image rejection |
-| `nucle-cli` | 46 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; selectable storage codecs; persistent block-device images; fail-closed hardware-provider selection; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI |
+| `nucle-cli` | 50 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; real Fountain binary round-trip, migration to/from Fountain with historical reads, cross-process droplet extension, empty/unknown codec rejection; persistent block-device images; fail-closed hardware-provider selection; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI |
 | `nucle_lsp` | 17 | UTF-16-correct positions, diagnostics, hover, definition, symbols, context-aware completion, references, safe prepare/rename, and semantic tokens, including real Content-Length-framed JSON-RPC integration tests cross-checked against `nucle check`. |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **729 discovered tests (728 passed, 1 ignored)** | **End-to-end: binary → DNA → noise → ECC → recover → binary; verified with `cargo test --workspace --no-fail-fast`** |
+| **Total** | **742 discovered tests (741 runnable, 1 ignored)** | **All 741 runnable tests passed in 98.4 seconds with `cargo test --workspace --no-fail-fast -q --lib --tests --bins`; all workspace doctests passed separately in 4.5 seconds.** |
 
 ---
 
