@@ -104,7 +104,7 @@
       ]
     },
     "codec-constants": {
-      "comment": "Codec::parse (ast.rs) also accepts lowercase-hyphenated aliases -- included alongside the PascalCase forms every example actually uses",
+      "comment": "Codec::parse (ast.rs) accepts these aliases, and all three codec families execute through the VFS backend; Fountain is highlighted in both pool declarations and pipeline encode steps",
       "patterns": [
         {
           "name": "support.constant.codec.nuclescript",

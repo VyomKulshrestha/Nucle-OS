@@ -1,0 +1,83 @@
+>// Fountain is executable in both direct stores and pipelines.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>pool fountain_archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                              ^^^ source.nuclescript
+>    codec: Fountain,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                   ^^ source.nuclescript
+>    redundancy: 4x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: Illumina
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>store "sample_a.txt" into fountain_archive
+#^^^^^ source.nuclescript keyword.control.nuclescript
+#     ^ source.nuclescript
+#      ^ source.nuclescript string.quoted.double.nuclescript
+#       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+>
+>pipeline fountain_backup {
+#^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#        ^ source.nuclescript
+#         ^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                        ^^^ source.nuclescript
+>    encode "sample_b.txt" using Fountain,
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^ source.nuclescript string.quoted.double.nuclescript
+#            ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                        ^ source.nuclescript string.quoted.double.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^ source.nuclescript keyword.control.nuclescript
+#                               ^ source.nuclescript
+#                                ^^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                        ^^ source.nuclescript
+>    protect with redundancy 4x,
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#           ^ source.nuclescript
+#            ^^^^ source.nuclescript keyword.control.nuclescript
+#                ^ source.nuclescript
+#                 ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                           ^ source.nuclescript
+#                            ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                              ^^ source.nuclescript
+>    store into fountain_archive,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript keyword.control.nuclescript
+#         ^ source.nuclescript
+#          ^^^^ source.nuclescript keyword.control.nuclescript
+#              ^ source.nuclescript
+#               ^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                               ^^ source.nuclescript
+>    verify roundtrip
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+>}
+#^^ source.nuclescript
+>

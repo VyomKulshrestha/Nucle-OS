@@ -6,7 +6,11 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 
 ## [Unreleased]
 
-- Nothing yet.
+- Fountain pool declarations and pipeline encode steps now run through the
+  real VFS backend instead of emitting unsupported-codec warnings or failing
+  at execution time. The syntax grammar already recognized every Fountain
+  alias; its documentation and snapshots now include the runnable
+  `fountain_roundtrip.nsl` example and state the rank-dependent recovery limit.
 
 ## [0.1.12]
 

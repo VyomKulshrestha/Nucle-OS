@@ -11,6 +11,9 @@ NucleScript, the declarative DNA-storage operations language for
 - **Syntax highlighting** for every NucleScript keyword, type, and
   literal form (`3x`, `99.5%`, `10MB`, dates), kept in sync with the real
   compiler grammar.
+- **End-to-end Fountain execution** for `codec: Fountain` pools and
+  `encode ... using Fountain` pipelines, including real VFS storage and
+  `verify roundtrip` byte comparison from **Run File**.
 - **Live diagnostics** as you type — the same errors/warnings, error
   codes, and source spans the `nucle check` CLI command reports.
 - **Hover** for pool/function/strand/sequence/binding signatures.
@@ -115,7 +118,28 @@ result, strand counts, redundancy — not just a syntax check. (A "failed
 to read... sample_a.txt" error means step 1 was skipped, or the file
 ended up in a different folder than `hello.nsl`.)
 
-More complete examples (per-store options, a full simulate → consensus
+Fountain uses the same runnable surface. Change the pool to
+`codec: Fountain`, or use a pipeline such as:
+
+```nsl
+pipeline fountain_backup {
+    encode "sample_a.txt" using Fountain,
+    protect with redundancy 4x,
+    store into archive,
+    verify roundtrip
+}
+```
+
+The exact roundtrip proves the intact software representation decodes back to
+the original bytes. It does not promise recovery from every strand subset:
+outer Reed–Solomon is bounded by
+`2*errors + erasures <= parity_count`, and recovery beyond that bound depends
+on the surviving Fountain droplets having full rank. The complete runnable
+example is
+[`fountain_roundtrip.nsl`](https://github.com/VyomKulshrestha/Nucle-OS/blob/main/docs/examples/fountain_roundtrip.nsl).
+
+More complete examples (per-store options, Fountain direct-store and
+encode/protect/store/verify execution, a full simulate → consensus
 vote → encode/protect/store/verify pipeline, catching a real store
 failure with `Result<T, E>`/`?` instead of aborting the run, one function
 generic over three different pool profiles, branching on a caught
@@ -127,7 +151,7 @@ exhaustiveness enforced by a trailing wildcard, and an effect-annotated
 `Fn(...)` parameter whose confirmed destructive closure actually runs
 through two layers of function calls) live in
 [`docs/examples/`](https://github.com/VyomKulshrestha/Nucle-OS/tree/main/docs/examples)
-in the main repo — start with `store.nsl`, then `hero.nsl`, then
+in the main repo — start with `store.nsl`, then `fountain_roundtrip.nsl`, then `hero.nsl`, then
 `result_fallback_store.nsl`, then `generic_pool_recovery.nsl`, then
 `match_result_fallback.nsl`, then `closure_retry.nsl`, then
 `explicit_type_args_and_file_param.nsl`, then `recovery_plan.nsl`, then
