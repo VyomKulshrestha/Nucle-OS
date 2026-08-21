@@ -109,22 +109,29 @@ create refuses to overwrite one.
 
 ## Hardware provider boundary
 
-`nucle hardware export` supports `file-export`, `mock`, and `mock-delayed`.
-Unknown names and the library-only `twist`, `idt`, `illumina`, and `nanopore`
-providers are rejected before compilation, submission, or output creation.
-The vendor adapters remain callable through `nucle_hardware`; the CLI will not
-claim it used one until it has vendor-specific credential input and a
-resumable job lifecycle.
+`nucle hardware export` supports `file-export`, `mock`, `mock-delayed`,
+`twist`, `idt`, `illumina`, and `nanopore`. Vendor providers require
+`--config`; the strict JSON config names environment variables for secrets and
+never embeds credentials in the generated job record. Successful submission
+writes an append-only `--job-file` and reports `Submitted`. Poll it from a new
+process with `nucle hardware status JOB --config CONFIG`.
+
+The compiler confirmation, operator `--confirm`, and optional `confirm-users`
+checks all run before the first vendor request. Unknown providers, missing or
+unknown config fields, provider/config mismatches, insecure non-loopback HTTP,
+missing credentials, malformed resume records, and attempts to overwrite a job
+file fail closed. See [Hardware provider CLI](hardware-providers.md) for each
+vendor's schema and operational boundary.
 
 ## Verification snapshot
 
-Measured locally on 20 August 2026:
+Measured locally on 21 August 2026:
 
-- The current inventory is 742 discovered tests: 741 runnable and one
+- The current inventory is 746 discovered tests: 745 runnable and one
   intentionally expensive Nanopore test ignored.
-- All 741 runnable tests passed with
-  `cargo test --workspace --no-fail-fast -q --lib --tests --bins` in 98.4
-  seconds. Workspace doctests passed separately in 4.5 seconds.
+- All 745 runnable tests passed with
+  `cargo test --workspace --no-fail-fast -q --lib --tests --bins` in 134.6
+  seconds. Workspace doctests passed separately in 33.5 seconds.
 - NucleOS package Clippy (`--all-targets --no-deps -- -D warnings`): pass for
   all nine NucleOS packages.
 - `cargo audit`: no vulnerabilities across 276 dependencies.
