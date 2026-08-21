@@ -265,6 +265,37 @@ SizeBytesLiteral    ::= [0-9]+ ( 'mb' | 'MB' | 'kb' | 'KB' )
 
 ---
 
+## Storage codecs and pipeline execution
+
+`Ternary`, `Fountain`, and `YinYang` are all executable VFS codecs. A direct
+`store` uses its target pool's `codec`; a pipeline uses the codec in its
+`encode` step. For example:
+
+```nsl
+pool archive: DnaPool {
+    codec: Fountain,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+pipeline backup {
+    encode "sample_b.txt" using Fountain,
+    protect with redundancy 4x,
+    store into archive,
+    verify roundtrip
+}
+```
+
+`nucle run` lowers this to a real `CodecKind::Fountain` VFS write and
+`verify roundtrip` reads and byte-compares the stored file. The representation
+records its exact Fountain parameters for later decoding. Exact recovery under
+arbitrary loss is guaranteed only within the separate outer Reed–Solomon bound
+`2*errors + erasures <= parity_count`; beyond it, the surviving Fountain
+droplets must form a full-rank equation set. See the runnable
+[`fountain_roundtrip.nsl`](examples/fountain_roundtrip.nsl) example.
+
+---
+
 ## Control Flow (`if` / `for`)
 
 Before `Result<T, E>`/`?` (below) existed, NucleScript had no runtime at

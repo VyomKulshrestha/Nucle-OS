@@ -15,6 +15,7 @@ nucle run docs/examples/store.nsl
 | `retrieve_query.nsl` | Declarative retrieval query over stored metadata |
 | `simulate_store.nsl` | Simulated store with coverage and recovery expectation |
 | `pipeline_backup.nsl` | Pipeline program with encode, protect, store, roundtrip verify |
+| `fountain_roundtrip.nsl` | Direct Fountain store plus a Fountain encode/protect/store pipeline with exact VFS roundtrip verification; recovery past the outer Reed–Solomon bound is rank-dependent |
 | `multi_store_search.nsl` | Multiple stores followed by a search-style retrieval query |
 | `critical_redundancy_warning.nsl` | Compiler warning for critical data with insufficient redundancy |
 | `nanopore_recovery_warning.nsl` | Compiler warning for unrealistic Nanopore recovery expectation |

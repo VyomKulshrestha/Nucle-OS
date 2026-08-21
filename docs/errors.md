@@ -28,10 +28,9 @@ Codes are grouped by which declaration/operation they check, matching
 |------|-------|---------|
 | `E-POOL-DUPLICATE` | error | Two `pool` declarations use the same name in one program. |
 | `E-POOL-LOW-REDUNDANCY` | warning | A pool declares `redundancy: 1x`. Critical files should use at least `2x` so Reed-Solomon has parity to recover from. |
-| `E-POOL-UNSUPPORTED-CODEC` | warning | A pool declares a codec other than the end-to-end VFS set: `Ternary`, `Fountain`, or `YinYang`. |
 | `E-POOL-UNDECLARED` | error | A `simulate`/`synthesize`/`sequence` expression references a pool name that isn't declared (via `pool` or a prior probabilistic `let` binding). Includes a "did you mean X?" suggestion when a same-scope name is within edit distance 2. |
 
-**Fix:** rename the duplicate pool, raise redundancy, switch to a supported codec, or declare the referenced pool before using it.
+**Fix:** rename the duplicate pool, raise redundancy, or declare the referenced pool before using it. The grammar's three codec literals (`Ternary`, `Fountain`, and `YinYang`) all execute through the VFS backend.
 
 ## Enums (`enum` declarations)
 
@@ -192,10 +191,9 @@ misleadingly say "if condition".
 
 | Code | Level | Meaning |
 |------|-------|---------|
-| `E-PIPELINE-UNSUPPORTED-CODEC` | warning | A pipeline's `encode` step names a codec outside the end-to-end VFS set: `Ternary`, `Fountain`, or `YinYang`. |
 | `E-PIPELINE-LOW-REDUNDANCY` | warning | A pipeline's `protect` step uses `1x` redundancy. |
 | `E-PIPELINE-POOL-UNDECLARED` | error | A pipeline's `store` step targets an undeclared pool. Includes a "did you mean X?" suggestion. |
 | `E-PIPELINE-STORE-BEFORE-ENCODE` | error | A pipeline has a `store` step with no preceding `encode` step. |
 | `E-PIPELINE-STORE-WITHOUT-PROTECT` | warning | A pipeline stores without an explicit `protect` step. |
 
-**Fix:** switch codecs, raise redundancy, declare the target pool, or reorder/add the missing pipeline steps.
+**Fix:** raise redundancy, declare the target pool, or reorder/add the missing pipeline steps. `encode ... using Fountain` is supported end to end and does not produce a codec diagnostic.

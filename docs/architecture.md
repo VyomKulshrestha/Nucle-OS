@@ -64,6 +64,18 @@ effects require `confirm physical_key`. The MIR optimizer raises insufficient
 redundancy for the selected profile and coverage before either executable VFS
 lowering or no-hardware simulation planning.
 
+All three grammar-level codecs execute through the VFS backend. A pool-level
+`codec: Fountain` controls ordinary `store` operations, while a pipeline's
+`encode "..." using Fountain` controls its lowered store call; both map to
+`CodecKind::Fountain`, persist `dna-fountain` plus the representation's exact
+`FountainConfig`, and decode through the recorded metadata. The runnable
+[`fountain_roundtrip.nsl`](examples/fountain_roundtrip.nsl) example exercises
+both paths, and its pipeline performs a real byte comparison after VFS
+readback. This intact-set roundtrip is narrower than an arbitrary-loss
+guarantee: outer Reed–Solomon has the hard
+`2*errors + erasures <= parity_count` bound, while any recovery beyond that
+bound depends on the surviving Fountain equations having full rank.
+
 `if`/`for` are resolved entirely inside `typeck::check_and_desugar`, before
 any of that MIR/optimizer/backend machinery runs — before `Result<T, E>`/`?`
 (below) existed, NucleScript's execution model was "compile a static plan, then run it,"

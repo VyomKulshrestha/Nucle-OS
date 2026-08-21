@@ -21,7 +21,9 @@ Supported storage codecs are `ternary` (alias
 `ternary-rotating-cipher`, the default), `fountain` (canonical persisted name
 `dna-fountain`), and `yin-yang` (alias `yinyang`). The selected codec is
 persisted with each version and returned in JSON write results; reads select
-the decoder from that version's metadata.
+the decoder from that version's metadata. NucleScript uses the same path:
+`codec: Fountain` on a pool drives direct stores, and
+`encode "..." using Fountain` drives pipeline stores and roundtrip checks.
 
 Fountain uses screened, deterministic rateless batches. Seed and payload
 whitening prevent binary headers or low-entropy content from defeating the DNA

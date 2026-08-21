@@ -508,6 +508,25 @@ $ nucle run docs/examples/pipeline_backup.nsl
 ✓ verify roundtrip: 'sample_a.txt' recovered exactly
 ```
 
+Fountain is available through those same NucleScript store and pipeline paths,
+not only through the lower-level storage CLI:
+
+```bash
+$ nucle run docs/examples/fountain_roundtrip.nsl
+✓ store into fountain_archive: Stored 'sample_a.txt' (30 bytes → 5 data + 4 parity = 9 strands, 1.80× redundancy, primer=P0000, version=1)
+✓ store into fountain_archive: Stored 'sample_b.txt' (30 bytes → 5 data + 4 parity = 9 strands, 1.80× redundancy, primer=P0001, version=1)
+✓ verify roundtrip: 'sample_b.txt' recovered exactly
+```
+
+Each write records `dna-fountain` and its exact `FountainConfig`, so the read
+uses the parameters that produced that representation. `verify roundtrip`
+proves an exact software encode/store/read/decode result for the intact stored
+set; it is not a guarantee against every possible strand-loss pattern. Outer
+Reed–Solomon recovery is bounded by
+`2*errors + erasures <= parity_count`. Beyond that bound, Fountain succeeds
+only when the surviving droplet equations have full rank, and no decoder can
+recover a rank-deficient set.
+
 DNA-native `Sequence` literals are also part of the language and are validated at
 compile time:
 
@@ -792,6 +811,7 @@ Current NucleScript result summary:
 |---------|--------:|-------------:|---------------:|--------------:|------------:|-----------:|-----------:|--------|
 | `docs/examples/store.nsl` | 31 B | 2 | 4 | 6 | 3156 nt | 526 nt | 3.00× | Stored via VFS |
 | `docs/examples/pipeline_backup.nsl` | 31 B | 2 | 4 | 6 | 3156 nt | 526 nt | 3.00× | Exact roundtrip |
+| `docs/examples/fountain_roundtrip.nsl` | 30 B ×2 | 10 | 8 | 18 | 4752 nt | 264 nt | 1.80× | Direct Fountain store plus Fountain pipeline with exact roundtrip verification; recovery beyond the outer RS bound remains rank-dependent |
 | `docs/examples/sequence_literals.nsl` | — | — | — | — | — | — | — | Compile-time DNA validation |
 | `docs/examples/probabilistic_recovery.nsl` | - | - | - | - | - | - | - | Compile-time error-budget propagation |
 | `docs/examples/effect_confirmations.nsl` | - | - | - | - | - | - | - | Effect confirmation and planning |
@@ -1166,13 +1186,13 @@ nucle agent "pool status"
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, metadata-similarity search |
 | `nucle_vfs` | 126 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, rewrite/versioning, historical reads, complete-chain deletion, metadata-only complete-chain rename, Ternary/Fountain/Yin-Yang migration with per-version codec metadata and readable history, primer-tagged Fountain screening, persisted configuration, RS-backed arbitrary erasure recovery, versioned droplet extension, rejected empty input without pool mutation, automatically growing deterministic primer addressing (including reopen with a smaller capacity hint and no address consumption on a refused write), per-object recovery manifests, fixture/Illumina/Nanopore roundtrips, durable atomic persistence, namespace prefixes, optimistic concurrency and file locking, capacity limits, audit logging, confirm-user policy, encryption at rest, integrity scanning, tenancy, and Prometheus metrics |
 | `nucle_agent` | 36 | Tool defs, planner, executor, including natural-language `migrate` (redundancy/codec extraction with aliases for Ternary, Fountain, and Yin-Yang) and `help` (regression-guarded against a fixed bug where it silently ran `pool_status` instead) |
-| `nucle_lang` | 262 | Lexer/parser, biological and probabilistic pool checks, effects, compile-time control flow, canonical formatting, `test`/`assert`, doc generation, package/lockfile APIs, functions/generics/closures, `Result<T, E>`/`?`, enums and exhaustive pattern matching, and effect-annotated function types. New soundness coverage validates whole-program forward and mutually-recursive signatures, ordinary binding/argument/return types, nested calls, Result/enum-producing call arity and generics, strict `protect(File, Recovery) -> DnaFile`, scalar `Ok`/computed `Err`/enum payloads/match arms, and real runtime execution of computed error messages. |
+| `nucle_lang` | 264 | Lexer/parser, biological and probabilistic pool checks, effects, compile-time control flow, canonical formatting, `test`/`assert`, doc generation, package/lockfile APIs, functions/generics/closures, `Result<T, E>`/`?`, enums and exhaustive pattern matching, effect-annotated function types, and real Fountain direct-store/pipeline execution with exact VFS readback. New soundness coverage validates whole-program forward and mutually-recursive signatures, ordinary binding/argument/return types, nested calls, Result/enum-producing call arity and generics, strict `protect(File, Recovery) -> DnaFile`, scalar `Ok`/computed `Err`/enum payloads/match arms, and real runtime execution of computed error messages. |
 | `nucle_hardware` | 50 | Confirmation gating (effectful/destructive rejection, count/message correctness, sync and async variants, and a dedicated proof that read-only `Qc`/`Recovery` requests never count as effectful), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation, the job-handle/concurrency model (`submit()` returning before a real simulated delay elapses, multiple concurrent jobs finishing in well under their sequential-sum time, `Pending`/`Running`/`Complete` status transitions), and the real vendor adapters: Twist/IDT/Illumina HTTP request-building/auth-header/status-classification against local `tiny_http` stand-ins, IDT's two-step OAuth2 flow, and Nanopore protocol-state mapping plus a local TLS gRPC MinKNOW stand-in that verifies discovery, submission, resume-token reconstruction, and status polling without an instrument |
 | `nucle_blockdev` | 25 | The `BlockDevice` contract against both backends; write-once synthesis-array and rewritable-Nanopore behavior; real consensus + Reed-Solomon corruption recovery; batched array latency; blob layout; and atomic, versioned image save/load including backend dimensions, written blocks, Nanopore read counters, write generations, and malformed-image rejection |
 | `nucle-cli` | 56 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; real Fountain binary round-trip, migration to/from Fountain with historical reads, cross-process droplet extension, empty/unknown codec rejection; persistent block-device images; fail-closed hardware-provider selection, strict config validation, and incompatible-batch refusal; loopback-only Twist/IDT/Illumina submit-and-resume flows; Nanopore credential refusal; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI |
 | `nucle_lsp` | 17 | UTF-16-correct positions, diagnostics, hover, definition, symbols, context-aware completion, references, safe prepare/rename, and semantic tokens, including real Content-Length-framed JSON-RPC integration tests cross-checked against `nucle check`. |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **746 discovered tests (745 runnable, 1 ignored)** | **All 745 runnable tests passed in 134.6 seconds with `cargo test --workspace --no-fail-fast -q --lib --tests --bins`; all workspace doctests passed separately in 33.5 seconds.** |
+| **Total** | **748 discovered tests (747 runnable, 1 ignored)** | **All 747 runnable tests passed in 302.6 seconds with `cargo test --workspace --no-fail-fast --lib --tests --bins -j 1`; workspace doctests are verified separately.** |
 
 ---
 
