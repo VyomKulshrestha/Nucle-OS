@@ -95,6 +95,26 @@ impl TwistProvider {
     pub fn new(config: TwistConfig) -> Self {
         Self { config, agent: crate::http_client::new_agent() }
     }
+
+    pub fn resume(&self, order_id: &str) -> Result<Box<dyn JobHandle>, String> {
+        crate::http_client::validate_job_id(order_id, "Twist")?;
+        Ok(Box::new(TwistJobHandle {
+            order_id: order_id.to_string(),
+            status_url: format!(
+                "{}{}",
+                self.config.base_url,
+                self.config.status_path_template.replace(
+                    "{id}",
+                    &crate::http_client::encode_path_component(order_id),
+                ),
+            ),
+            auth_header_name: self.config.auth_header_name.clone(),
+            api_token: self.config.api_token.clone(),
+            email_header_name: self.config.email_header_name.clone(),
+            email: self.config.email.clone(),
+            agent: self.agent.clone(),
+        }))
+    }
 }
 
 /// Best-effort classification of TAPI's (unconfirmed) order-status
@@ -145,13 +165,8 @@ impl Provider for TwistProvider {
             });
 
         match result {
-            Ok(order) => Box::new(TwistJobHandle {
-                status_url: format!("{}{}", self.config.base_url, self.config.status_path_template.replace("{id}", &order.id)),
-                auth_header_name: self.config.auth_header_name.clone(),
-                api_token: self.config.api_token.clone(),
-                email_header_name: self.config.email_header_name.clone(),
-                email: self.config.email.clone(),
-                agent: self.agent.clone(),
+            Ok(order) => self.resume(&order.id).unwrap_or_else(|error| {
+                Box::new(ImmediateJobHandle::new(Err(error)))
             }),
             Err(e) => Box::new(ImmediateJobHandle::new(Err(e))),
         }
@@ -159,6 +174,7 @@ impl Provider for TwistProvider {
 }
 
 struct TwistJobHandle {
+    order_id: String,
     status_url: String,
     auth_header_name: String,
     api_token: String,
@@ -187,6 +203,10 @@ impl JobHandle for TwistJobHandle {
             Ok(status) => classify_order_status(&status.status),
             Err(e) => JobStatus::Failed(e),
         }
+    }
+
+    fn resume_token(&self) -> Option<String> {
+        Some(self.order_id.clone())
     }
 }
 

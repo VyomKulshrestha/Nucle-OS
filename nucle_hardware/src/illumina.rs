@@ -88,6 +88,20 @@ impl IlluminaProvider {
     pub fn new(config: IlluminaConfig) -> Self {
         Self { config, agent: crate::http_client::new_agent() }
     }
+
+    pub fn resume(&self, session_id: &str) -> Result<Box<dyn JobHandle>, String> {
+        crate::http_client::validate_job_id(session_id, "BaseSpace")?;
+        Ok(Box::new(IlluminaJobHandle {
+            session_id: session_id.to_string(),
+            status_url: format!(
+                "{}/appsessions/{}",
+                self.config.base_url,
+                crate::http_client::encode_path_component(session_id),
+            ),
+            access_token: self.config.access_token.clone(),
+            agent: self.agent.clone(),
+        }))
+    }
 }
 
 /// Classifies BaseSpace's real, documented `ExecutionStatus` values.
@@ -130,10 +144,8 @@ impl Provider for IlluminaProvider {
             });
 
         match result {
-            Ok(session) => Box::new(IlluminaJobHandle {
-                status_url: format!("{}/appsessions/{}", self.config.base_url, session.id),
-                access_token: self.config.access_token.clone(),
-                agent: self.agent.clone(),
+            Ok(session) => self.resume(&session.id).unwrap_or_else(|error| {
+                Box::new(ImmediateJobHandle::new(Err(error)))
             }),
             Err(e) => Box::new(ImmediateJobHandle::new(Err(e))),
         }
@@ -141,6 +153,7 @@ impl Provider for IlluminaProvider {
 }
 
 struct IlluminaJobHandle {
+    session_id: String,
     status_url: String,
     access_token: String,
     agent: ureq::Agent,
@@ -165,6 +178,10 @@ impl JobHandle for IlluminaJobHandle {
             Ok(status) => classify_execution_status(&status.execution_status),
             Err(e) => JobStatus::Failed(e),
         }
+    }
+
+    fn resume_token(&self) -> Option<String> {
+        Some(self.session_id.clone())
     }
 }
 

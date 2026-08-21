@@ -101,6 +101,23 @@ impl IdtProvider {
     pub fn new(config: IdtConfig) -> Self {
         Self { config, agent: crate::http_client::new_agent() }
     }
+
+    pub fn resume(&self, order_id: &str) -> Result<Box<dyn JobHandle>, String> {
+        crate::http_client::validate_job_id(order_id, "IDT")?;
+        Ok(Box::new(IdtJobHandle {
+            order_id: order_id.to_string(),
+            status_url: format!(
+                "{}{}",
+                self.config.api_base_url,
+                self.config.status_path_template.replace(
+                    "{id}",
+                    &crate::http_client::encode_path_component(order_id),
+                ),
+            ),
+            config: self.config.clone(),
+            agent: self.agent.clone(),
+        }))
+    }
 }
 
 /// Exchanges account credentials for a bearer token via the real,
@@ -188,10 +205,8 @@ impl Provider for IdtProvider {
         })();
 
         match outcome {
-            Ok(order_id) => Box::new(IdtJobHandle {
-                status_url: format!("{}{}", self.config.api_base_url, self.config.status_path_template.replace("{id}", &order_id)),
-                config: self.config.clone(),
-                agent: self.agent.clone(),
+            Ok(order_id) => self.resume(&order_id).unwrap_or_else(|error| {
+                Box::new(ImmediateJobHandle::new(Err(error)))
             }),
             Err(e) => Box::new(ImmediateJobHandle::new(Err(e))),
         }
@@ -199,6 +214,7 @@ impl Provider for IdtProvider {
 }
 
 struct IdtJobHandle {
+    order_id: String,
     status_url: String,
     config: IdtConfig,
     agent: ureq::Agent,
@@ -225,6 +241,10 @@ impl JobHandle for IdtJobHandle {
             Ok(status) => classify_order_status(&status.status),
             Err(e) => JobStatus::Failed(e),
         }
+    }
+
+    fn resume_token(&self) -> Option<String> {
+        Some(self.order_id.clone())
     }
 }
 

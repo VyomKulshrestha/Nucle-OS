@@ -18,7 +18,9 @@
 
 use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider};
 use nucle_lang::hardware::HardwareRequest;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 use tonic::Request;
 
@@ -114,6 +116,14 @@ pub struct NanoporeProvider {
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NanoporeResumeToken {
+    version: u8,
+    run_id: String,
+    position_port: u16,
+}
+
 impl NanoporeProvider {
     pub fn new(config: NanoporeConfig) -> Result<Self, String> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -145,7 +155,9 @@ impl NanoporeProvider {
         let endpoint = Endpoint::from_shared(format!("https://{host}:{port}"))
             .map_err(|e| format!("invalid MinKNOW endpoint {host}:{port}: {e}"))?
             .tls_config(self.tls_config())
-            .map_err(|e| format!("invalid MinKNOW TLS config: {e}"))?;
+            .map_err(|e| format!("invalid MinKNOW TLS config: {e}"))?
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(5));
         self.runtime
             .block_on(endpoint.connect())
             .map_err(|e| format!("failed to connect to MinKNOW at {host}:{port}: {e}"))
@@ -193,6 +205,29 @@ impl NanoporeProvider {
             }
         }
     }
+
+    pub fn resume(&self, token: &str) -> Result<Box<dyn JobHandle>, String> {
+        let token: NanoporeResumeToken = serde_json::from_str(token)
+            .map_err(|e| format!("invalid Nanopore resume token: {e}"))?;
+        if token.version != 1 {
+            return Err(format!("unsupported Nanopore resume token version {}", token.version));
+        }
+        if token.run_id.is_empty()
+            || token.run_id.len() > 512
+            || token.run_id.chars().any(char::is_control)
+            || token.position_port == 0
+        {
+            return Err("invalid Nanopore resume token contents".to_string());
+        }
+        let channel = self.connect(&self.config.host, token.position_port)?;
+        Ok(Box::new(NanoporeJobHandle {
+            channel,
+            run_id: token.run_id,
+            position_port: token.position_port,
+            developer_token: self.developer_token.clone(),
+            runtime: Arc::clone(&self.runtime),
+        }))
+    }
 }
 
 impl Provider for NanoporeProvider {
@@ -202,7 +237,7 @@ impl Provider for NanoporeProvider {
 
     fn submit(&self, batch: &[HardwareRequest]) -> Box<dyn JobHandle> {
         let args: Vec<String> = batch.iter().map(|request| request.target.clone()).collect();
-        let outcome = (|| -> Result<(Channel, String), String> {
+        let outcome = (|| -> Result<(Channel, String, u16), String> {
             let (_position_name, position_port) = self.discover_running_position()?;
             let channel = self.connect(&self.config.host, position_port)?;
             let mut client = ProtocolServiceClient::new(channel.clone());
@@ -216,13 +251,20 @@ impl Provider for NanoporeProvider {
                 .block_on(client.start_protocol(request))
                 .map_err(|e| format!("start_protocol failed: {e}"))?
                 .into_inner();
-            Ok((channel, response.run_id))
+            if response.run_id.is_empty()
+                || response.run_id.len() > 512
+                || response.run_id.chars().any(char::is_control)
+            {
+                return Err("MinKNOW returned an invalid run identifier".to_string());
+            }
+            Ok((channel, response.run_id, position_port))
         })();
 
         match outcome {
-            Ok((channel, run_id)) => Box::new(NanoporeJobHandle {
+            Ok((channel, run_id, position_port)) => Box::new(NanoporeJobHandle {
                 channel,
                 run_id,
+                position_port,
                 developer_token: self.developer_token.clone(),
                 runtime: Arc::clone(&self.runtime),
             }),
@@ -234,6 +276,7 @@ impl Provider for NanoporeProvider {
 struct NanoporeJobHandle {
     channel: Channel,
     run_id: String,
+    position_port: u16,
     developer_token: Option<String>,
     runtime: Arc<tokio::runtime::Runtime>,
 }
@@ -260,6 +303,15 @@ impl JobHandle for NanoporeJobHandle {
                 JobStatus::Failed(format!("get_run_info failed for run {}: {status}", self.run_id))
             }
         }
+    }
+
+    fn resume_token(&self) -> Option<String> {
+        serde_json::to_string(&NanoporeResumeToken {
+            version: 1,
+            run_id: self.run_id.clone(),
+            position_port: self.position_port,
+        })
+        .ok()
     }
 }
 

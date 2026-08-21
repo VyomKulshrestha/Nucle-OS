@@ -10,3 +10,22 @@ pub fn new_agent() -> ureq::Agent {
     let config = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(5))).build();
     config.into()
 }
+
+pub(crate) fn validate_job_id(id: &str, provider: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > 512 || id.chars().any(char::is_control) {
+        return Err(format!("{provider} returned an invalid job identifier"));
+    }
+    Ok(())
+}
+
+pub(crate) fn encode_path_component(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}

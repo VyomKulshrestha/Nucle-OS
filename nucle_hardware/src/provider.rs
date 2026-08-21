@@ -20,6 +20,12 @@ pub trait JobHandle: Send {
     /// Current lifecycle state, without blocking.
     fn status(&self) -> JobStatus;
 
+    /// Opaque, non-secret token that a provider can use to reconstruct this
+    /// handle in a later process. Immediate/local providers do not have one.
+    fn resume_token(&self) -> Option<String> {
+        None
+    }
+
     /// Blocks until the job reaches a terminal state.
     fn wait(&self) -> Result<String, String> {
         let mut backoff = Duration::from_millis(1);
