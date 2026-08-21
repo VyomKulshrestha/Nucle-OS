@@ -488,12 +488,6 @@ impl TypeChecker {
                 pool.name
             ));
         }
-        if pool.codec == Codec::Fountain {
-            self.report.warning(pool.span, "E-POOL-UNSUPPORTED-CODEC", format!(
-                "pool '{}' declares Fountain codec; the VFS backend only executes Ternary and YinYang end-to-end",
-                pool.name
-            ));
-        }
         self.pools.insert(pool.name.clone(), pool.clone());
     }
 
@@ -2456,14 +2450,8 @@ impl TypeChecker {
         let mut saw_store = false;
         for step in &pipeline.steps {
             match step {
-                PipelineStep::Encode { codec, .. } => {
+                PipelineStep::Encode { .. } => {
                     saw_encode = true;
-                    if *codec == Codec::Fountain {
-                        self.report.warning(pipeline.span, "E-PIPELINE-UNSUPPORTED-CODEC", format!(
-                            "pipeline '{}' uses Fountain codec; the VFS backend only executes Ternary and YinYang end-to-end",
-                            pipeline.name
-                        ));
-                    }
                 }
                 PipelineStep::Protect { redundancy } => {
                     saw_protect = true;

@@ -143,7 +143,7 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
                 };
             }
 
-            let codec_kind = codec_to_vfs_kind(*codec)?;
+            let codec_kind = codec_to_vfs_kind(*codec);
             let result = os.dna_write_with_codec(filename, &data, *redundancy, codec_kind)?;
             steps.push(format!("✓ store into {}: {}", pool, result));
 
@@ -549,13 +549,7 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
         };
     }
 
-    let codec_kind = match codec_to_vfs_kind(pool.codec) {
-        Ok(kind) => kind,
-        Err(msg) => {
-            steps.push(format!("✗ store into {}: {}", op.pool, msg));
-            return EvalOutcome::Value(Value::Result(Err(msg)));
-        }
-    };
+    let codec_kind = codec_to_vfs_kind(pool.codec);
 
     match os.dna_write_with_codec(filename, &data, redundancy, codec_kind) {
         Ok(result) => {
@@ -798,15 +792,11 @@ fn exec_function_body(
     last
 }
 
-/// NucleScript's `Fountain` codec has no VFS-backend implementation yet
-/// (`nucle check` warns about this at compile time); executing a pipeline
-/// that reaches this point with it fails clearly instead of silently
-/// falling back to a different codec.
-fn codec_to_vfs_kind(codec: Codec) -> Result<CodecKind, String> {
+fn codec_to_vfs_kind(codec: Codec) -> CodecKind {
     match codec {
-        Codec::Ternary => Ok(CodecKind::Ternary),
-        Codec::YinYang => Ok(CodecKind::YinYang),
-        Codec::Fountain => Err("codec 'Fountain' has no VFS execution backend yet — use Ternary or YinYang".into()),
+        Codec::Ternary => CodecKind::Ternary,
+        Codec::YinYang => CodecKind::YinYang,
+        Codec::Fountain => CodecKind::Fountain,
     }
 }
 
