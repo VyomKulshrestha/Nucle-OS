@@ -2,6 +2,8 @@
 //!
 //! Unified command-line tool tying all layers together.
 
+mod hardware_cli;
+
 use clap::{Parser, Subcommand};
 use nucle_hardware::JobHandle;
 use nucle_vfs::syscall::NucleOS;
@@ -434,14 +436,19 @@ enum HardwareSubcommand {
         /// path (an index is inserted before the extension).
         #[arg(short, long, default_value = "batch.json")]
         output: String,
-        /// Provider to submit the batch to: 'file-export' (default), 'mock',
-        /// or 'mock-delayed' (simulates real hardware latency on a
-        /// background thread — see --simulated-delay-ms). Real vendor
-        /// adapters (nucle_hardware::{twist,idt,illumina,nanopore}) exist as
-        /// library APIs, but are rejected here until the CLI has
-        /// vendor-specific credential and resumable job handling.
+        /// Provider: file-export (default), mock, mock-delayed, twist, idt,
+        /// illumina, or nanopore. Vendor providers require --config and
+        /// persist resumable state to --job-file.
         #[arg(short, long, default_value = "file-export")]
         provider: String,
+        /// Vendor configuration JSON. Required for Twist, IDT, Illumina,
+        /// and Nanopore. Secrets come from environment variables named in it.
+        #[arg(long)]
+        config: Option<String>,
+        /// Append-only resumable job file written for vendor submissions.
+        /// Refuses to overwrite an existing file.
+        #[arg(long, default_value = "hardware-job.jsonl")]
+        job_file: String,
         /// Required whenever the batch contains a Synthesis, Sequencing, or
         /// Destructive request — acknowledges the operator reviewed a
         /// cost-bearing or destructive submission before it proceeds.
@@ -451,6 +458,14 @@ enum HardwareSubcommand {
         /// '--provider mock-delayed'.
         #[arg(long, default_value_t = 500)]
         simulated_delay_ms: u64,
+    },
+    /// Poll vendor jobs previously submitted by `hardware export`.
+    Status {
+        /// Append-only job file produced by a vendor export.
+        job_file: String,
+        /// The same vendor configuration used for submission.
+        #[arg(long)]
+        config: String,
     },
 }
 
@@ -2390,27 +2405,255 @@ fn indexed_output_path(base: &str, index: usize) -> String {
 
 fn cmd_hardware(subcommand: HardwareSubcommand, pool_dir: &std::path::Path, json: bool) {
     match subcommand {
-        HardwareSubcommand::Export { source, output, provider, confirm, simulated_delay_ms } => {
+        HardwareSubcommand::Export {
+            source,
+            output,
+            provider,
+            config,
+            job_file,
+            confirm,
+            simulated_delay_ms,
+        } => {
             if let Err(error) = validate_cli_provider(&provider) {
                 eprintln!("{}", error);
                 std::process::exit(1);
             }
-            if source.len() == 1 {
+            if hardware_cli::is_vendor_provider(&provider) {
+                let Some(config) = config else {
+                    eprintln!("provider '{}' requires --config <vendor-config.json>", provider);
+                    std::process::exit(1);
+                };
+                export_vendor(
+                    &source,
+                    &provider,
+                    std::path::Path::new(&config),
+                    std::path::Path::new(&job_file),
+                    confirm,
+                    pool_dir,
+                    json,
+                );
+            } else if config.is_some() {
+                eprintln!("--config is only valid with twist, idt, illumina, or nanopore");
+                std::process::exit(1);
+            } else if source.len() == 1 {
                 export_single(&source[0], &output, &provider, confirm, simulated_delay_ms, pool_dir, json);
             } else {
                 export_multiple(&source, &output, &provider, confirm, simulated_delay_ms, pool_dir, json);
             }
         }
+        HardwareSubcommand::Status { job_file, config } => vendor_status(
+            std::path::Path::new(&job_file),
+            std::path::Path::new(&config),
+            json,
+        ),
     }
 }
 
 fn validate_cli_provider(provider: &str) -> Result<(), String> {
     match provider {
-        "file-export" | "mock" | "mock-delayed" => Ok(()),
+        "file-export" | "mock" | "mock-delayed" | "twist" | "idt" | "illumina" | "nanopore" => Ok(()),
         other => Err(format!(
-            "provider '{}' is not available through the CLI; expected file-export, mock, or mock-delayed. Real vendor adapters must be configured through the nucle_hardware library until resumable CLI job handling is available.",
+            "provider '{}' is not available through the CLI; expected file-export, mock, mock-delayed, twist, idt, illumina, or nanopore.",
             other
         )),
+    }
+}
+
+fn export_vendor(
+    sources: &[String],
+    provider_name: &str,
+    config_path: &std::path::Path,
+    job_file: &std::path::Path,
+    confirm: bool,
+    pool_dir: &std::path::Path,
+    json: bool,
+) {
+    let mut submissions = Vec::new();
+    for source in sources {
+        let requests = match compile_source(source) {
+            Ok(requests) => requests,
+            Err(error) => {
+                eprintln!("Failed to compile '{}': {}", source, error);
+                std::process::exit(1);
+            }
+        };
+        submissions.push(PendingSource {
+            source: source.clone(),
+            output_path: String::new(),
+            requests,
+        });
+    }
+
+    let any_effectful = submissions
+        .iter()
+        .any(|submission| nucle_hardware::count_effectful(&submission.requests) > 0);
+    if any_effectful && !confirm {
+        eprintln!("Refusing to submit: vendor batch contains cost-bearing/destructive requests without --confirm.");
+        std::process::exit(1);
+    }
+    if any_effectful && confirm {
+        if let Err(error) = nucle_vfs::confirm_policy::check(pool_dir) {
+            eprintln!("Refusing to submit: {}", error);
+            std::process::exit(1);
+        }
+    }
+
+    let provider = match hardware_cli::load_vendor_config(config_path, provider_name) {
+        Ok(provider) => provider,
+        Err(error) => {
+            eprintln!("Vendor configuration error: {}", error);
+            std::process::exit(1);
+        }
+    };
+    for submission in &submissions {
+        if let Err(error) = provider.validate_batch(&submission.requests) {
+            eprintln!("Refusing to submit '{}': {}", submission.source, error);
+            std::process::exit(1);
+        }
+    }
+    let mut job_writer = match hardware_cli::JobWriter::create(job_file, provider_name) {
+        Ok(writer) => writer,
+        Err(error) => {
+            eprintln!("{}", error);
+            std::process::exit(1);
+        }
+    };
+
+    let mut submitted = Vec::new();
+    for submission in &submissions {
+        let handle = match nucle_hardware::submit_with_confirmation_async(
+            provider.provider(),
+            &submission.requests,
+            confirm,
+        ) {
+            Ok(handle) => handle,
+            Err(error) => {
+                eprintln!("Refusing to submit '{}': {}", submission.source, error);
+                std::process::exit(1);
+            }
+        };
+        let Some(resume_token) = handle.resume_token() else {
+            let detail = match handle.status() {
+                nucle_hardware::JobStatus::Failed(error) => error,
+                other => format!("provider returned non-resumable status {other:?}"),
+            };
+            eprintln!("Vendor submission failed for '{}': {}", submission.source, detail);
+            std::process::exit(1);
+        };
+        let entry = hardware_cli::JobEntry {
+            source: submission.source.clone(),
+            resume_token,
+            requests_count: submission.requests.len(),
+            effectful_requests_confirmed: nucle_hardware::count_effectful(&submission.requests) > 0,
+        };
+        if let Err(error) = job_writer.append(&entry) {
+            eprintln!(
+                "CRITICAL: '{}' was accepted by provider '{}' but its resume token could not be persisted: {}",
+                submission.source, provider_name, error
+            );
+            std::process::exit(1);
+        }
+        submitted.push(entry);
+    }
+
+    if json {
+        let jobs: Vec<_> = submitted
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "source": entry.source,
+                    "status": "Submitted",
+                    "provider": provider_name,
+                    "job_file": job_file,
+                    "requests_count": entry.requests_count,
+                    "effectful_requests_confirmed": entry.effectful_requests_confirmed,
+                })
+            })
+            .collect();
+        if jobs.len() == 1 {
+            println!("{}", serde_json::to_string_pretty(&jobs[0]).unwrap());
+        } else {
+            println!("{}", serde_json::to_string_pretty(&jobs).unwrap());
+        }
+    } else {
+        for entry in &submitted {
+            println!(
+                "✓ [{}] Submitted to {}; resume with: nucle hardware status {} --config {}",
+                entry.source,
+                provider_name,
+                job_file.display(),
+                config_path.display()
+            );
+        }
+    }
+}
+
+fn vendor_status(job_file: &std::path::Path, config_path: &std::path::Path, json: bool) {
+    let (provider_name, entries) = match hardware_cli::load_job_file(job_file) {
+        Ok(contents) => contents,
+        Err(error) => {
+            eprintln!("{}", error);
+            std::process::exit(1);
+        }
+    };
+    let provider = match hardware_cli::load_vendor_config(config_path, &provider_name) {
+        Ok(provider) => provider,
+        Err(error) => {
+            eprintln!("Vendor configuration error: {}", error);
+            std::process::exit(1);
+        }
+    };
+
+    let mut any_failed = false;
+    let mut statuses = Vec::new();
+    for entry in entries {
+        let status = match provider.resume(&entry.resume_token) {
+            Ok(handle) => handle.status(),
+            Err(error) => nucle_hardware::JobStatus::Failed(error),
+        };
+        if matches!(status, nucle_hardware::JobStatus::Failed(_)) {
+            any_failed = true;
+        }
+        statuses.push((entry, status));
+    }
+
+    if json {
+        let values: Vec<_> = statuses
+            .iter()
+            .map(|(entry, status)| {
+                let (state, message) = match status {
+                    nucle_hardware::JobStatus::Pending => ("Pending", None),
+                    nucle_hardware::JobStatus::Running => ("Running", None),
+                    nucle_hardware::JobStatus::Complete(message) => ("Complete", Some(message.as_str())),
+                    nucle_hardware::JobStatus::Failed(message) => ("Failed", Some(message.as_str())),
+                };
+                serde_json::json!({
+                    "source": entry.source,
+                    "provider": provider_name,
+                    "status": state,
+                    "message": message,
+                    "requests_count": entry.requests_count,
+                    "effectful_requests_confirmed": entry.effectful_requests_confirmed,
+                })
+            })
+            .collect();
+        if values.len() == 1 {
+            println!("{}", serde_json::to_string_pretty(&values[0]).unwrap());
+        } else {
+            println!("{}", serde_json::to_string_pretty(&values).unwrap());
+        }
+    } else {
+        for (entry, status) in &statuses {
+            match status {
+                nucle_hardware::JobStatus::Pending => println!("… [{}] Pending", entry.source),
+                nucle_hardware::JobStatus::Running => println!("… [{}] Running", entry.source),
+                nucle_hardware::JobStatus::Complete(message) => println!("✓ [{}] {}", entry.source, message),
+                nucle_hardware::JobStatus::Failed(message) => eprintln!("✗ [{}] {}", entry.source, message),
+            }
+        }
+    }
+    if any_failed {
+        std::process::exit(1);
     }
 }
 

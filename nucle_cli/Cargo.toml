@@ -24,5 +24,6 @@ clap = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
 rand = { workspace = true }
 tiny_http.workspace = true
