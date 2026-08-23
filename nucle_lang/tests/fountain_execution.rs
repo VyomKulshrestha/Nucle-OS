@@ -107,3 +107,74 @@ pipeline fountain_backup {
 
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn fountain_recovery_boundary_uses_outer_rs_then_fails_below_lt_rank() {
+    let dir = scratch_dir("recovery_boundary");
+    let data: Vec<u8> = (0..96).map(|value| (value * 37) as u8).collect();
+    std::fs::write(dir.join("boundary.bin"), &data).unwrap();
+    let source = r#"
+pool archive: DnaPool {
+    codec: Fountain,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+store "boundary.bin" into archive
+"#;
+
+    let mut plan = compile(source).expect("Fountain recovery fixture must compile");
+    assert_no_unsupported_codec_diagnostic(&plan);
+    let mut os = NucleOS::new(10);
+    execute_program(&mut os, &mut plan, &dir).expect("Fountain store must execute");
+
+    let file = os
+        .catalog
+        .get_by_name("boundary.bin")
+        .expect("Fountain store must create a VFS file")
+        .clone();
+    let config = file
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.fountain_config.as_ref())
+        .expect("Fountain parameters must be persisted");
+    let segment_count = (file.size + 4).div_ceil(config.segment_size);
+    assert_eq!(file.parity_strand_count, 4);
+
+    let mut data_ids = Vec::new();
+    let mut parity_ids = Vec::new();
+    for id in os.pool.get_file_strand_ids(&file.file_id) {
+        if os.pool.get_strand(id).unwrap().is_parity {
+            parity_ids.push(id);
+        } else {
+            data_ids.push(id);
+        }
+    }
+    data_ids.sort_unstable();
+    parity_ids.sort_unstable();
+
+    for id in data_ids.drain(..file.parity_strand_count) {
+        assert!(os.pool.remove_strand(id));
+    }
+    assert_eq!(
+        os.dna_read("boundary.bin").unwrap(),
+        data,
+        "outer RS must recover exactly at its four-erasure boundary"
+    );
+
+    for id in parity_ids {
+        assert!(os.pool.remove_strand(id));
+    }
+    while data_ids.len() >= segment_count {
+        assert!(os.pool.remove_strand(data_ids.remove(0)));
+    }
+    assert!(data_ids.len() < segment_count);
+
+    let error = os.dna_read("boundary.bin").unwrap_err();
+    assert!(
+        error.contains("codec decoding failed"),
+        "a rank-impossible Fountain survivor set must fail in the real codec path, got: {error}"
+    );
+
+    std::fs::remove_dir_all(dir).unwrap();
+}

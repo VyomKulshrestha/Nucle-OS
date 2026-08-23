@@ -4,13 +4,20 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
-## [Unreleased]
+## [0.1.13]
 
 - Fountain pool declarations and pipeline encode steps now run through the
   real VFS backend instead of emitting unsupported-codec warnings or failing
   at execution time. The syntax grammar already recognized every Fountain
   alias; its documentation and snapshots now include the runnable
   `fountain_roundtrip.nsl` example and state the rank-dependent recovery limit.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.27 runtime, so **Run File** uses a binary that contains this Fountain
+  execution path instead of silently falling back to pre-Fountain v0.1.26.
+- Added deterministic integration coverage through the NucleScript/VFS path:
+  four missing data droplets recover at the four-parity Reed-Solomon boundary,
+  while a survivor set with no parity and fewer droplets than source segments
+  fails in Fountain decoding as necessarily rank-deficient.
 
 ## [0.1.12]
 
