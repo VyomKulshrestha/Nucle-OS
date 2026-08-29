@@ -2926,7 +2926,40 @@ const WORKSPACE_CRATE_MANIFESTS: &[&str] = &[
     "nucle_lang/Cargo.toml",
     "nucle_hardware/Cargo.toml",
     "nucle_cli/Cargo.toml",
+    "nucle_blockdev/Cargo.toml",
+    "nucle_playground/Cargo.toml",
+    "nucle_demo_core/Cargo.toml",
+    "nucle_wasm/Cargo.toml",
+    "nucle_lsp/Cargo.toml",
 ];
+
+fn check_pinned_environment() -> DoctorCheck {
+    if !std::path::Path::new("Cargo.toml").exists() {
+        return DoctorCheck {
+            name: "Pinned source environment",
+            ok: true,
+            skipped: true,
+            detail: vec![],
+        };
+    }
+
+    let mut detail = Vec::new();
+    match fs::read_to_string("rust-toolchain.toml") {
+        Ok(toolchain) if toolchain.contains("channel = \"1.96.1\"") => {}
+        Ok(_) => detail.push("rust-toolchain.toml does not pin Rust 1.96.1".to_string()),
+        Err(error) => detail.push(format!("rust-toolchain.toml: {}", error)),
+    }
+    if !std::path::Path::new("Cargo.lock").is_file() {
+        detail.push("Cargo.lock is missing".to_string());
+    }
+
+    DoctorCheck {
+        name: "Pinned source environment",
+        ok: detail.is_empty(),
+        skipped: false,
+        detail,
+    }
+}
 
 fn check_workspace_versions() -> DoctorCheck {
     let mut detail = Vec::new();
@@ -3055,6 +3088,7 @@ fn cmd_doctor(json: bool) {
     let profiles = HardwareProfile::all().iter().map(|p| p.name().to_string()).collect::<Vec<_>>();
 
     let checks = vec![
+        check_pinned_environment(),
         check_workspace_versions(),
         check_package_manifest(),
         check_fixtures(),

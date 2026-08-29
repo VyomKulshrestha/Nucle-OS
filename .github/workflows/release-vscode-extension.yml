@@ -51,6 +51,8 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
       - run: cargo build -p nucle_lsp --release
       - name: Rename binary to its release asset name
         shell: bash
