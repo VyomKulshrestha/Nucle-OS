@@ -294,6 +294,7 @@ fn is_result_producing(expr: &Expr, funcs: &FunctionTable) -> bool {
 /// short-circuit); every other Result-producing arm always yields
 /// `EvalOutcome::Value(Value::Result(_))`, since storing a `Result`
 /// without unwrapping it via `?` is legal and inert.
+#[allow(clippy::too_many_arguments)]
 fn eval_expr(
     expr: &Expr,
     env: &HashMap<String, Value>,
@@ -457,6 +458,7 @@ fn eval_expr(
 /// 14) -- a direct, mechanical generalization of the old two-branch
 /// code: for any existing 2-arm Result match, this produces bit-for-bit
 /// the same outcome the old hardcoded `Ok`/`Err` branches did.
+#[allow(clippy::too_many_arguments)]
 fn run_match_arm(
     arms: &[MatchArm],
     variant: &str,
@@ -589,6 +591,7 @@ fn eval_delete_expr(op: &DeleteOp, env: &HashMap<String, Value>, os: &mut NucleO
 /// `effects::ResolvingSet`'s pattern exactly -- it must be the SAME set
 /// threaded through every nested call, never a fresh one, or the guard
 /// can't see a call already in progress.
+#[allow(clippy::too_many_arguments)]
 fn call_user_function(
     func: &FunctionDecl,
     args: Vec<Value>,
@@ -661,6 +664,7 @@ fn call_user_function(
 /// unrelated to the closure's own real identity (e.g. a `Fn(...)`-typed
 /// parameter's name, for a closure that never references it) -- it's
 /// simply never read.
+#[allow(clippy::too_many_arguments)]
 fn call_closure(
     name: &str,
     params: &[FnParam],
@@ -742,6 +746,7 @@ fn exec_retrieve_stmt(op: &RetrieveOp, os: &mut NucleOS, steps: &mut Vec<String>
 /// top level, which now aborts the whole run on it -- matching the
 /// statement form's existing "abort unconditionally" contract instead of
 /// silently discarding it.
+#[allow(clippy::too_many_arguments)]
 fn exec_function_body(
     body: &[Declaration],
     env: &mut HashMap<String, Value>,

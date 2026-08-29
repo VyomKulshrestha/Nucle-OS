@@ -354,11 +354,13 @@ impl TypeChecker {
     /// reason: independent tests shouldn't be able to see each other's
     /// local `let`s.
     fn check_test(&mut self, test: &TestDecl) -> TestDecl {
-        let mut body_checker = TypeChecker::default();
-        body_checker.pools = self.pools.clone();
-        body_checker.functions = self.functions.clone();
-        body_checker.enums = self.enums.clone();
-        body_checker.enum_bindings = self.enum_bindings.clone();
+        let mut body_checker = TypeChecker {
+            pools: self.pools.clone(),
+            functions: self.functions.clone(),
+            enums: self.enums.clone(),
+            enum_bindings: self.enum_bindings.clone(),
+            ..Default::default()
+        };
 
         let mut desugared_body = Vec::new();
         for decl in &test.body {
@@ -801,25 +803,22 @@ impl TypeChecker {
             None => return,
         };
 
-        match &binding.annotation {
-            TypeExpr::Pool(expected) => {
-                if expected.state != inferred.state {
-                    self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
-                        "binding '{}' is annotated as Pool<{}> but expression produces Pool<{}>",
-                        binding.name, expected.state, inferred.state
+        if let TypeExpr::Pool(expected) = &binding.annotation {
+            if expected.state != inferred.state {
+                self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
+                    "binding '{}' is annotated as Pool<{}> but expression produces Pool<{}>",
+                    binding.name, expected.state, inferred.state
+                ));
+            }
+            if let Some(expected_error) = expected.error_rate_percent {
+                let delta = (expected_error - inferred.error_rate_percent).abs();
+                if delta > 0.01 {
+                    self.report.error(binding.span, "E-BINDING-ERROR-RATE-MISMATCH", format!(
+                        "binding '{}' is annotated with {:.4}% error but expression infers {:.4}%",
+                        binding.name, expected_error, inferred.error_rate_percent
                     ));
                 }
-                if let Some(expected_error) = expected.error_rate_percent {
-                    let delta = (expected_error - inferred.error_rate_percent).abs();
-                    if delta > 0.01 {
-                        self.report.error(binding.span, "E-BINDING-ERROR-RATE-MISMATCH", format!(
-                            "binding '{}' is annotated with {:.4}% error but expression infers {:.4}%",
-                            binding.name, expected_error, inferred.error_rate_percent
-                        ));
-                    }
-                }
             }
-            _ => {}
         }
 
         self.pool_bindings.insert(binding.name.clone(), inferred);
@@ -1441,19 +1440,21 @@ impl TypeChecker {
         // for why capture-by-snapshot is simply correct here); `pools`/
         // `functions` are cloned the same way `check_function` already
         // clones them for a top-level function with no outer scope.
-        let mut closure_checker = TypeChecker::default();
-        closure_checker.pools = self.pools.clone();
-        closure_checker.functions = self.functions.clone();
-        closure_checker.pool_bindings = self.pool_bindings.clone();
-        closure_checker.bindings = self.bindings.clone();
-        closure_checker.result_bindings = self.result_bindings.clone();
-        closure_checker.strands = self.strands.clone();
-        closure_checker.sequences = self.sequences.clone();
-        closure_checker.closures = self.closures.clone();
-        closure_checker.closure_decls = self.closure_decls.clone();
-        closure_checker.fn_param_effects = self.fn_param_effects.clone();
-        closure_checker.enums = self.enums.clone();
-        closure_checker.enum_bindings = self.enum_bindings.clone();
+        let mut closure_checker = TypeChecker {
+            pools: self.pools.clone(),
+            functions: self.functions.clone(),
+            pool_bindings: self.pool_bindings.clone(),
+            bindings: self.bindings.clone(),
+            result_bindings: self.result_bindings.clone(),
+            strands: self.strands.clone(),
+            sequences: self.sequences.clone(),
+            closures: self.closures.clone(),
+            closure_decls: self.closure_decls.clone(),
+            fn_param_effects: self.fn_param_effects.clone(),
+            enums: self.enums.clone(),
+            enum_bindings: self.enum_bindings.clone(),
+            ..Default::default()
+        };
         // Set from the CLOSURE's own return type, not inherited from the
         // outer scope's `self.enclosing_result_return` -- a `?` inside
         // this closure's body validates against this closure's own
@@ -2099,11 +2100,13 @@ impl TypeChecker {
             }
         }
 
-        let mut body_checker = TypeChecker::default();
-        body_checker.pools = self.pools.clone();
-        body_checker.functions = self.functions.clone();
-        body_checker.enums = self.enums.clone();
-        body_checker.enum_bindings = self.enum_bindings.clone();
+        let mut body_checker = TypeChecker {
+            pools: self.pools.clone(),
+            functions: self.functions.clone(),
+            enums: self.enums.clone(),
+            enum_bindings: self.enum_bindings.clone(),
+            ..Default::default()
+        };
         // Must be set before the body is checked below (not after): it's
         // what `check_try` (reached through `check_let`, reached through
         // `check_declaration_single`) reads to validate every `?` inside

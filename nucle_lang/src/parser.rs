@@ -279,10 +279,7 @@ impl Parser {
         // a function that truly has no return value still writes
         // `returns Void` (see docs/examples/failures/), rather than
         // silently defaulting, so a return-type typo can't compile.
-        let return_type = if self.check(TokenKind::Arrow) {
-            self.advance();
-            self.parse_type_expr()?
-        } else if self.check_ident("returns") {
+        let return_type = if self.check(TokenKind::Arrow) || self.check_ident("returns") {
             self.advance();
             self.parse_type_expr()?
         } else {

@@ -152,7 +152,7 @@ pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, closur
         Expr::Try(inner) => expr_has_required_confirmation(inner, funcs, closures, fn_param_effects, resolving),
         Expr::Ok(inner) => expr_has_required_confirmation(inner, funcs, closures, fn_param_effects, resolving),
         Expr::Err(inner) => expr_has_required_confirmation(inner, funcs, closures, fn_param_effects, resolving),
-        Expr::EnumConstruct { payload, .. } => payload.as_deref().map_or(true, |inner| expr_has_required_confirmation(inner, funcs, closures, fn_param_effects, resolving)),
+        Expr::EnumConstruct { payload, .. } => payload.as_deref().is_none_or(|inner| expr_has_required_confirmation(inner, funcs, closures, fn_param_effects, resolving)),
         // Store's "confirmed" is always true today (see decl_effect_info's
         // Operation::Store arm below) -- store never hard-blocks on
         // confirmation the way Delete/Synthesize/Sequence do, it only

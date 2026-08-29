@@ -31,8 +31,11 @@ jobs:
         with:
           toolchain: 1.96.1
           targets: wasm32-unknown-unknown
+          components: clippy
       - name: Build every Rust target
         run: cargo build --workspace --all-targets
+      - name: Lint without warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build public API documentation
         run: cargo doc --workspace --no-deps
       - name: Build browser runtime

@@ -261,10 +261,12 @@ pub fn validate_manifest(manifest: &PackageManifest) -> Vec<String> {
         if resolve_import(&manifest.import_source, &export.name).is_none() {
             errors.push(format!("Export '{}' fails to resolve via resolve_import", export.name));
         }
-        let kind_valid = match export.kind.as_str() {
-            "PoolSchema" | "pool_schema" | "Pipeline" | "pipeline" | "RecoveryProfile" | "recovery_profile" | "Function" | "function" | "fn" => true,
-            _ => false,
-        };
+        let kind_valid = matches!(
+            export.kind.as_str(),
+            "PoolSchema" | "pool_schema" | "Pipeline" | "pipeline"
+                | "RecoveryProfile" | "recovery_profile"
+                | "Function" | "function" | "fn"
+        );
         if !kind_valid {
             errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile, function", export.name, export.kind));
         }

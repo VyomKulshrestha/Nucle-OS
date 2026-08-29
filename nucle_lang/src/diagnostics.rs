@@ -67,7 +67,7 @@ pub fn generate_explanation(notes: &[String], summary: &EffectSummary) -> String
                 explanation.push_str(&format!("- {}\n", note));
             }
         }
-        explanation.push_str("\n");
+        explanation.push('\n');
     }
 
     explanation.push_str("### Safety & Confirmation Summary:\n");
