@@ -5,6 +5,7 @@
 //! checker) plus a small VFS execution backend for `.nsl` source files.
 
 pub mod ast;
+#[cfg(feature = "runtime")]
 pub mod codegen;
 pub mod docgen;
 pub mod effects;
@@ -18,6 +19,7 @@ pub mod playground;
 pub mod probabilistic;
 pub mod sim_backend;
 pub mod stdlib;
+#[cfg(feature = "runtime")]
 pub mod test_runner;
 pub mod typeck;
 pub mod diagnostics;
@@ -28,6 +30,7 @@ use std::fmt;
 use std::path::Path;
 
 pub use ast::*;
+#[cfg(feature = "runtime")]
 pub use codegen::{execute_program, CompiledPlan, ExecutionReport, VfsCall};
 pub use docgen::generate_docs;
 pub use formatter::{format_source, is_formatted, FormatError};
@@ -35,6 +38,7 @@ pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
 pub use playground::{analyze_source, PlaygroundDiagnostic, PlaygroundReport};
 pub use sim_backend::{compile_simulation, SimulationPlan, SimulationStep};
+#[cfg(feature = "runtime")]
 pub use test_runner::{run_tests, TestFailure, TestResult, TestRunReport};
 pub use typeck::{Diagnostic, DiagnosticLevel, SymbolTable, TypeReport};
 
@@ -152,6 +156,7 @@ pub fn check_source_file(path: impl AsRef<Path>) -> Result<CheckReport, CompileE
 }
 
 /// Compile source text through lexer, parser, type checker, and VFS codegen.
+#[cfg(feature = "runtime")]
 pub fn compile(source: &str) -> Result<CompiledPlan, CompileError> {
     let tokens = Lexer::new(source).tokenize()?;
     let program = Parser::new(tokens).parse_program()?;
@@ -174,6 +179,7 @@ pub fn compile_for_simulation(source: &str) -> Result<SimulationPlan, CompileErr
 }
 
 /// Compile and execute a NucleScript source file against a fresh in-memory NucleOS instance.
+#[cfg(feature = "runtime")]
 pub fn run_source_file(path: impl AsRef<Path>) -> Result<ExecutionReport, CompileError> {
     let path = path.as_ref();
     let source = std::fs::read_to_string(path).map_err(|source| CompileError::Io {
@@ -187,6 +193,7 @@ pub fn run_source_file(path: impl AsRef<Path>) -> Result<ExecutionReport, Compil
 }
 
 /// Backwards-compatible alias for callers that used the initial API name.
+#[cfg(feature = "runtime")]
 pub fn run_script(path: impl AsRef<Path>) -> Result<ExecutionReport, CompileError> {
     run_source_file(path)
 }

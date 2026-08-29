@@ -8,7 +8,7 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-nucle_lang = { path = "../nucle_lang" }
+nucle_lang = { path = "../nucle_lang", default-features = false }
 nucle_demo_core = { path = "../nucle_demo_core" }
 serde = { workspace = true }
 serde_json = { workspace = true }

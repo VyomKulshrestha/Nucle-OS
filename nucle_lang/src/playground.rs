@@ -1,7 +1,6 @@
 //! Playground-facing compiler API.
 
 use crate::ast::Span;
-use crate::codegen;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::sim_backend;
@@ -89,14 +88,23 @@ pub fn analyze_source(source: &str) -> PlaygroundReport {
         };
     }
 
-    let simulation = sim_backend::compile_simulation(program.clone(), type_report.clone());
-    let compiled = codegen::compile_program(program, type_report);
+    let simulation = sim_backend::compile_simulation(program, type_report);
+    let vfs_call_count = simulation
+        .steps
+        .iter()
+        .filter(|step| matches!(
+            step,
+            sim_backend::SimulationStep::Store { .. }
+                | sim_backend::SimulationStep::Retrieve { .. }
+                | sim_backend::SimulationStep::Delete { .. }
+        ))
+        .count();
     PlaygroundReport {
         ok: true,
         diagnostics,
         simulation_steps: simulation.steps.iter().map(ToString::to_string).collect(),
         optimiser_notes: simulation.optimiser_notes,
-        vfs_call_count: compiled.calls.len(),
+        vfs_call_count,
     }
 }
 

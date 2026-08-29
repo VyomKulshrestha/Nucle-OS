@@ -6,10 +6,14 @@ authors.workspace = true
 license.workspace = true
 description = "NucleScript compiler for declarative DNA storage operations"
 
+[features]
+default = ["runtime"]
+runtime = ["dep:nucle_vfs"]
+
 [dependencies]
 nucle_codec = { path = "../nucle_codec" }
 nucle_synth = { path = "../nucle_synth" }
-nucle_vfs = { path = "../nucle_vfs" }
+nucle_vfs = { path = "../nucle_vfs", optional = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
