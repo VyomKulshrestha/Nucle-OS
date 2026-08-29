@@ -4,7 +4,7 @@
 //! blocking the next. `MockProvider` stays instant/simple; this is a
 //! separate type so its ergonomics aren't disturbed.
 
-use crate::provider::{JobHandle, JobStatus, Provider};
+use crate::provider::{JobHandle, JobStatus, Provider, ProviderCapabilities, DELAYED_MOCK_CAPABILITIES};
 use nucle_lang::hardware::HardwareRequest;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
@@ -36,6 +36,8 @@ impl Provider for DelayedMockProvider {
     fn name(&self) -> &str {
         "mock-delayed"
     }
+
+    fn capabilities(&self) -> ProviderCapabilities { DELAYED_MOCK_CAPABILITIES }
 
     fn submit(&self, batch: &[HardwareRequest]) -> Box<dyn JobHandle> {
         let count = batch.len();

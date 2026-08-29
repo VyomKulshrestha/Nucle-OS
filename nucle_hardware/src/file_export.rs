@@ -1,7 +1,7 @@
 //! A provider that serializes batches to a local JSON file for laboratory
 //! submission — the only provider today that actually persists anything.
 
-use crate::provider::{ImmediateJobHandle, JobHandle, Provider};
+use crate::provider::{ImmediateJobHandle, JobHandle, Provider, ProviderCapabilities, FILE_EXPORT_CAPABILITIES};
 use nucle_lang::hardware::HardwareRequest;
 use std::path::PathBuf;
 
@@ -33,6 +33,8 @@ impl Provider for FileExportProvider {
     fn name(&self) -> &str {
         "file-export"
     }
+
+    fn capabilities(&self) -> ProviderCapabilities { FILE_EXPORT_CAPABILITIES }
 
     fn submit(&self, batch: &[HardwareRequest]) -> Box<dyn JobHandle> {
         Box::new(ImmediateJobHandle::new(self.write_batch(batch)))

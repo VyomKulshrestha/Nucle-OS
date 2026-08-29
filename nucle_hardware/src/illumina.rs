@@ -26,7 +26,7 @@
 //! credentials available in this project's development environment -- but
 //! every request below is a genuine HTTP call, not a mock.
 
-use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider};
+use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider, ProviderCapabilities, ILLUMINA_CAPABILITIES};
 use nucle_lang::hardware::HardwareRequest;
 use serde::{Deserialize, Serialize};
 
@@ -124,6 +124,8 @@ impl Provider for IlluminaProvider {
     fn name(&self) -> &str {
         "illumina"
     }
+
+    fn capabilities(&self) -> ProviderCapabilities { ILLUMINA_CAPABILITIES }
 
     fn submit(&self, batch: &[HardwareRequest]) -> Box<dyn JobHandle> {
         let inputs = batch.iter().map(|request| LaunchInput { name: request.target.clone() }).collect();

@@ -424,6 +424,11 @@ enum PackageAction {
 
 #[derive(Subcommand, Debug, Clone)]
 enum HardwareSubcommand {
+    /// Show each vendor adapter's request/profile contract without loading credentials or contacting the vendor
+    Capabilities {
+        /// Optional vendor name: twist, idt, illumina, or nanopore
+        provider: Option<String>,
+    },
     /// Export batch requests from one or more NucleScript files to a JSON file
     Export {
         /// NucleScript file(s) to compile and extract requests from. Passing
@@ -2405,6 +2410,7 @@ fn indexed_output_path(base: &str, index: usize) -> String {
 
 fn cmd_hardware(subcommand: HardwareSubcommand, pool_dir: &std::path::Path, json: bool) {
     match subcommand {
+        HardwareSubcommand::Capabilities { provider } => cmd_hardware_capabilities(provider.as_deref(), json),
         HardwareSubcommand::Export {
             source,
             output,
@@ -2446,6 +2452,42 @@ fn cmd_hardware(subcommand: HardwareSubcommand, pool_dir: &std::path::Path, json
             std::path::Path::new(&config),
             json,
         ),
+    }
+}
+
+fn cmd_hardware_capabilities(provider: Option<&str>, json: bool) {
+    let capabilities: Vec<_> = nucle_hardware::VENDOR_CAPABILITIES
+        .iter()
+        .filter(|capabilities| provider.is_none_or(|name| capabilities.name == name))
+        .collect();
+    if capabilities.is_empty() {
+        eprintln!("unknown vendor '{}'; expected twist, idt, illumina, or nanopore", provider.unwrap_or_default());
+        std::process::exit(1);
+    }
+
+    if json {
+        let values: Vec<_> = capabilities.iter().map(|capabilities| serde_json::json!({
+            "provider": capabilities.name,
+            "request_types": capabilities.request_kinds.iter().map(|kind| kind.as_str()).collect::<Vec<_>>(),
+            "profiles": capabilities.profiles,
+            "resumable": capabilities.resumable,
+            "networked": capabilities.networked,
+            "live_discovery": false,
+        })).collect();
+        if values.len() == 1 {
+            println!("{}", serde_json::to_string_pretty(&values[0]).unwrap());
+        } else {
+            println!("{}", serde_json::to_string_pretty(&values).unwrap());
+        }
+        return;
+    }
+
+    for capabilities in capabilities {
+        println!("{}", capabilities.name);
+        println!("  Request types: {}", capabilities.request_kinds.iter().map(|kind| kind.as_str()).collect::<Vec<_>>().join(", "));
+        println!("  Profiles: {}", capabilities.profiles.join(", "));
+        println!("  Resumable: {}", if capabilities.resumable { "yes" } else { "no" });
+        println!("  Live discovery: no (static adapter contract)");
     }
 }
 

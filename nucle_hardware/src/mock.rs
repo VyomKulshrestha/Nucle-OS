@@ -1,7 +1,7 @@
 //! A mock hardware provider for dry runs and tests — never touches disk
 //! or a real vendor API.
 
-use crate::provider::{ImmediateJobHandle, JobHandle, Provider};
+use crate::provider::{ImmediateJobHandle, JobHandle, Provider, ProviderCapabilities, MOCK_CAPABILITIES};
 use nucle_lang::hardware::HardwareRequest;
 
 /// A mock hardware provider for testing dry runs.
@@ -11,6 +11,8 @@ impl Provider for MockProvider {
     fn name(&self) -> &str {
         "mock"
     }
+
+    fn capabilities(&self) -> ProviderCapabilities { MOCK_CAPABILITIES }
 
     fn submit(&self, batch: &[HardwareRequest]) -> Box<dyn JobHandle> {
         let count = batch.len();

@@ -21,7 +21,7 @@
 //! every request below, including the token exchange, is a genuine HTTP
 //! call, not a mock.
 
-use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider};
+use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider, ProviderCapabilities, IDT_CAPABILITIES};
 use base64::Engine;
 use nucle_lang::hardware::HardwareRequest;
 use serde::{Deserialize, Serialize};
@@ -184,6 +184,8 @@ impl Provider for IdtProvider {
     fn name(&self) -> &str {
         "idt"
     }
+
+    fn capabilities(&self) -> ProviderCapabilities { IDT_CAPABILITIES }
 
     fn submit(&self, batch: &[HardwareRequest]) -> Box<dyn JobHandle> {
         let outcome = (|| -> Result<String, String> {

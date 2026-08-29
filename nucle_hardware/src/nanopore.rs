@@ -16,7 +16,7 @@
 //! argument; `JobHandle::status()` polls `ProtocolService.get_run_info`
 //! and maps `ProtocolState` onto `JobStatus`.
 
-use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider};
+use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider, ProviderCapabilities, NANOPORE_CAPABILITIES};
 use nucle_lang::hardware::HardwareRequest;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -235,6 +235,8 @@ impl Provider for NanoporeProvider {
         "nanopore"
     }
 
+    fn capabilities(&self) -> ProviderCapabilities { NANOPORE_CAPABILITIES }
+
     fn submit(&self, batch: &[HardwareRequest]) -> Box<dyn JobHandle> {
         let args: Vec<String> = batch.iter().map(|request| request.target.clone()).collect();
         let outcome = (|| -> Result<(Channel, String, u16), String> {
@@ -404,7 +406,7 @@ mod tests {
             protocol_identifier: "sequencing/dummy".to_string(),
         };
         let provider = NanoporeProvider::new(config).unwrap();
-        let result = provider.execute_batch(&[]);
+        let result = provider.submit(&[]).wait();
         assert!(result.is_err());
     }
 }

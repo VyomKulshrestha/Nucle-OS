@@ -2,7 +2,7 @@ use nucle_hardware::{
     IdtConfig, IdtProvider, IlluminaConfig, IlluminaProvider, JobHandle, NanoporeAuth,
     NanoporeConfig, NanoporeProvider, Provider, TwistConfig, TwistProvider,
 };
-use nucle_lang::hardware::{HardwareRequest, RequestType};
+use nucle_lang::hardware::HardwareRequest;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -40,31 +40,7 @@ impl ConfiguredVendor {
     }
 
     pub fn validate_batch(&self, batch: &[HardwareRequest]) -> Result<(), String> {
-        if batch.is_empty() {
-            return Err(format!(
-                "provider '{}' requires at least one compatible hardware request",
-                self.name()
-            ));
-        }
-        let accepts_synthesis = matches!(self, Self::Twist(_) | Self::Idt(_));
-        let accepts_sequencing = matches!(self, Self::Illumina(_) | Self::Nanopore(_));
-        for request in batch {
-            let supported = match &request.detail {
-                RequestType::Synthesis { .. } => accepts_synthesis,
-                RequestType::Sequencing { .. } => accepts_sequencing,
-                RequestType::Destructive { .. }
-                | RequestType::Qc { .. }
-                | RequestType::Recovery { .. } => false,
-            };
-            if !supported {
-                return Err(format!(
-                    "provider '{}' cannot safely execute request type '{}'; use a provider-scoped source file",
-                    self.name(),
-                    request_type_name(&request.detail)
-                ));
-            }
-        }
-        Ok(())
+        self.provider().validate_batch(batch)
     }
 
     pub fn resume(&self, token: &str) -> Result<Box<dyn JobHandle>, String> {
@@ -74,16 +50,6 @@ impl ConfiguredVendor {
             Self::Illumina(provider) => provider.resume(token),
             Self::Nanopore(provider) => provider.resume(token),
         }
-    }
-}
-
-fn request_type_name(request: &RequestType) -> &'static str {
-    match request {
-        RequestType::Synthesis { .. } => "synthesis",
-        RequestType::Sequencing { .. } => "sequencing",
-        RequestType::Destructive { .. } => "destructive",
-        RequestType::Qc { .. } => "qc",
-        RequestType::Recovery { .. } => "recovery",
     }
 }
 

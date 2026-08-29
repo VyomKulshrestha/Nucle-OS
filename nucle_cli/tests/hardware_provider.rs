@@ -52,11 +52,12 @@ fn run_export(
     command.output().expect("failed to spawn nucle-cli export")
 }
 
-fn write_synthesis_program(dir: &Path) -> PathBuf {
+fn write_synthesis_program(dir: &Path, profile: &str) -> PathBuf {
     let path = dir.join("synthesis.nsl");
+    let error_rate = if profile == "IDT" { "0.05%" } else { "0.03%" };
     std::fs::write(
         &path,
-        "pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist }\nlet strands: Pool<Twist, 0.03%> = synthesise archive via Twist confirm hardware\n",
+        format!("pool archive: DnaPool {{ codec: Ternary, redundancy: 3x, profile: {profile} }}\nlet strands: Pool<{profile}, {error_rate}> = synthesise archive via {profile} confirm hardware\n"),
     )
     .unwrap();
     path
@@ -132,6 +133,58 @@ fn unknown_provider_is_rejected_before_any_output_is_created() {
     assert!(!output.exists());
     assert!(String::from_utf8_lossy(&result.stderr)
         .contains("provider 'typo-provider' is not available"));
+}
+
+#[test]
+fn hardware_capabilities_are_available_without_credentials() {
+    let output = Command::new(nucle_cli_bin())
+        .arg("--json")
+        .arg("hardware")
+        .arg("capabilities")
+        .arg("idt")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["provider"], "idt");
+    assert_eq!(value["request_types"], serde_json::json!(["synthesis"]));
+    assert_eq!(value["profiles"], serde_json::json!(["IDT"]));
+    assert_eq!(value["resumable"], true);
+    assert_eq!(value["live_discovery"], false);
+}
+
+#[test]
+fn idt_rejects_a_twist_profile_before_job_creation_or_network_access() {
+    let dir = scratch_dir("idt_profile_mismatch");
+    let source = write_synthesis_program(&dir, "Twist");
+    let config = dir.join("idt.json");
+    let job = dir.join("job.jsonl");
+    std::fs::write(
+        &config,
+        r#"{"provider":"idt","client_id_env":"TEST_IDT_CLIENT_ID","client_secret_env":"TEST_IDT_CLIENT_SECRET","username_env":"TEST_IDT_USERNAME","password_env":"TEST_IDT_PASSWORD","token_url":"https://example.invalid/token","api_base_url":"https://example.invalid","order_path":"/orders","status_path_template":"/orders/{id}"}"#,
+    )
+    .unwrap();
+
+    let output = run_export(
+        &source,
+        "idt",
+        &config,
+        &job,
+        &[
+            ("TEST_IDT_CLIENT_ID", "dummy-client"),
+            ("TEST_IDT_CLIENT_SECRET", "dummy-secret"),
+            ("TEST_IDT_USERNAME", "user@example.com"),
+            ("TEST_IDT_PASSWORD", "dummy-password"),
+        ],
+        true,
+    );
+
+    assert!(!output.status.success());
+    assert!(!job.exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("does not accept profile 'Twist'"), "{stderr}");
+    assert!(stderr.contains("supported profiles: IDT"), "{stderr}");
 }
 
 #[test]
@@ -215,7 +268,7 @@ fn mixed_vendor_batch_is_rejected_before_job_creation_or_network_access() {
     );
     assert!(!output.status.success());
     assert!(!job.exists());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("provider-scoped source file"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("supported request types"));
 }
 
 #[test]
@@ -228,7 +281,7 @@ fn twist_export_and_status_resume_against_a_loopback_server() {
         }
     });
     let dir = scratch_dir("twist");
-    let source = write_synthesis_program(&dir);
+    let source = write_synthesis_program(&dir, "Twist");
     let config = dir.join("config.json");
     let job = dir.join("job.jsonl");
     std::fs::write(
@@ -281,7 +334,7 @@ fn idt_export_and_status_resume_against_a_loopback_server() {
         }
     });
     let dir = scratch_dir("idt");
-    let source = write_synthesis_program(&dir);
+    let source = write_synthesis_program(&dir, "IDT");
     let config = dir.join("config.json");
     let job = dir.join("job.jsonl");
     std::fs::write(

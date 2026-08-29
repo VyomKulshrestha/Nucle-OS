@@ -21,7 +21,7 @@
 //! available in this project's development environment -- but every
 //! request below is a genuine HTTP call, not a mock.
 
-use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider};
+use crate::provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider, ProviderCapabilities, TWIST_CAPABILITIES};
 use nucle_lang::hardware::HardwareRequest;
 use serde::{Deserialize, Serialize};
 
@@ -141,6 +141,8 @@ impl Provider for TwistProvider {
     fn name(&self) -> &str {
         "twist"
     }
+
+    fn capabilities(&self) -> ProviderCapabilities { TWIST_CAPABILITIES }
 
     fn submit(&self, batch: &[HardwareRequest]) -> Box<dyn JobHandle> {
         let constructs = batch

@@ -29,7 +29,7 @@ pub use idt::{IdtConfig, IdtProvider};
 pub use illumina::{IlluminaConfig, IlluminaProvider};
 pub use mock::MockProvider;
 pub use nanopore::{NanoporeAuth, NanoporeConfig, NanoporeProvider};
-pub use provider::{ImmediateJobHandle, JobHandle, JobStatus, Provider};
+pub use provider::{vendor_capabilities, ImmediateJobHandle, JobHandle, JobStatus, Provider, ProviderCapabilities, RequestKind, VENDOR_CAPABILITIES};
 pub use twist::{TwistConfig, TwistProvider};
 
 /// Shared test fixtures for building `HardwareRequest`s without depending

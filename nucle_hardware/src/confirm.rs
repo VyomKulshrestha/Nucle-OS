@@ -52,6 +52,7 @@ pub fn submit_with_confirmation_async(
             effectful
         ));
     }
+    provider.validate_batch(batch)?;
     Ok(provider.submit(batch))
 }
 
