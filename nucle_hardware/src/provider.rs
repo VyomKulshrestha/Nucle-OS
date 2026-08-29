@@ -2,7 +2,7 @@
 //! hardware requests. See `nucle_lang::hardware` for the request types.
 
 use nucle_lang::hardware::{HardwareRequest, RequestType};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Stable request categories advertised by a hardware provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +151,18 @@ pub trait JobHandle: Send {
 
     /// Blocks until the job reaches a terminal state.
     fn wait(&self) -> Result<String, String> {
+        self.wait_inner(None)
+    }
+
+    /// Blocks until the job reaches a terminal state or `timeout` elapses.
+    /// The provider job is not cancelled when the local wait expires; callers
+    /// can retain a resume token and inspect it again later.
+    fn wait_timeout(&self, timeout: Duration) -> Result<String, String> {
+        self.wait_inner(Some(timeout))
+    }
+
+    fn wait_inner(&self, timeout: Option<Duration>) -> Result<String, String> {
+        let started = Instant::now();
         let mut backoff = Duration::from_millis(1);
         let cap = Duration::from_millis(20);
         loop {
@@ -158,7 +170,19 @@ pub trait JobHandle: Send {
                 JobStatus::Complete(msg) => return Ok(msg),
                 JobStatus::Failed(msg) => return Err(msg),
                 JobStatus::Pending | JobStatus::Running => {
-                    std::thread::sleep(backoff);
+                    let sleep_for = if let Some(timeout) = timeout {
+                        let elapsed = started.elapsed();
+                        if elapsed >= timeout {
+                            return Err(format!(
+                                "hardware job did not complete within {} ms",
+                                timeout.as_millis()
+                            ));
+                        }
+                        std::cmp::min(backoff, timeout - elapsed)
+                    } else {
+                        backoff
+                    };
+                    std::thread::sleep(sleep_for);
                     backoff = std::cmp::min(backoff * 2, cap);
                 }
             }
@@ -253,6 +277,17 @@ pub trait Provider {
         self.validate_batch(batch)?;
         self.submit(batch).wait()
     }
+
+    /// Submit a batch and wait no longer than `timeout` for its terminal
+    /// status. Timing out does not imply the remote job was cancelled.
+    fn execute_batch_timeout(
+        &self,
+        batch: &[HardwareRequest],
+        timeout: Duration,
+    ) -> Result<String, String> {
+        self.validate_batch(batch)?;
+        self.submit(batch).wait_timeout(timeout)
+    }
 }
 
 #[cfg(test)]
@@ -261,6 +296,13 @@ mod tests {
     use crate::fixtures::synthesis_request;
 
     struct CapabilityProvider(ProviderCapabilities);
+
+    struct PendingHandle;
+
+    impl JobHandle for PendingHandle {
+        fn status(&self) -> JobStatus { JobStatus::Pending }
+        fn resume_token(&self) -> Option<String> { Some("resume-later".to_string()) }
+    }
 
     impl Provider for CapabilityProvider {
         fn name(&self) -> &str { self.0.name }
@@ -302,5 +344,13 @@ mod tests {
     fn generic_local_provider_may_accept_an_empty_batch() {
         let provider = CapabilityProvider(MOCK_CAPABILITIES);
         assert!(provider.validate_batch(&[]).is_ok());
+    }
+
+    #[test]
+    fn bounded_wait_times_out_without_losing_resume_information() {
+        let handle = PendingHandle;
+        let error = handle.wait_timeout(Duration::from_millis(5)).unwrap_err();
+        assert_eq!(error, "hardware job did not complete within 5 ms");
+        assert_eq!(handle.resume_token().as_deref(), Some("resume-later"));
     }
 }
