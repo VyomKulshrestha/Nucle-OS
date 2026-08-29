@@ -19,6 +19,7 @@ pub fn profile_error_rate_percent(profile: Profile) -> f64 {
         Profile::Illumina => 0.35,
         Profile::Nanopore => 5.00,
         Profile::Twist => 0.03,
+        Profile::Idt => 0.05,
     }
 }
 

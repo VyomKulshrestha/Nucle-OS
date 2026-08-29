@@ -11,8 +11,8 @@
     {
       "name": "@nuclescript/profiles",
       "import": "nuclescript/profiles",
-      "version": "0.1.0",
-      "description": "Illumina, Nanopore, and Twist hardware profile presets with recommended redundancy and measured error rates.",
+      "version": "0.2.0",
+      "description": "Illumina, Nanopore, Twist, and IDT hardware profile presets with recommended redundancy and measured error rates.",
       "manifest": "packages/nuclescript-profiles/package.json"
     },
     {

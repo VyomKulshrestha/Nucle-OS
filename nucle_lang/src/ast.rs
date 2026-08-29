@@ -720,6 +720,7 @@ pub enum Profile {
     Illumina,
     Nanopore,
     Twist,
+    Idt,
 }
 
 impl Profile {
@@ -728,6 +729,7 @@ impl Profile {
             "illumina" => Some(Self::Illumina),
             "nanopore" | "oxfordnanopore" | "oxford-nanopore" => Some(Self::Nanopore),
             "twist" | "twistbioscience" | "twist-bioscience" => Some(Self::Twist),
+            "idt" | "idtopools" | "idt-opools" => Some(Self::Idt),
             _ => None,
         }
     }
@@ -739,6 +741,7 @@ impl std::fmt::Display for Profile {
             Self::Illumina => "Illumina",
             Self::Nanopore => "Nanopore",
             Self::Twist => "Twist",
+            Self::Idt => "IDT",
         };
         write!(f, "{}", name)
     }

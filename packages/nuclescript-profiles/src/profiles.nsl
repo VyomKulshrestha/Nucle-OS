@@ -33,9 +33,16 @@ pool twist_standard: DnaPool {
     profile: Twist
 }
 
+pool idt_standard: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: IDT
+}
+
 let illumina_noise_profile: Pool<Illumina, 0.35%> = simulate illumina_standard under Illumina
 let nanopore_noise_profile: Pool<Nanopore, 5.00%> = simulate nanopore_standard under Nanopore
 let twist_noise_profile: Pool<Twist, 0.03%> = simulate twist_standard under Twist
+let idt_noise_profile: Pool<IDT, 0.05%> = simulate idt_standard under IDT
 
 fn recommended_pool_for_illumina(target: Pool<Illumina>) returns Pool<Illumina, 0.35%> {
     let noisy: Pool<Illumina, 0.35%> = simulate target under Illumina
@@ -47,4 +54,8 @@ fn recommended_pool_for_nanopore(target: Pool<Nanopore>) returns Pool<Nanopore, 
 
 fn recommended_pool_for_twist(target: Pool<Twist>) returns Pool<Twist, 0.03%> {
     let noisy: Pool<Twist, 0.03%> = simulate target under Twist
+}
+
+fn recommended_pool_for_idt(target: Pool<IDT>) returns Pool<IDT, 0.05%> {
+    let noisy: Pool<IDT, 0.05%> = simulate target under IDT
 }

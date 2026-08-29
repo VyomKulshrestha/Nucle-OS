@@ -814,6 +814,7 @@ fn profile_to_hardware(profile: Profile) -> HardwareProfile {
         Profile::Illumina => HardwareProfile::Illumina,
         Profile::Nanopore => HardwareProfile::OxfordNanopore,
         Profile::Twist => HardwareProfile::TwistBioscience,
+        Profile::Idt => HardwareProfile::Idt,
     }
 }
 

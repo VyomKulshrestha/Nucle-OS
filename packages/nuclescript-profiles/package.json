@@ -1,9 +1,9 @@
 {
   "name": "@nuclescript/profiles",
   "import": "nuclescript/profiles",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
-  "description": "Illumina, Nanopore, and Twist hardware profile presets with recommended redundancy and measured error rates.",
+  "description": "Illumina, Nanopore, Twist, and IDT hardware profile presets with recommended redundancy and measured error rates.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/VyomKulshrestha/Nucle-OS.git",
@@ -45,6 +45,11 @@
       "description": "Twist synthesis defaults at 2x redundancy for its very low error rate."
     },
     {
+      "name": "idt_standard",
+      "kind": "pool_schema",
+      "description": "IDT oPools synthesis defaults at 3x redundancy for its modeled 0.05% error rate."
+    },
+    {
       "name": "recommended_pool_for_illumina",
       "kind": "function",
       "description": "Simulates a target pool under Illumina and returns its measured 0.35% error-rate binding."
@@ -58,6 +63,11 @@
       "name": "recommended_pool_for_twist",
       "kind": "function",
       "description": "Simulates a target pool under Twist and returns its measured 0.03% error-rate binding."
+    },
+    {
+      "name": "recommended_pool_for_idt",
+      "kind": "function",
+      "description": "Simulates a target pool under IDT and returns its modeled 0.05% error-rate binding."
     }
   ],
   "source": "src/profiles.nsl",

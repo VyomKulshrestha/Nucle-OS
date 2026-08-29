@@ -8,9 +8,9 @@
     },
     {
       "name": "@nuclescript/profiles",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "import_source": "nuclescript/profiles",
-      "checksum": "1b284c0717ac1f06488cc174f00e74fd913665352131d09f1ad9e6b380552b37"
+      "checksum": "31c82700e58bf86ae163aa7b08143a8e92ac1cb6431afba844463994954e5fa2"
     },
     {
       "name": "@nuclescript/benchmarks",

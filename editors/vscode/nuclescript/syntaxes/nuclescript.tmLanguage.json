@@ -99,7 +99,7 @@
       "patterns": [
         {
           "name": "support.constant.profile.nuclescript",
-          "match": "\\b(Illumina|illumina|Nanopore|OxfordNanopore|oxfordnanopore|oxford-nanopore|Twist|TwistBioscience|twistbioscience|twist-bioscience)\\b"
+          "match": "\\b(Illumina|illumina|Nanopore|OxfordNanopore|oxfordnanopore|oxford-nanopore|Twist|TwistBioscience|twistbioscience|twist-bioscience|IDT|idt|IDToPools|idtopools|idt-opools)\\b"
         }
       ]
     },

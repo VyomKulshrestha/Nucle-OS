@@ -285,6 +285,7 @@ fn lower_pipeline(pipeline: &PipelineDecl, pools: &HashMap<String, PoolDecl>) ->
 fn recommended_redundancy(profile: Profile, coverage: usize) -> usize {
     match profile {
         Profile::Twist => 2,
+        Profile::Idt => 3,
         Profile::Illumina if coverage >= 10 => 3,
         Profile::Illumina => 4,
         Profile::Nanopore if coverage >= 10 => 6,
