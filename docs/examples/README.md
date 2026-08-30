@@ -19,6 +19,7 @@ nucle run docs/examples/store.nsl
 | `multi_store_search.nsl` | Multiple stores followed by a search-style retrieval query |
 | `critical_redundancy_warning.nsl` | Compiler warning for critical data with insufficient redundancy |
 | `nanopore_recovery_warning.nsl` | Compiler warning for unrealistic Nanopore recovery expectation |
+| `idt_vendor.nsl` | Typed IDT oPools synthesis request with both language-level and operator-level confirmation boundaries |
 | `strand_constraints.nsl` | Compile-time failure for invalid hardcoded DNA strand constraints |
 | `sequence_literals.nsl` | DNA-native `Sequence` literals and `seq"..."` validation |
 | `probabilistic_recovery.nsl` | Probabilistic `Pool<P, E>` typing and consensus error propagation |

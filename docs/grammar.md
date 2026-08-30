@@ -33,7 +33,7 @@ PoolProperty        ::= 'codec' ':' CodecLiteral
                       | 'profile' ':' ProfileLiteral
 
 CodecLiteral        ::= 'YinYang' | 'yin-yang' | 'Ternary' | 'ternary-rotating' | 'ternary-rotating-cipher' | 'Fountain' | 'dna-fountain'
-ProfileLiteral      ::= 'Illumina' | 'Nanopore' | 'oxfordnanopore' | 'oxford-nanopore' | 'Twist' | 'twistbioscience' | 'twist-bioscience'
+ProfileLiteral      ::= 'Illumina' | 'Nanopore' | 'oxfordnanopore' | 'oxford-nanopore' | 'Twist' | 'twistbioscience' | 'twist-bioscience' | 'IDT' | 'idtopools' | 'idt-opools'
 
 // A user-defined sum type -- at most one payload per variant
 // (never a tuple of several), mirroring 'Ok(T)'/'Err(E)''s own shape.
@@ -98,7 +98,7 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
 FnEffectAnnotation  ::= 'confirm' 'hardware'
                       | 'confirm' 'physical_key'
 
-PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'Amplified' | 'Recovered' | Identifier
+PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'IDT' | 'Amplified' | 'Recovered' | Identifier
                       // the bare Identifier case is only ever a name
                       // already declared in the enclosing FunctionDecl's
                       // TypeParamList -- any other identifier here is a
@@ -454,7 +454,7 @@ for a complete, runnable example.
 
 A function generic over `Pool<T>`'s profile — the actual motivating pain
 point: without this, the same logic needs one hardcoded copy per profile
-(`Illumina`/`Nanopore`/`Twist`), since `Pool<Illumina>` and
+(`Illumina`/`Nanopore`/`Twist`/`IDT`), since `Pool<Illumina>` and
 `Pool<Nanopore>` are different concrete types with no shared supertype.
 
 ```nsl

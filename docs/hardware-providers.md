@@ -17,6 +17,18 @@ nucle hardware export archive.nsl \
 nucle hardware status twist-job.jsonl --config twist.json
 ```
 
+Inspect the provider boundary without credentials or network access:
+
+```bash
+nucle hardware capabilities
+nucle hardware capabilities idt
+nucle --json hardware capabilities
+```
+
+This reports the adapter's static request/profile contract, resumability, and
+network requirement. It is not live instrument discovery and does not claim a
+configured account or instrument is currently available.
+
 The source program must still contain its language-level `confirm hardware`
 or `confirm physical_key`, and the operator must still pass `--confirm` for
 any cost-bearing or destructive batch. A configured `confirm-users` policy is
@@ -35,8 +47,9 @@ replace any of these gates.
 - Vendor endpoint paths must remain on the configured host. Status templates
   contain exactly one `{id}` placeholder, and returned job IDs are validated
   and percent-encoded before use in a URL.
-- Vendor source files are type-scoped: Twist and IDT accept synthesis requests;
-  Illumina and Nanopore accept sequencing requests. Empty, mixed, destructive,
+- Vendor source files are type- and profile-scoped: Twist accepts only `Twist`
+  synthesis, IDT accepts only `IDT` synthesis, Illumina accepts only `Illumina`
+  sequencing, and Nanopore accepts only `Nanopore` sequencing. Empty, mixed, destructive,
   QC, or recovery batches are rejected before job-file creation or network
   access instead of being silently coerced into a vendor payload.
 - `--job-file` uses append-only JSON Lines and refuses to overwrite an existing
@@ -48,6 +61,9 @@ replace any of these gates.
   transport error exits non-zero but does not remove the job file; retrying the
   status command is safe.
 - HTTP and MinKNOW connection/RPC calls have bounded five-second timeouts.
+- Library callers can use `JobHandle::wait_timeout` or
+  `Provider::execute_batch_timeout` to bound a complete job wait. A local
+  timeout does not cancel the remote job; its resume token remains usable.
 
 No live credentials are needed by the test suite. Twist, IDT, and Illumina CLI
 tests use loopback HTTP stand-ins. Nanopore uses a generated test certificate

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Added typed IDT oPools schemas and a matching simulation helper.
+- Aligned IDT defaults with the compiler's 3x redundancy and 0.05% error model.
+
 ## 0.1.0
 
 - Initial `@nuclescript/profiles` package release.

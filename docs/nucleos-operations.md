@@ -118,6 +118,13 @@ never embeds credentials in the generated job record. Successful submission
 writes an append-only `--job-file` and reports `Submitted`. Poll it from a new
 process with `nucle hardware status JOB --config CONFIG`.
 
+`nucle hardware capabilities [provider]` exposes each adapter's static
+request/profile contract before credentials are loaded. The provider boundary
+rejects a mismatched profile (for example, a `Twist` synthesis batch sent to
+IDT) before job-file creation or network access. Library callers that block on
+a handle can use `wait_timeout`; expiry leaves the remote job and resume token
+intact for a later status check.
+
 The compiler confirmation, operator `--confirm`, and optional `confirm-users`
 checks all run before the first vendor request. Unknown providers, missing or
 unknown config fields, provider/config mismatches, insecure non-loopback HTTP,
@@ -127,17 +134,17 @@ vendor's schema and operational boundary.
 
 ## Verification snapshot
 
-Measured locally on 21 August 2026:
+Measured locally on 30 August 2026:
 
-- The current inventory is 746 discovered tests: 745 runnable and one
+- The current inventory is 764 discovered tests: 763 runnable and one
   intentionally expensive Nanopore test ignored.
-- All 745 runnable tests passed with
-  `cargo test --workspace --no-fail-fast -q --lib --tests --bins` in 134.6
-  seconds. Workspace doctests passed separately in 33.5 seconds.
-- NucleOS package Clippy (`--all-targets --no-deps -- -D warnings`): pass for
-  all nine NucleOS packages.
-- `cargo audit`: no vulnerabilities across 276 dependencies.
-- Pristine, Illumina `-r 4`, and Nanopore `-r 12` full-pipeline benchmarks:
+- All 763 runnable tests, including three doctests, passed with
+  `cargo test --workspace --no-fail-fast -q` in 161.5 seconds.
+- Workspace Clippy (`cargo clippy --workspace --all-targets -- -D warnings`):
+  pass for every workspace crate and target.
+- `cargo audit`: no known vulnerabilities across 279 locked dependencies.
+- The 21 August 2026 Pristine, Illumina `-r 4`, and Nanopore `-r 12`
+  full-pipeline benchmarks remain the latest codec/recovery measurements;
   all four standard fixtures recovered exactly in each run.
 
 Benchmark details and current figures are recorded in the root README.

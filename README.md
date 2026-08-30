@@ -107,7 +107,7 @@ Each layer is a real engineering problem. This project owns the whole stack.
 
 ### Layer 1 — Synthesis Simulator (`nucle_synth`)
 
-Models the exact error distributions of real DNA synthesizers — substitution rates, insertion/deletion frequencies, strand dropout. This is the "noisy channel" everything above must survive. Parameterised to mimic different hardware profiles (Illumina, Oxford Nanopore, Twist Bioscience).
+Models the exact error distributions of real DNA synthesizers — substitution rates, insertion/deletion frequencies, strand dropout. This is the "noisy channel" everything above must survive. Parameterised to mimic different hardware profiles (Illumina, Oxford Nanopore, Twist Bioscience, IDT oPools).
 
 ### Layer 2 — Encoding Engine (`nucle_codec`)
 
@@ -161,7 +161,7 @@ A ReAct agent that takes natural-language file operations, plans across the VFS 
 
 ### Layer 7 — Hardware Bridge (`nucle_hardware`)
 
-The execution boundary between compiled NucleScript plans and real lab hardware. `nucle_lang::hardware` only ever collects typed `HardwareRequest`s (Synthesis, Sequencing, Destructive) from an effect-checked program; `nucle_hardware::Provider` is the one trait that actually submits them via `submit(&self, batch) -> Box<dyn JobHandle>` (returns immediately; poll `status()` or block on `wait()`) — via `MockProvider` (instant dry run), `DelayedMockProvider` (dry run simulating real hardware latency on a `std::thread`), `FileExportProvider` (writes a JSON batch for lab submission), or four real vendor adapters: `TwistProvider`/`IdtProvider`/`IlluminaProvider` (genuine HTTP clients against each vendor's actual public API) and `NanoporeProvider` (a genuine gRPC client compiled against Oxford Nanopore's real, vendored MinKNOW `.proto` files, since ONT's public API controls a local instrument rather than exposing a cloud REST endpoint like the other three). The CLI exposes all four through strict vendor config files, environment-only credential loading, and append-only resumable job records while preserving both confirmation gates. No adapter has been exercised here with live credentials or hardware; see [docs/hardware-providers.md](docs/hardware-providers.md) and [docs/architecture.md](docs/architecture.md#hardware-bridge-and-provider-boundaries) for the exact operational and evidence boundaries.
+The execution boundary between compiled NucleScript plans and real lab hardware. `nucle_lang::hardware` only ever collects typed `HardwareRequest`s (Synthesis, Sequencing, Destructive) from an effect-checked program; `nucle_hardware::Provider` is the one trait that advertises static capabilities, validates exact request/profile compatibility, and submits them via `submit(&self, batch) -> Box<dyn JobHandle>` (returns immediately; poll `status()`, block on `wait()`, or bound the local wait with `wait_timeout()`) — via `MockProvider` (instant dry run), `DelayedMockProvider` (dry run simulating real hardware latency on a `std::thread`), `FileExportProvider` (writes a JSON batch for lab submission), or four real vendor adapters: `TwistProvider`/`IdtProvider`/`IlluminaProvider` (genuine HTTP clients against each vendor's actual public API) and `NanoporeProvider` (a genuine gRPC client compiled against Oxford Nanopore's real, vendored MinKNOW `.proto` files, since ONT's public API controls a local instrument rather than exposing a cloud REST endpoint like the other three). The CLI exposes all four through inspectable capability contracts, strict vendor config files, environment-only credential loading, and append-only resumable job records while preserving both confirmation gates. No adapter has been exercised here with live credentials or hardware; see [docs/hardware-providers.md](docs/hardware-providers.md) and [docs/architecture.md](docs/architecture.md#hardware-bridge-and-provider-boundaries) for the exact operational and evidence boundaries.
 
 ### Layer 8 — Block-Device Abstraction (`nucle_blockdev`)
 
@@ -175,8 +175,14 @@ A fixed-size, address-addressed block device sitting parallel to (not underneath
 # Build the entire workspace
 cargo build --workspace
 
-# Run all tests (700+ tests)
+# Run all tests
 cargo test --workspace
+
+# Enforce the same warning-free lint gate as CI
+cargo clippy --workspace --all-targets -- -D warnings
+
+# Verify the browser compiler target
+cargo build -p nucle_wasm --target wasm32-unknown-unknown --release
 
 # Run the CLI
 cargo run --bin nucle-cli -- --help
@@ -623,7 +629,7 @@ full semantics and
 for a complete, runnable example.
 
 A function can be generic over `Pool<T>`'s profile — one function
-instead of a hardcoded copy per `Illumina`/`Nanopore`/`Twist`:
+instead of a hardcoded copy per `Illumina`/`Nanopore`/`Twist`/`IDT`:
 
 ```nuclescript
 pool illumina_archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
@@ -780,7 +786,7 @@ each versioned independently from NucleOS releases:
 | Package | Import source | Purpose |
 |---|---|---|
 | `@nuclescript/presets` | `nuclescript/presets` | Baseline archive pool schemas, a reliable-store pipeline, and an `archive_with_guarantee` function |
-| `@nuclescript/profiles` | `nuclescript/profiles` | Illumina/Nanopore/Twist pool presets at optimizer-recommended redundancy, plus per-profile simulate functions |
+| `@nuclescript/profiles` | `nuclescript/profiles` | Illumina/Nanopore/Twist/IDT pool presets at optimizer-recommended redundancy, plus per-profile simulate functions |
 | `@nuclescript/benchmarks` | `nuclescript/benchmarks` | Pool schemas and pipelines matching the `docs/examples/fixtures/` workload set |
 | `@nuclescript/recovery` | `nuclescript/recovery` | Consensus/recovery pool bindings and a `recover_with_consensus` function |
 
@@ -1107,6 +1113,10 @@ nucle package verify "@nuclescript/presets"
 nucle hardware export docs/examples/effect_confirmations.nsl --confirm -o batch.json
 nucle hardware export docs/examples/effect_confirmations.nsl --confirm --provider mock
 
+# Inspect static adapter contracts without credentials or network access
+nucle hardware capabilities
+nucle --json hardware capabilities idt
+
 # Multiple sources submit concurrently instead of one at a time
 nucle hardware export a.nsl b.nsl c.nsl --confirm --provider mock-delayed --simulated-delay-ms 300
 
@@ -1184,15 +1194,15 @@ nucle agent "pool status"
 | `nucle_synth` | 32 | Error models, noise engine, hardware profiles, encode→noise→decode e2e |
 | `nucle_ecc` | 39 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety) |
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, metadata-similarity search |
-| `nucle_vfs` | 126 (+1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, rewrite/versioning, historical reads, complete-chain deletion, metadata-only complete-chain rename, Ternary/Fountain/Yin-Yang migration with per-version codec metadata and readable history, primer-tagged Fountain screening, persisted configuration, RS-backed arbitrary erasure recovery, versioned droplet extension, rejected empty input without pool mutation, automatically growing deterministic primer addressing (including reopen with a smaller capacity hint and no address consumption on a refused write), per-object recovery manifests, fixture/Illumina/Nanopore roundtrips, durable atomic persistence, namespace prefixes, optimistic concurrency and file locking, capacity limits, audit logging, confirm-user policy, encryption at rest, integrity scanning, tenancy, and Prometheus metrics |
+| `nucle_vfs` | 127 (126 runnable, 1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, rewrite/versioning, historical reads, complete-chain deletion, metadata-only complete-chain rename, Ternary/Fountain/Yin-Yang migration with per-version codec metadata and readable history, primer-tagged Fountain screening, persisted configuration, RS-backed arbitrary erasure recovery, versioned droplet extension, rejected empty input without pool mutation, automatically growing deterministic primer addressing (including reopen with a smaller capacity hint and no address consumption on a refused write), per-object recovery manifests, fixture/Illumina/Nanopore roundtrips, durable atomic persistence, namespace prefixes, optimistic concurrency and file locking, capacity limits, audit logging, confirm-user policy, encryption at rest, integrity scanning, tenancy, and Prometheus metrics |
 | `nucle_agent` | 36 | Tool defs, planner, executor, including natural-language `migrate` (redundancy/codec extraction with aliases for Ternary, Fountain, and Yin-Yang) and `help` (regression-guarded against a fixed bug where it silently ran `pool_status` instead) |
-| `nucle_lang` | 264 | Lexer/parser, biological and probabilistic pool checks, effects, compile-time control flow, canonical formatting, `test`/`assert`, doc generation, package/lockfile APIs, functions/generics/closures, `Result<T, E>`/`?`, enums and exhaustive pattern matching, effect-annotated function types, and real Fountain direct-store/pipeline execution with exact VFS readback. New soundness coverage validates whole-program forward and mutually-recursive signatures, ordinary binding/argument/return types, nested calls, Result/enum-producing call arity and generics, strict `protect(File, Recovery) -> DnaFile`, scalar `Ok`/computed `Err`/enum payloads/match arms, and real runtime execution of computed error messages. |
-| `nucle_hardware` | 50 | Confirmation gating (effectful/destructive rejection, count/message correctness, sync and async variants, and a dedicated proof that read-only `Qc`/`Recovery` requests never count as effectful), mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation, the job-handle/concurrency model (`submit()` returning before a real simulated delay elapses, multiple concurrent jobs finishing in well under their sequential-sum time, `Pending`/`Running`/`Complete` status transitions), and the real vendor adapters: Twist/IDT/Illumina HTTP request-building/auth-header/status-classification against local `tiny_http` stand-ins, IDT's two-step OAuth2 flow, and Nanopore protocol-state mapping plus a local TLS gRPC MinKNOW stand-in that verifies discovery, submission, resume-token reconstruction, and status polling without an instrument |
+| `nucle_lang` | 269 | Lexer/parser, biological and probabilistic pool checks including typed IDT, effects, compile-time control flow, canonical formatting, `test`/`assert`, doc generation, package/lockfile APIs, functions/generics/closures, `Result<T, E>`/`?`, enums and exhaustive pattern matching, effect-annotated function types, real Fountain direct-store/pipeline execution, and a deterministic corpus that drives checker/analyzer/formatter over more than 1,000 shipped-program mutations without panics. New soundness coverage validates whole-program forward and mutually-recursive signatures, ordinary binding/argument/return types, nested calls, Result/enum-producing call arity and generics, strict `protect(File, Recovery) -> DnaFile`, scalar `Ok`/computed `Err`/enum payloads/match arms, and real runtime execution of computed error messages. |
+| `nucle_hardware` | 55 | Confirmation gating (effectful/destructive rejection, count/message correctness, sync and async variants, and a dedicated proof that read-only `Qc`/`Recovery` requests never count as effectful), static provider capability/preflight contracts with exact profile matching, bounded waits that preserve resume information, mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation, the job-handle/concurrency model (`submit()` returning before a real simulated delay elapses, multiple concurrent jobs finishing in well under their sequential-sum time, `Pending`/`Running`/`Complete` status transitions), and the real vendor adapters: Twist/IDT/Illumina HTTP request-building/auth-header/status-classification against local `tiny_http` stand-ins, IDT's two-step OAuth2 flow, and Nanopore protocol-state mapping plus a local TLS gRPC MinKNOW stand-in that verifies discovery, submission, resume-token reconstruction, and status polling without an instrument |
 | `nucle_blockdev` | 25 | The `BlockDevice` contract against both backends; write-once synthesis-array and rewritable-Nanopore behavior; real consensus + Reed-Solomon corruption recovery; batched array latency; blob layout; and atomic, versioned image save/load including backend dimensions, written blocks, Nanopore read counters, write generations, and malformed-image rejection |
-| `nucle-cli` | 56 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; real Fountain binary round-trip, migration to/from Fountain with historical reads, cross-process droplet extension, empty/unknown codec rejection; persistent block-device images; fail-closed hardware-provider selection, strict config validation, and incompatible-batch refusal; loopback-only Twist/IDT/Illumina submit-and-resume flows; Nanopore credential refusal; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI |
+| `nucle-cli` | 59 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; real Fountain binary round-trip, migration to/from Fountain with historical reads, cross-process droplet extension, empty/unknown codec rejection; persistent block-device images; complete pinned-workspace doctor checks; fail-closed hardware capability/profile validation and strict config handling; loopback-only Twist/IDT/Illumina submit-and-resume flows; Nanopore credential refusal; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI |
 | `nucle_lsp` | 17 | UTF-16-correct positions, diagnostics, hover, definition, symbols, context-aware completion, references, safe prepare/rename, and semantic tokens, including real Content-Length-framed JSON-RPC integration tests cross-checked against `nucle check`. |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **748 discovered tests (747 runnable, 1 ignored)** | **All 747 runnable tests passed in 302.6 seconds with `cargo test --workspace --no-fail-fast --lib --tests --bins -j 1`; workspace doctests are verified separately.** |
+| **Total** | **764 discovered tests (763 runnable, 1 ignored; includes 3 doctests)** | **All 763 runnable tests passed in 161.5 seconds with `cargo test --workspace --no-fail-fast -q` on 30 August 2026; `cargo audit` reported no known vulnerabilities across 279 locked dependencies.** |
 
 ---
 
@@ -1206,7 +1216,7 @@ nucle_index/     — Retrieval & indexing (CRISPR-sim, vector index)
 nucle_vfs/       — Virtual file system (syscall-style API, storage/recovery manifests, migration)
 nucle_agent/     — Agent interface (ReAct planner)
 nucle_lang/      — NucleScript compiler, MIR optimizer, package registry, lock files, ecosystem APIs, simulation backend, and VFS backend
-nucle_hardware/  — Hardware provider adapters (Provider trait with submit()/JobHandle, MockProvider, DelayedMockProvider, FileExportProvider, and real Twist/IDT/Illumina/Nanopore vendor adapters)
+nucle_hardware/  — Hardware provider adapters (capability/preflight contract, submit()/JobHandle with bounded waits, local providers, and real Twist/IDT/Illumina/Nanopore adapters)
 nucle_lsp/       — NucleScript language server (diagnostics, navigation, completion, references, rename, semantic tokens, outline)
 nucle_cli/       — Command-line interface
 nucle_playground/ — Interactive web playground (tiny_http server + static frontend), also published at github.com/Nuclescript/playground

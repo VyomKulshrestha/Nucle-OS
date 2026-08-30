@@ -17,12 +17,13 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // whenever a newer `v*` release ships with an updated nucle-cli, or a
 // fresh install downloading it will fail to parse -- or silently
 // mis-execute -- any .nsl file using syntax added since the pinned tag.
-// v0.1.27 is the NucleOS release paired with extension v0.1.13. It adds
-// executable Fountain pools/pipelines to the versioned-write runtime already
-// present in v0.1.26, so a clean extension install does not silently download
-// a CLI that rejects the workflow advertised by this release. This stays
-// independent of nucle-lsp's extension-versioned release tag.
-const CLI_RELEASE_TAG = "v0.1.27";
+// v0.1.28 is reserved as the NucleOS release paired with extension v0.1.14.
+// It contains the typed IDT profile and vendor capability/preflight contract,
+// so a clean extension install does not download a CLI that rejects IDT source
+// accepted by the bundled grammar and language server. Publish that runtime
+// release before publishing this VSIX. This stays independent of nucle-lsp's
+// extension-versioned release tag.
+const CLI_RELEASE_TAG = "v0.1.28";
 
 /** The release asset name published for this platform, or `undefined` if
  * none exists (arm64 Linux/Windows) -- caller falls back to asking the

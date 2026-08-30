@@ -42,9 +42,9 @@ Exports:
 | `illumina_recovery` | `recovery_profile` | Illumina consensus recovery defaults |
 | `archive_with_guarantee` | `function` | Reusable archive workflow: protect data for a recovery guarantee, then store into a target pool |
 
-## @nuclescript/profiles 0.1.0
+## @nuclescript/profiles 0.2.0
 
-Illumina, Nanopore, and Twist hardware profile presets with recommended
+Illumina, Nanopore, Twist, and IDT hardware profile presets with recommended
 redundancy and measured error rates. See
 [packages/nuclescript-profiles/README.md](../packages/nuclescript-profiles/README.md).
 

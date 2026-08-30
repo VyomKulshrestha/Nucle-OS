@@ -4,6 +4,16 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.14]
+
+- Added `IDT`, `idtopools`, and `idt-opools` highlighting, backed by the
+  compiler's typed `Pool<IDT, E>` profile and IDT-specific synthesis checks.
+- Added a runnable IDT vendor example and refreshed all TextMate grammar
+  snapshots.
+- Prepared the clean-install CLI fallback for the paired NucleOS v0.1.28
+  release so Run File and formatting use a compiler that understands IDT once
+  that release's binaries are published.
+
 ## [0.1.13]
 
 - Fountain pool declarations and pipeline encode steps now run through the

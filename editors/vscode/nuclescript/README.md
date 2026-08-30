@@ -43,9 +43,12 @@ NucleScript, the declarative DNA-storage operations language for
   can produce a catchable `Result<T, Str>` instead of aborting the whole
   program on failure, unwrapped or propagated with `?`.
 - **Generics** — `fn name<T>(...)` over `Pool<T>`'s profile, so the same
-  function works for `Illumina`/`Nanopore`/`Twist` instead of needing one
+  function works for `Illumina`/`Nanopore`/`Twist`/`IDT` instead of needing one
   copy per profile. Highlighting, diagnostics, hover, formatting, and
   `nucle doc` all render and check the type-parameter list correctly.
+- **Typed IDT oPools support** — `IDT`, `idtopools`, and `idt-opools` are
+  highlighted aliases for the same `Pool<IDT, E>` state, with the compiler's
+  0.05% error model and exact-profile vendor preflight.
 - **Pattern matching** — `match attempt { Ok(file) => file, Err(reason)
   => ... }` branches on a caught `Result` directly, instead of needing a
   second, independent function call from the caller. Highlighting,

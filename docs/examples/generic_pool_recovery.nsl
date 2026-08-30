@@ -1,6 +1,6 @@
 // Generics: one function, callable with a Pool of ANY profile -- the
 // motivating pain point this closes: without a type parameter, this
-// would need one hardcoded copy per profile (Illumina/Nanopore/Twist).
+// would need one hardcoded copy per profile (Illumina/Nanopore/Twist/IDT).
 
 pool illumina_archive: DnaPool {
     codec: Ternary,

@@ -1,0 +1,8 @@
+/// IDT oPools synthesis with the language profile carried to hardware export.
+pool idt_archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: IDT
+}
+
+let strands: Pool<IDT, 0.05%> = synthesise idt_archive via IDT confirm hardware

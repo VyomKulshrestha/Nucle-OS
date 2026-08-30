@@ -1,0 +1,55 @@
+>/// IDT oPools synthesis with the language profile carried to hardware export.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>pool idt_archive: DnaPool {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                ^^ source.nuclescript
+#                  ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                         ^^^ source.nuclescript
+>    codec: Ternary,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                  ^^ source.nuclescript
+>    redundancy: 3x,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#              ^^ source.nuclescript
+#                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                  ^^ source.nuclescript
+>    profile: IDT
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^ source.nuclescript support.constant.profile.nuclescript
+>}
+#^^ source.nuclescript
+>
+>let strands: Pool<IDT, 0.05%> = synthesise idt_archive via IDT confirm hardware
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^ source.nuclescript storage.type.nuclescript
+#                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                  ^^^ source.nuclescript support.constant.profile.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                             ^ source.nuclescript
+#                              ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                               ^ source.nuclescript
+#                                ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                          ^ source.nuclescript
+#                                           ^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                      ^ source.nuclescript
+#                                                       ^^^ source.nuclescript keyword.control.nuclescript
+#                                                          ^ source.nuclescript
+#                                                           ^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                              ^ source.nuclescript
+#                                                               ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                      ^ source.nuclescript
+#                                                                       ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>
