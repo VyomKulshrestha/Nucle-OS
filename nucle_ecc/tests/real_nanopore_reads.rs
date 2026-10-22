@@ -68,3 +68,19 @@ fn pipeline_voting_infers_the_strand_length_from_the_group_majority() {
     assert_eq!(off_length, 0, "every polished strand should be 110 nt");
     assert!(exact >= 45, "{exact} / 50 exact");
 }
+
+#[test]
+fn blind_decoding_without_cluster_labels_recovers_nearly_every_strand() {
+    // Throw the cluster labels away, shuffle all reads together, and
+    // decode from the reads alone: cluster, then length-aware consensus.
+    let data = fixture();
+    let labelled = evaluate_with(&data, |reads, len| build_consensus_with_length(reads, len).map(|r| r.sequence));
+    let blind = nucle_ecc::realdata::evaluate_blind(&data, &nucle_ecc::cluster::ClusterConfig::default(), 2021);
+    assert!(blind.purity > 0.99, "purity {}", blind.purity);
+    assert!(
+        blind.recovered_exact + 2 >= labelled.exact,
+        "blind {} vs labelled {}",
+        blind.recovered_exact,
+        labelled.exact
+    );
+}

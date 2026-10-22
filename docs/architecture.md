@@ -995,6 +995,32 @@ only the groups that disagree. With no clear majority it changes nothing.
 `consensus_then_rs_decode`, its retry variant and `RepairPipeline::run_consensus`
 all go through it, so `dna_read` and the block devices inherit the fix.
 
+All of the above uses the dataset's cluster labels. A real sequencing run has
+none: reads arrive shuffled, with nothing saying which strand each came from.
+`nucle_ecc::cluster::cluster_reads` recovers the groups from the reads alone,
+following the candidate-then-verify shape of Rashtchian et al., "Clustering
+Billions of Reads for DNA Data Storage" (NeurIPS 2017). Each read becomes a
+MinHash sketch of its 8-mers. Locality-sensitive hashing over 32 single-value
+bands proposes candidate pairs, and a banded edit distance confirms each one
+before union-find merges it, so a hash collision alone never joins two
+strands. `realdata::evaluate_blind` pools and shuffles every read, clusters,
+runs the length-aware consensus per cluster, and counts references recovered
+exactly. On the same 2,000 clusters:
+
+| Merge threshold (edit distance / length) | Clusters | Purity | Recovered |
+|---:|---:|---:|---:|
+| 0.15 (default) | 2,426 | 100.00% | 94.40% |
+| 0.20 | 2,148 | 99.86% | 94.30% |
+| 0.25 | 1,967 | 92.40% | 82.85% |
+
+Over-splitting costs little, because each fragment of a strand's reads still
+votes to the right sequence. Over-merging is what hurts: at 0.25, chains of
+near-threshold pairs join distinct references (the dataset notes its
+references are not uniformly random), and a merged cluster's vote matches
+neither. The default stays at the threshold that kept every cluster pure.
+`nucle reads <Centers> <Clusters> [--limit N] [--blind]` runs both
+evaluations from the CLI.
+
 ## Retrieval Architecture
 
 ```

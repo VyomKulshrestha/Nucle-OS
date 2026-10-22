@@ -3,6 +3,7 @@
 //! Unified command-line tool tying all layers together.
 
 mod hardware_cli;
+mod reads_cli;
 mod shelf_life_cli;
 
 use clap::{Parser, Subcommand};
@@ -266,6 +267,20 @@ enum Commands {
         /// Storage medium for --years: encapsulated, bone
         #[arg(long, default_value = "encapsulated")]
         medium: String,
+    },
+
+    /// Score consensus decoding on real clustered sequencing reads
+    Reads {
+        /// Reference strands, one per line
+        centers: String,
+        /// Reads grouped per reference, each block introduced by a line of '='
+        clusters: String,
+        /// Only score the first N references
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Also discard the cluster labels and decode from the reads alone
+        #[arg(long)]
+        blind: bool,
     },
 
     /// Estimate how long an archive stays readable in storage (Arrhenius decay)
@@ -593,6 +608,7 @@ fn main() {
         Commands::Simulate { file, profile, coverage, years, celsius, medium } => {
             cmd_simulate(&file, &profile, coverage, years.map(|y| (y, celsius, medium)), cli.json)
         }
+        Commands::Reads { centers, clusters, limit, blind } => reads_cli::cmd_reads(&centers, &clusters, limit, blind, cli.json),
         Commands::ShelfLife { medium, celsius, length, data, parity, copies, target, stored } => shelf_life_cli::cmd_shelf_life(
             shelf_life_cli::ShelfLifeArgs { medium, celsius, length, data, parity, copies, target_percent: target, stored },
             &pool_dir,
@@ -3233,6 +3249,7 @@ fn cmd_help() {
     println!("  (global) --tenant <name>                  Scope any command to an isolated tenant pool");
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise (--years/--celsius ages it)");
     println!("  nucle shelf-life [--medium m] [--celsius]  How long an archive stays readable in storage");
+    println!("  nucle reads <centers> <clusters> [--blind] Score decoding on real sequencing reads");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");
     println!("  nucle stress [-s size]                    Stress test all codecs");

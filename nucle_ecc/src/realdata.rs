@@ -220,6 +220,102 @@ where
     report
 }
 
+/// Result of decoding real reads with their cluster labels thrown away.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlindReport {
+    /// Reads pooled and shuffled.
+    pub reads: usize,
+    /// References that had at least one read.
+    pub references: usize,
+    /// Clusters [`cluster_reads`](crate::cluster::cluster_reads) produced.
+    pub clusters: usize,
+    /// Clusters with at least two reads (enough to vote).
+    pub multi_read_clusters: usize,
+    /// Fraction of reads whose cluster's majority reference is their own.
+    pub purity: f64,
+    /// Distinct references some cluster's consensus reproduced exactly.
+    pub recovered_exact: usize,
+}
+
+impl BlindReport {
+    pub fn recovery_rate(&self) -> f64 {
+        if self.references == 0 { 0.0 } else { self.recovered_exact as f64 / self.references as f64 }
+    }
+}
+
+impl fmt::Display for BlindReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "reads pooled and shuffled: {}", self.reads)?;
+        writeln!(f, "clusters found:            {} ({} with 2+ reads) for {} references", self.clusters, self.multi_read_clusters, self.references)?;
+        writeln!(f, "cluster purity:            {:.2}%", self.purity * 100.0)?;
+        writeln!(f, "references recovered:      {} / {} ({:.2}%)", self.recovered_exact, self.references, self.recovery_rate() * 100.0)
+    }
+}
+
+/// Pool every read, shuffle (seeded), cluster without labels, take a
+/// length-aware consensus of each cluster with two or more reads, and count
+/// how many references come back exactly: the whole decode path a real run
+/// needs, scored against ground truth.
+pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConfig, seed: u64) -> BlindReport {
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
+
+    let mut pooled: Vec<(usize, DnaStrand)> = data
+        .iter()
+        .enumerate()
+        .flat_map(|(label, c)| c.reads.iter().cloned().map(move |r| (label, r)))
+        .collect();
+    let mut rng = StdRng::seed_from_u64(seed);
+    for i in (1..pooled.len()).rev() {
+        let j = rng.gen_range(0..=i);
+        pooled.swap(i, j);
+    }
+    let reads: Vec<DnaStrand> = pooled.iter().map(|(_, r)| r.clone()).collect();
+    let clusters = crate::cluster::cluster_reads(&reads, config);
+
+    let mut majority_hits = 0usize;
+    for c in &clusters {
+        let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for &i in c {
+            *counts.entry(pooled[i].0).or_insert(0) += 1;
+        }
+        majority_hits += counts.values().copied().max().unwrap_or(0);
+    }
+
+    let references: std::collections::HashSet<&DnaStrand> =
+        data.iter().filter(|c| !c.reads.is_empty()).map(|c| &c.reference).collect();
+    let mut recovered: std::collections::HashSet<DnaStrand> = std::collections::HashSet::new();
+    let multi: Vec<&Vec<usize>> = clusters.iter().filter(|c| c.len() >= 2).collect();
+    for c in &multi {
+        let group: Vec<DnaStrand> = c.iter().map(|&i| reads[i].clone()).collect();
+        let len = modal_reference_length(data);
+        if let Some(r) = crate::consensus::build_consensus_with_length(&group, len) {
+            if references.contains(&r.sequence) {
+                recovered.insert(r.sequence);
+            }
+        }
+    }
+
+    BlindReport {
+        reads: reads.len(),
+        references: references.len(),
+        clusters: clusters.len(),
+        multi_read_clusters: multi.len(),
+        purity: if reads.is_empty() { 0.0 } else { majority_hits as f64 / reads.len() as f64 },
+        recovered_exact: recovered.len(),
+    }
+}
+
+/// The strand length a decoder would be configured with: the most common
+/// reference length.
+fn modal_reference_length(data: &[ReadCluster]) -> usize {
+    let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for c in data {
+        *counts.entry(c.reference.len()).or_insert(0) += 1;
+    }
+    counts.into_iter().max_by_key(|&(len, n)| (n, len)).map(|(len, _)| len).unwrap_or(0)
+}
+
 impl fmt::Display for RealDataReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "clusters scored:        {} ({} empty, {} reads)", self.clusters, self.empty_clusters, self.reads)?;

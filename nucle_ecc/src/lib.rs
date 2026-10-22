@@ -6,11 +6,13 @@
 //! - **Reed-Solomon** — outer code for strand-level erasure recovery
 //! - **Fountain/LT codes** — rateless erasure recovery
 //! - **Consensus sequencing** — majority voting across strand copies
+//! - **Read clustering** — grouping unlabeled reads by source strand
 //! - **Repair pipeline** — orchestrated multi-stage correction
 
 pub mod reed_solomon;
 pub mod fountain_code;
 pub mod consensus;
+pub mod cluster;
 pub mod pipeline;
 pub mod polish;
 pub mod realdata;

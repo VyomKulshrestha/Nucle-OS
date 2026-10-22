@@ -141,7 +141,8 @@ DNA is a noisy channel with insertion/deletion-heavy error profiles — unlike d
 - **Fountain/LT erasure codes** — peeling plus GF(2) elimination recovers any full-rank surviving equation set
 - **Consensus sequencing** — majority voting across multiple strand copies
 - **Length-aware median polishing** — repairs the homopolymer-length and end-junk errors most reads share, using the fixed strand length every codec writes
-- **Real-read scoring** — `nucle_ecc::realdata` loads clustered reads from real sequencing runs and scores any consensus strategy against the true references
+- **Read clustering** — `nucle_ecc::cluster` groups unlabeled, shuffled reads by source strand (MinHash/LSH candidates confirmed by banded edit distance), so decoding does not depend on knowing which strand each read came from
+- **Real-read scoring** — `nucle_ecc::realdata` loads clustered reads from real sequencing runs and scores any consensus strategy against the true references; `nucle reads` runs it from the CLI
 - **Full repair pipeline** — orchestrated multi-stage error correction
 
 ### Layer 4 — Retrieval & Index (`nucle_index`)
@@ -461,18 +462,22 @@ and 269,709 Oxford Nanopore MinION reads of them. On the first 2,000 clusters
 | Partial-order vote | 81.8% | 0.338% |
 | Vote + median polish, length unknown | 80.4% | 0.226% |
 | Vote + length-aware median polish | **94.7%** | **0.100%** |
+| Labels discarded: cluster the shuffled reads, then length-aware polish | **94.4%** | — |
 
 Nearly every strand the vote got wrong was a homopolymer called one base short
 or long, or a few junk bases on one end, errors most reads of that strand share.
 The length-aware polisher fixes them because every codec here writes a known,
 fixed strand length. With 41 or more reads per cluster, exact recovery rises
-from 88.8% to 98.7%. The decode pipeline infers the length from the majority of
+from 88.8% to 98.7%. The last row throws the dataset's cluster labels away,
+pools and shuffles all 54,601 reads, and decodes from the reads alone:
+clustering is 100% pure and recovers 94.4% of strands, within 0.25 points of
+decoding with the true labels. The decode pipeline infers the length from the majority of
 a file's strands, so `dna_read` gets the improvement with no configuration. A
 50-cluster sample of the dataset ships with the tests
 (`nucle_ecc/tests/fixtures/cnr/`, MIT-licensed). To score the full set:
 
 ```bash
-cargo run --release -p nucle_ecc --example real_reads -- Centers.txt Clusters.txt
+nucle reads Centers.txt Clusters.txt --blind
 ```
 
 ### Full Stack: Store with ECC + CRISPR
@@ -1127,6 +1132,10 @@ nucle simulate myfile.txt -p illumina
 # ...after 2,000 years in bone at 25 °C: broken molecules never reach the sequencer
 nucle simulate myfile.txt -p illumina -c 20 --years 2000 --celsius 25 --medium bone
 
+# Score decoding on real clustered sequencing reads (e.g. Microsoft's Clustered
+# Nanopore Reads dataset); --blind also decodes after discarding the labels
+nucle reads Centers.txt Clusters.txt --limit 2000 --blind
+
 # How long an archive stays readable: Reed-Solomon stripe, copies per sequence,
 # storage medium and temperature (or --stored <file> to use a pooled file's strands)
 nucle shelf-life --medium encapsulated --celsius 4 --data 100 --parity 20 --copies 10
@@ -1268,17 +1277,17 @@ nucle agent "pool status"
 |-------|------:|---------------|
 | `nucle_codec` | 66 (+3 doctests) | Nucleotide types, constraints, ternary codec (incl. a regression test proving the fixed strand-index header roundtrips past its old 81-strand capacity, and a test confirming encoding fails loudly instead of silently corrupting once truly past the new, much larger capacity), screened/whitened Fountain roundtrip, continuation batches, full-rank loss recovery and legacy raw decode, yin-yang codec, byte↔4-base packing roundtrip, benchmarks incl. GC distribution and homopolymer violation counts |
 | `nucle_synth` | 46 | Error models, noise engine, hardware profiles, encode→noise→decode e2e, the shared realistic synthesis/sequencing pairing (sequencer pools written by Twist, roughly half the doubled Nanopore rate), and Arrhenius storage decay checked against Allentoft et al.'s published temperature table and Coudy et al.'s 150 nt half-life, with binomial whole-file recovery, shelf-life bisection, and simulated molecule loss matching the analytic rate |
-| `nucle_ecc` | 53 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety), length-aware median polishing (forward/backward edit scores checked against brute-force realignment, homopolymer under-calls, junk tails, no-op on correct input), the real-read dataset loader and scorer, and real Oxford Nanopore MinION reads from the Clustered Nanopore Reads dataset (length-aware polishing must beat plain voting, and pipeline voting must infer the strand length on its own) |
+| `nucle_ecc` | 58 | Reed-Solomon (incl. combined error-and-erasure Berlekamp-Welch decoding, blind single-strand correction, parity-reindexing regression), fountain erasure, repair pipeline, per-position observed error distribution, partial-order-alignment consensus (frame-shifting indels, boundary insertions outvoted by majority, fold-order-independence, realistic-noise fuzz crash safety), length-aware median polishing (forward/backward edit scores checked against brute-force realignment, homopolymer under-calls, junk tails, no-op on correct input), the real-read dataset loader and scorer, and real Oxford Nanopore MinION reads from the Clustered Nanopore Reads dataset (length-aware polishing must beat plain voting, and pipeline voting must infer the strand length on its own), read clustering (banded edit distance against the full distance, shuffled noisy clusters recovered without mixing strands, unrelated reads kept apart), and blind decoding of the real reads with their labels discarded |
 | `nucle_index` | 31 | Primers (incl. edit-distance-tolerant boundary matching under indel noise), CRISPR sim, vector index, metadata-similarity search |
 | `nucle_vfs` | 127 (126 runnable, 1 ignored) | Pool, file, catalog, storage manifests, content-addressed archive IDs, rewrite/versioning, historical reads, complete-chain deletion, metadata-only complete-chain rename, Ternary/Fountain/Yin-Yang migration with per-version codec metadata and readable history, primer-tagged Fountain screening, persisted configuration, RS-backed arbitrary erasure recovery, versioned droplet extension, rejected empty input without pool mutation, automatically growing deterministic primer addressing (including reopen with a smaller capacity hint and no address consumption on a refused write), per-object recovery manifests, fixture/Illumina/Nanopore roundtrips, durable atomic persistence, namespace prefixes, optimistic concurrency and file locking, capacity limits, audit logging, confirm-user policy, encryption at rest, integrity scanning, tenancy, and Prometheus metrics |
 | `nucle_agent` | 36 | Tool defs, planner, executor, including natural-language `migrate` (redundancy/codec extraction with aliases for Ternary, Fountain, and Yin-Yang) and `help` (regression-guarded against a fixed bug where it silently ran `pool_status` instead) |
 | `nucle_lang` | 291 | Lexer/parser, biological and probabilistic pool checks including typed IDT, effects, compile-time control flow, canonical formatting, `test`/`assert`, doc generation, package/lockfile APIs, functions/generics/closures, `Result<T, E>`/`?`, enums and exhaustive pattern matching, effect-annotated function types, real Fountain direct-store/pipeline execution, and a deterministic corpus that drives checker/analyzer/formatter over more than 1,000 shipped-program mutations without panics. New soundness coverage validates whole-program forward and mutually-recursive signatures, ordinary binding/argument/return types, nested calls, Result/enum-producing call arity and generics, strict `protect(File, Recovery) -> DnaFile`, scalar `Ok`/computed `Err`/enum payloads/match arms, and real runtime execution of computed error messages. Pool-valued `match` arms recover at different coverages and join at the worse error rate, feed generic returns and conditions, and `test` blocks assert on top-level simulated pools without seeing each other's locals. Each pool is its own VFS namespace: one file stored into two pools stays two independent replicas, and `delete`/`retrieve` (statement or expression position) touch only the pool they name. Pool `storage:` conditions and store `retain:` requirements parse (including signed temperatures), are diagnosed without storage or with impossible values, pass or fail at run time against the written strands, surface as a catchable `Err`, and survive formatting and `nucle doc`. |
 | `nucle_hardware` | 55 | Confirmation gating (effectful/destructive rejection, count/message correctness, sync and async variants, and a dedicated proof that read-only `Qc`/`Recovery` requests never count as effectful), static provider capability/preflight contracts with exact profile matching, bounded waits that preserve resume information, mock provider dry runs, file-export JSON roundtrip and field preservation, parent-directory creation, the job-handle/concurrency model (`submit()` returning before a real simulated delay elapses, multiple concurrent jobs finishing in well under their sequential-sum time, `Pending`/`Running`/`Complete` status transitions), and the real vendor adapters: Twist/IDT/Illumina HTTP request-building/auth-header/status-classification against local `tiny_http` stand-ins, IDT's two-step OAuth2 flow, and Nanopore protocol-state mapping plus a local TLS gRPC MinKNOW stand-in that verifies discovery, submission, resume-token reconstruction, and status polling without an instrument |
 | `nucle_blockdev` | 25 | The `BlockDevice` contract against both backends; write-once synthesis-array and rewritable-Nanopore behavior; real consensus + Reed-Solomon corruption recovery; batched array latency; blob layout; and atomic, versioned image save/load including backend dimensions, written blocks, Nanopore read counters, write generations, and malformed-image rejection |
-| `nucle-cli` | 65 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; real Fountain binary round-trip, migration to/from Fountain with historical reads, cross-process droplet extension, empty/unknown codec rejection; persistent block-device images; complete pinned-workspace doctor checks; fail-closed hardware capability/profile validation and strict config handling; loopback-only Twist/IDT/Illumina submit-and-resume flows; Nanopore credential refusal; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI, and `shelf-life`/`simulate --years` (published half-life, temperature and parity ordering, stored-file strand counts, input rejection, decayed molecules reported) |
+| `nucle-cli` | 68 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; real Fountain binary round-trip, migration to/from Fountain with historical reads, cross-process droplet extension, empty/unknown codec rejection; persistent block-device images; complete pinned-workspace doctor checks; fail-closed hardware capability/profile validation and strict config handling; loopback-only Twist/IDT/Illumina submit-and-resume flows; Nanopore credential refusal; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI, and `shelf-life`/`simulate --years` (published half-life, temperature and parity ordering, stored-file strand counts, input rejection, decayed molecules reported), and `nucle reads` on the real MinION sample (labelled and blind scoring, `--limit`, rejection of non-dataset input) |
 | `nucle_lsp` | 17 | UTF-16-correct positions, diagnostics, hover, definition, symbols, context-aware completion, references, safe prepare/rename, and semantic tokens, including real Content-Length-framed JSON-RPC integration tests cross-checked against `nucle check`. |
 | `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **820 discovered tests (819 runnable, 1 ignored; includes 3 doctests)** | **All 819 runnable tests passed with `cargo test --workspace --no-fail-fast` on 23 October 2026.** |
+| **Total** | **828 discovered tests (827 runnable, 1 ignored; includes 3 doctests)** | **All 827 runnable tests passed with `cargo test --workspace --no-fail-fast` on 23 October 2026.** |
 
 ---
 

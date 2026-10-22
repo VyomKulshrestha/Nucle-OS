@@ -34,15 +34,16 @@ fn main() {
         dataset.truncate(n);
     }
 
+    let blind_only = std::env::var_os("NUCLE_BLIND_ONLY").is_some();
     let start = Instant::now();
-    let report = evaluate_clusters(&dataset);
+    let report = if blind_only { evaluate_with(&[], |_, _| None) } else { evaluate_clusters(&dataset) };
     let elapsed = start.elapsed();
     println!("== partial-order vote only");
     println!("{report}");
     println!("elapsed: {:.2}s\n", elapsed.as_secs_f64());
 
     let start = Instant::now();
-    let report = evaluate_with(&dataset, |reads, _| {
+    let report = evaluate_with(if blind_only { &[] } else { &dataset }, |reads, _| {
         build_consensus(reads).map(|r| polish(&r.sequence, reads, None))
     });
     println!("== vote + median polish (length unknown)");
@@ -50,9 +51,22 @@ fn main() {
     println!("elapsed: {:.2}s\n", start.elapsed().as_secs_f64());
 
     let start = Instant::now();
-    let report = evaluate_with(&dataset, |reads, len| build_consensus_with_length(reads, len).map(|r| r.sequence));
+    let report = evaluate_with(if blind_only { &[] } else { &dataset }, |reads, len| {
+        build_consensus_with_length(reads, len).map(|r| r.sequence)
+    });
     println!("== vote + length-aware median polish");
     println!("{report}");
+    println!("elapsed: {:.2}s", start.elapsed().as_secs_f64());
+
+    let start = Instant::now();
+    let mut config = nucle_ecc::cluster::ClusterConfig::default();
+    if let Some(frac) = std::env::var("NUCLE_CLUSTER_FRAC").ok().and_then(|v| v.parse().ok()) {
+        config.max_distance_fraction = frac;
+    }
+    let blind = nucle_ecc::realdata::evaluate_blind(&dataset, &config, 2021);
+    println!();
+    println!("== labels discarded: cluster, then length-aware consensus");
+    println!("{blind}");
     println!("elapsed: {:.2}s", start.elapsed().as_secs_f64());
 
     if std::env::var_os("NUCLE_DIAG").is_some() {
