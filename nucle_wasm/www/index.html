@@ -104,9 +104,19 @@
             display: flex;
             gap: 1.6rem;
             position: relative;
+            /* Four tabs do not fit a phone: scroll sideways instead of
+               clipping the last ones off-screen. */
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: auto;
+            scrollbar-width: none;
         }
 
+        nav.tabs::-webkit-scrollbar { display: none; }
+
         nav.tabs button {
+            flex-shrink: 0;
+            white-space: nowrap;
             background: transparent;
             border: none;
             color: var(--muted);
@@ -513,6 +523,60 @@
             line-height: 1.55;
         }
 
+        /* ---- Tab 4: Shelf Life ---- */
+
+        .shelf-chart {
+            padding: 1rem 1.4rem 0.4rem;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .shelf-chart svg { width: 100%; height: 220px; display: block; }
+        .shelf-chart .axis { stroke: var(--line); stroke-width: 1; }
+        .shelf-chart .grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 4; }
+        .shelf-chart .curve { fill: none; stroke: var(--signal); stroke-width: 2; }
+        .shelf-chart .target { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 3; }
+        .shelf-chart .marker { stroke: var(--warn); stroke-width: 1; }
+        .shelf-chart text {
+            fill: var(--muted);
+            font-family: var(--font-mono);
+            font-size: 10px;
+        }
+
+        .temp-table {
+            width: calc(100% - 2.8rem);
+            margin: 1rem 1.4rem 0;
+            border-collapse: collapse;
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .temp-table th {
+            text-align: right;
+            color: var(--muted);
+            font-weight: 500;
+            font-size: 0.68rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 0 0 0.5rem;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .temp-table td {
+            text-align: right;
+            padding: 0.45rem 0;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .temp-table th:first-child, .temp-table td:first-child { text-align: left; }
+        .temp-table tr.current td { color: var(--signal); }
+
+        .citation {
+            margin: 0.8rem 1.4rem 0;
+            font-size: 0.78rem;
+            color: var(--muted);
+        }
+
         /* ---- Tab 3: Pipeline Visualizer ---- */
 
         .pipeline-controls {
@@ -677,6 +741,7 @@
             <button class="tab-btn active" data-tab="tab-write-run">Write &amp; Run</button>
             <button class="tab-btn" data-tab="tab-benchmark">Benchmark Explorer</button>
             <button class="tab-btn" data-tab="tab-pipeline">Pipeline Visualizer</button>
+            <button class="tab-btn" data-tab="tab-shelf">Shelf Life</button>
             <span class="tab-indicator"></span>
         </nav>
         <div id="status-container">
@@ -777,8 +842,10 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
                     <div class="section-title" style="padding: 1rem 1.4rem 0;">GC Content Distribution (10 bins, 0%&ndash;100%)</div>
                     <div class="gc-chart" id="gc-chart"></div>
                     <div class="callout">
-                        <strong>How does recovery probability improve under Illumina, and why doesn't it under Nanopore?</strong>
-                        This estimate simulates real sequencing coverage &mdash; 10 independent noisy reads per strand, the same assumption <code>nucle benchmark</code> makes &mdash; and consensus-votes them before Reed-Solomon ever runs. Majority voting across coverage copies corrects most <em>substitution</em> errors regardless of which copy has them, which is why redundancy now genuinely helps under Illumina. Nanopore still shows ~0%, and getting here took real work: a codec bug that turned padding into artificial tandem repeats (fixed with a proper randomized filler), then two real bugs in Reed-Solomon itself &mdash; parity bytes silently truncated by a 2-bit encoding meant for other data, and a missing parity strand reindexing every strand after it &mdash; both fixed, plus Reed-Solomon upgraded from erasure-only to genuine blind error correction (Berlekamp-Welch), so it no longer needs to be told which strand is wrong. None of that was the real bottleneck: comparing zero parity strands against 50 on the same noisy input produces the identical failure every time, which proves consensus itself, not Reed-Solomon, is what can't keep up with Nanopore's real per-base error rate. A distinct, narrower, still-open gap now, in a different layer than originally suspected.
+                        <strong>How the recovery estimate works.</strong>
+                        Each trial writes the sample, simulates synthesis (Twist, for the sequencer profiles) followed by 10 independent reads per strand, votes a consensus for every strand, polishes it to the codec's strand length, and runs Reed-Solomon on the result. The percentage is the share of trials that return the exact input.
+                        With the default sample and the ternary codec, Illumina recovered in every trial and Nanopore, at roughly 7% per-base error, in 9 of 10, at both 2 and 6 parity strands.
+                        On real MinION reads (Microsoft's Clustered Nanopore Reads dataset) the same decoder reproduces 94.7% of strands exactly; <code>nucle reads</code> runs that check.
                     </div>
                 </div>
             </div>
@@ -837,6 +904,66 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
                 </div>
             </div>
         </section>
+
+        <!-- ============ TAB 4: SHELF LIFE ============ -->
+        <section id="tab-shelf" class="tab-panel">
+            <div class="benchmark-grid">
+                <div class="control-panel">
+                    <div class="panel-header" style="margin: -1.4rem -1.4rem 0.4rem -1.4rem;">
+                        <h2>Storage</h2>
+                    </div>
+                    <div class="field">
+                        <label for="shelf-medium">Medium</label>
+                        <select id="shelf-medium">
+                            <option value="encapsulated">Dry, anoxic capsule</option>
+                            <option value="bone">Buried bone (natural reference)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="shelf-celsius">Temperature: <span class="range-value" id="shelf-celsius-value">25</span> &deg;C</label>
+                        <input type="range" id="shelf-celsius" min="-20" max="60" value="25" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="shelf-parity">Parity strands per 100 data strands: <span class="range-value" id="shelf-parity-value">20</span></label>
+                        <input type="range" id="shelf-parity" min="0" max="60" value="20" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="shelf-copies">Physical copies of each sequence: <span class="range-value" id="shelf-copies-value">10</span></label>
+                        <input type="range" id="shelf-copies" min="1" max="100" value="10" step="1">
+                    </div>
+                    <div class="field">
+                        <label for="shelf-length">Strand length: <span class="range-value" id="shelf-length-value">150</span> nt</label>
+                        <input type="range" id="shelf-length" min="60" max="300" value="150" step="10">
+                    </div>
+                </div>
+
+                <div class="viz-panel">
+                    <div class="panel-header">
+                        <h2>How long the archive stays readable</h2>
+                        <span class="status-badge idle" id="shelf-status">Idle</span>
+                    </div>
+                    <div class="metric-grid">
+                        <div class="metric-card"><div class="metric-label">Readable until</div><div class="metric-value" id="s-life">&mdash;</div></div>
+                        <div class="metric-card"><div class="metric-label">Strand half-life</div><div class="metric-value" id="s-half">&mdash;</div></div>
+                        <div class="metric-card"><div class="metric-label">Breaks / nt / year</div><div class="metric-value" id="s-rate">&mdash;</div></div>
+                    </div>
+                    <div class="section-title" style="padding: 1rem 1.4rem 0;">Chance the whole file still decodes, by age (log scale)</div>
+                    <div class="shelf-chart" id="shelf-chart"></div>
+                    <table class="temp-table">
+                        <thead><tr><th>Storage</th><th>Strand half-life</th><th>Readable until (99.9%)</th></tr></thead>
+                        <tbody id="shelf-table"></tbody>
+                    </table>
+                    <p class="citation" id="shelf-citation"></p>
+                    <div class="callout">
+                        <strong>What this models.</strong>
+                        Every backbone bond breaks at a rate that rises with temperature (the Arrhenius law), and a strand with any break cannot be amplified, so it is lost.
+                        A sequence is gone once all of its physical copies have broken; the file is gone once more sequences are lost than its Reed-Solomon parity can rebuild.
+                        The kinetics are published measurements, but they were taken at 45&ndash;140&nbsp;&deg;C and extrapolated down, so figures in the millions of years are what the fitted rate implies, not something anyone has tested.
+                        <code>nucle shelf-life</code> and NucleScript's <code>retain:</code> requirement use the same model.
+                    </div>
+                </div>
+            </div>
+        </section>
     </main>
 
     <footer>
@@ -848,7 +975,7 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
         // server-backed version, but every network call below goes straight
         // into a WASM module running in this tab instead of `fetch()`-ing a
         // server -- there is no backend at all on this page.
-        import init, { analyze, benchmark, pipeline_demo } from './nucle_wasm.js';
+        import init, { analyze, benchmark, pipeline_demo, shelf_life } from './nucle_wasm.js';
 
         const wasmReady = init();
 
@@ -948,7 +1075,8 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
             const navRect = nav.getBoundingClientRect();
             const btnRect = btn.getBoundingClientRect();
             tabIndicator.style.width = btnRect.width + 'px';
-            tabIndicator.style.transform = `translateX(${btnRect.left - navRect.left}px)`;
+            tabIndicator.style.transform = `translateX(${btnRect.left - navRect.left + nav.scrollLeft}px)`;
+            btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         }
 
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -1179,6 +1307,92 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
         });
 
         function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+        // ---------------- Tab 4: Shelf Life ----------------
+        const shelfInputs = {
+            medium: document.getElementById('shelf-medium'),
+            celsius: document.getElementById('shelf-celsius'),
+            parity: document.getElementById('shelf-parity'),
+            copies: document.getElementById('shelf-copies'),
+            length: document.getElementById('shelf-length'),
+        };
+        const shelfStatus = document.getElementById('shelf-status');
+        let shelfDebounce = null;
+
+        function fmtYears(y) {
+            if (y === null || y === undefined) return 'over 10^15 y';
+            if (y < 1) return Math.round(y * 365.25) + ' days';
+            if (y < 1e4) return Math.round(y).toLocaleString() + ' y';
+            if (y < 1e6) return (y / 1e3).toFixed(1) + 'k y';
+            if (y < 1e9) return (y / 1e6).toFixed(1) + 'M y';
+            return (y / 1e9).toFixed(1) + 'B y';
+        }
+
+        function drawShelfChart(curve, life) {
+            const w = 640, h = 220, left = 40, right = 12, top = 10, bottom = 26;
+            const xs = curve.map(p => Math.log10(p.years));
+            const xmin = Math.min(...xs), xmax = Math.max(...xs);
+            const X = v => left + (v - xmin) / Math.max(1e-9, xmax - xmin) * (w - left - right);
+            const Y = p => top + (1 - p) * (h - top - bottom);
+            const path = curve.map((p, i) => (i ? 'L' : 'M') + X(Math.log10(p.years)).toFixed(1) + ' ' + Y(p.recovery_probability).toFixed(1)).join(' ');
+            let ticks = '';
+            for (let d = Math.ceil(xmin); d <= Math.floor(xmax); d++) {
+                const x = X(d).toFixed(1);
+                ticks += `<line class="grid" x1="${x}" y1="${top}" x2="${x}" y2="${h - bottom}"/><text x="${x}" y="${h - 8}" text-anchor="middle">${fmtYears(Math.pow(10, d))}</text>`;
+            }
+            const marker = life ? `<line class="marker" x1="${X(Math.log10(life)).toFixed(1)}" y1="${top}" x2="${X(Math.log10(life)).toFixed(1)}" y2="${h - bottom}"/>` : '';
+            document.getElementById('shelf-chart').innerHTML =
+                `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Recovery probability against storage age">
+                    ${ticks}
+                    <line class="axis" x1="${left}" y1="${h - bottom}" x2="${w - right}" y2="${h - bottom}"/>
+                    <line class="axis" x1="${left}" y1="${top}" x2="${left}" y2="${h - bottom}"/>
+                    <line class="target" x1="${left}" y1="${Y(0.999).toFixed(1)}" x2="${w - right}" y2="${Y(0.999).toFixed(1)}"/>
+                    <text x="${left - 6}" y="${Y(1) + 4}" text-anchor="end">100%</text>
+                    <text x="${left - 6}" y="${Y(0) + 4}" text-anchor="end">0%</text>
+                    ${marker}
+                    <path class="curve" d="${path}"/>
+                </svg>`;
+        }
+
+        async function runShelfLife() {
+            shelfStatus.className = 'status-badge idle';
+            shelfStatus.textContent = 'Running...';
+            const celsius = parseInt(shelfInputs.celsius.value, 10);
+            try {
+                const r = await callWasm(shelf_life, {
+                    medium: shelfInputs.medium.value,
+                    celsius,
+                    strand_len: parseInt(shelfInputs.length.value, 10),
+                    data_strands: 100,
+                    parity_strands: parseInt(shelfInputs.parity.value, 10),
+                    copies_per_strand: parseInt(shelfInputs.copies.value, 10),
+                    target_percent: 99.9,
+                });
+                animateMetric(document.getElementById('s-life'), fmtYears(r.shelf_life_years));
+                animateMetric(document.getElementById('s-half'), fmtYears(r.strand_half_life_years));
+                animateMetric(document.getElementById('s-rate'), r.break_rate_per_nt_year.toExponential(2));
+                drawShelfChart(r.curve, r.shelf_life_years);
+                document.getElementById('shelf-table').innerHTML = r.by_temperature.map(row =>
+                    `<tr class="${row.celsius === celsius ? 'current' : ''}"><td>${row.celsius} &deg;C</td><td>${fmtYears(row.strand_half_life_years)}</td><td>${fmtYears(row.shelf_life_years)}</td></tr>`
+                ).join('');
+                document.getElementById('shelf-citation').textContent =
+                    `Kinetics: ${r.citation}, Ea = ${r.activation_energy_kj_mol} kJ/mol. 100 data strands, 10 copies unless set above.`;
+                shelfStatus.className = 'status-badge ok';
+                shelfStatus.textContent = 'Live';
+            } catch (err) {
+                shelfStatus.className = 'status-badge fail';
+                shelfStatus.textContent = 'Error';
+            }
+        }
+
+        Object.entries(shelfInputs).forEach(([key, el]) => {
+            el.addEventListener('input', () => {
+                const label = document.getElementById('shelf-' + key + '-value');
+                if (label) label.textContent = el.value;
+                clearTimeout(shelfDebounce);
+                shelfDebounce = setTimeout(runShelfLife, 150);
+            });
+        });
+        runShelfLife();
     </script>
 </body>
 </html>

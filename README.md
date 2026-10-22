@@ -998,7 +998,7 @@ engine to WebAssembly and runs it entirely client-side; a GitHub Actions
 workflow (`Nuclescript/playground`'s `.github/workflows/pages.yml`) rebuilds
 and redeploys it on every push, so it's always current.
 
-The playground has three tabs, each backed by the real engine (no
+The playground has four tabs, each backed by the real engine (no
 reimplemented math, no mocked data):
 
 - **Write & Run** — the same `analyze_source` API `nucle check --json` uses
@@ -1012,9 +1012,13 @@ reimplemented math, no mocked data):
   codec/ECC/noise engine and animates each strand through
   encode → synthesize/sequence (noise) → recover, including honest failures
   when redundancy/profile can't reconstruct the data.
+- **Shelf Life** — pick a storage medium, temperature, parity and copies per
+  sequence; the published Arrhenius kinetics behind `nucle shelf-life` give
+  the strand half-life, how long the whole file stays readable, a
+  recovery-versus-age curve, and a freezer/fridge/cellar/room comparison.
 
 Prefer a native server over the browser build? `nucle_playground` is the
-same three tabs as a self-contained `tiny_http` server:
+same four tabs as a self-contained `tiny_http` server:
 
 ```bash
 cargo run -p nucle_playground
@@ -1286,8 +1290,8 @@ nucle agent "pool status"
 | `nucle_blockdev` | 25 | The `BlockDevice` contract against both backends; write-once synthesis-array and rewritable-Nanopore behavior; real consensus + Reed-Solomon corruption recovery; batched array latency; blob layout; and atomic, versioned image save/load including backend dimensions, written blocks, Nanopore read counters, write generations, and malformed-image rejection |
 | `nucle-cli` | 68 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; real Fountain binary round-trip, migration to/from Fountain with historical reads, cross-process droplet extension, empty/unknown codec rejection; persistent block-device images; complete pinned-workspace doctor checks; fail-closed hardware capability/profile validation and strict config handling; loopback-only Twist/IDT/Illumina submit-and-resume flows; Nanopore credential refusal; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI, and `shelf-life`/`simulate --years` (published half-life, temperature and parity ordering, stored-file strand counts, input rejection, decayed molecules reported), and `nucle reads` on the real MinION sample (labelled and blind scoring, `--limit`, rejection of non-dataset input) |
 | `nucle_lsp` | 17 | UTF-16-correct positions, diagnostics, hover, definition, symbols, context-aware completion, references, safe prepare/rename, and semantic tokens, including real Content-Length-framed JSON-RPC integration tests cross-checked against `nucle check`. |
-| `nucle_demo_core` | 5 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection |
-| **Total** | **843 discovered tests (842 runnable, 1 ignored; includes 3 doctests)** | **All 842 runnable tests passed with `cargo test --workspace --no-fail-fast` on 23 October 2026.** |
+| `nucle_demo_core` | 7 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection, and the shelf-life calculator (published half-life, monotone recovery curve, temperature ordering, input validation and defaults) |
+| **Total** | **845 discovered tests (844 runnable, 1 ignored; includes 3 doctests)** | **All 844 runnable tests passed with `cargo test --workspace --no-fail-fast` on 23 October 2026.** |
 
 ---
 
@@ -1305,7 +1309,7 @@ nucle_hardware/  — Hardware provider adapters (capability/preflight contract, 
 nucle_lsp/       — NucleScript language server (diagnostics, navigation, completion, references, rename, semantic tokens, outline)
 nucle_cli/       — Command-line interface
 nucle_playground/ — Interactive web playground (tiny_http server + static frontend), also published at github.com/Nuclescript/playground
-nucle_demo_core/ — Shared, I/O-free benchmark/pipeline-visualizer logic used by both nucle_playground and nucle_wasm
+nucle_demo_core/ — Shared, I/O-free benchmark, pipeline-visualizer and shelf-life logic used by both nucle_playground and nucle_wasm
 nucle_wasm/      — Same playground compiled to WebAssembly; live at nuclescript.github.io/playground
 editors/vscode/nuclescript/ — VS Code extension: TextMate grammar, language server client, formatter/run commands, native Test Explorer
 docs/            — Architecture notes, paper references, and runnable examples/fixtures

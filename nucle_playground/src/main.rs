@@ -1,7 +1,7 @@
 use tiny_http::{Server, Response, Header, Method};
 use serde::{Deserialize, Serialize};
 
-use nucle_demo_core::{run_benchmark, run_pipeline_demo};
+use nucle_demo_core::{run_benchmark, run_pipeline_demo, run_shelf_life};
 
 fn main() {
     let host = "127.0.0.1:8080";
@@ -29,6 +29,9 @@ fn main() {
             (&Method::Post, "/pipeline-demo") => {
                 handle_json(request, run_pipeline_demo);
             }
+            (&Method::Post, "/shelf-life") => {
+                handle_json(request, run_shelf_life);
+            }
             _ => {
                 let response = Response::from_string("Not Found")
                     .with_status_code(404);
@@ -39,7 +42,7 @@ fn main() {
 }
 
 /// Read a JSON request body, deserialize it, run `handler`, and write back
-/// a JSON response — shared by all three endpoints so each handler only
+/// a JSON response — shared by every endpoint so each handler only
 /// deals with its own request/response shape.
 fn handle_json<Req, Res>(
     mut request: tiny_http::Request,

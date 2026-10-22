@@ -1,7 +1,7 @@
 //! In-browser build of the NucleScript Playground.
 //!
-//! Exposes the same three operations as `nucle_playground`'s HTTP endpoints
-//! (`/analyze`, `/benchmark`, `/pipeline-demo`), as plain
+//! Exposes the same operations as `nucle_playground`'s HTTP endpoints
+//! (`/analyze`, `/benchmark`, `/pipeline-demo`, `/shelf-life`), as plain
 //! JSON-string-in/JSON-string-out functions, so the frontend can call
 //! straight into WASM instead of `fetch()`-ing a server. The response shape
 //! matches the server exactly (including `{"error": "..."}` on failure) so
@@ -37,6 +37,11 @@ pub fn benchmark(request_json: &str) -> String {
 #[wasm_bindgen]
 pub fn pipeline_demo(request_json: &str) -> String {
     run_json(request_json, nucle_demo_core::run_pipeline_demo)
+}
+
+#[wasm_bindgen]
+pub fn shelf_life(request_json: &str) -> String {
+    run_json(request_json, nucle_demo_core::run_shelf_life)
 }
 
 fn run_json<Req, Res>(request_json: &str, handler: impl FnOnce(Req) -> Result<Res, String>) -> String

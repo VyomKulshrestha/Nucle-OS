@@ -1,5 +1,6 @@
-//! Shared playground demo logic: the interactive codec benchmark and the
-//! encode -> noise -> recovery pipeline visualizer.
+//! Shared playground demo logic: the interactive codec benchmark, the
+//! encode -> noise -> recovery pipeline visualizer, and the storage
+//! shelf-life calculator.
 //!
 //! This crate has no I/O of its own (no HTTP server, no wasm-bindgen) so the
 //! exact same logic backs both the native `nucle_playground` tiny_http
@@ -375,6 +376,123 @@ fn attempt_final_decode(codec: &TernaryCodec, collection: &StrandCollection) -> 
     }
 }
 
+// ---------------------------------------------------------------------------
+// Storage shelf life
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ShelfLifeRequest {
+    /// `encapsulated` or `bone`.
+    pub medium: String,
+    pub celsius: f64,
+    #[serde(default = "default_strand_len")]
+    pub strand_len: usize,
+    #[serde(default = "default_data_strands")]
+    pub data_strands: usize,
+    #[serde(default = "default_parity_strands")]
+    pub parity_strands: usize,
+    #[serde(default = "default_copies")]
+    pub copies_per_strand: u32,
+    #[serde(default = "default_target")]
+    pub target_percent: f64,
+}
+
+fn default_strand_len() -> usize { 150 }
+fn default_data_strands() -> usize { 100 }
+fn default_parity_strands() -> usize { 20 }
+fn default_copies() -> u32 { 10 }
+fn default_target() -> f64 { 99.9 }
+
+#[derive(Debug, Serialize)]
+pub struct ShelfLifePoint {
+    pub years: f64,
+    pub recovery_probability: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TemperatureRow {
+    pub celsius: f64,
+    pub strand_half_life_years: Option<f64>,
+    pub shelf_life_years: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShelfLifeResponse {
+    pub medium: String,
+    pub citation: String,
+    pub activation_energy_kj_mol: f64,
+    pub break_rate_per_nt_year: f64,
+    pub strand_half_life_years: Option<f64>,
+    /// `None` when recovery stays above target beyond 10^15 years.
+    pub shelf_life_years: Option<f64>,
+    /// Whole-file recovery probability against age, log-spaced, for a chart.
+    pub curve: Vec<ShelfLifePoint>,
+    pub by_temperature: Vec<TemperatureRow>,
+}
+
+fn finite(x: f64) -> Option<f64> {
+    x.is_finite().then_some(x)
+}
+
+/// How long an archive stays readable under Arrhenius strand decay (see
+/// `nucle_synth::decay`), plus the recovery curve around that point and a
+/// freezer/fridge/cellar/room comparison.
+pub fn run_shelf_life(req: ShelfLifeRequest) -> Result<ShelfLifeResponse, String> {
+    use nucle_synth::decay::{strand_half_life_years, ShelfLifeQuery, StorageMedium};
+    let medium = StorageMedium::parse(&req.medium)
+        .ok_or_else(|| format!("unknown storage medium '{}' (expected encapsulated or bone)", req.medium))?;
+    if !(req.target_percent > 0.0 && req.target_percent < 100.0) {
+        return Err("target_percent must be between 0 and 100".to_string());
+    }
+    if req.strand_len == 0 || req.data_strands == 0 || req.copies_per_strand == 0 {
+        return Err("strand_len, data_strands and copies_per_strand must be at least 1".to_string());
+    }
+    if !(-80.0..=100.0).contains(&req.celsius) {
+        return Err("celsius must be between -80 and 100".to_string());
+    }
+    let query = |celsius: f64| ShelfLifeQuery {
+        medium,
+        celsius,
+        strand_len: req.strand_len,
+        data_strands: req.data_strands,
+        parity_strands: req.parity_strands,
+        copies_per_strand: req.copies_per_strand,
+        target_recovery: req.target_percent / 100.0,
+    };
+    let q = query(req.celsius);
+    let rate = medium.break_rate_per_nt_year(req.celsius);
+    let life = q.shelf_life_years();
+
+    // Log-spaced from a hundredth to ten times the shelf life (or a fixed
+    // span when it is effectively unbounded), 48 points.
+    let (lo, hi) = if life.is_finite() && life > 0.0 { (life / 100.0, life * 10.0) } else { (1.0, 1e12) };
+    let curve = (0..48)
+        .map(|i| {
+            let years = lo * (hi / lo).powf(i as f64 / 47.0);
+            ShelfLifePoint { years, recovery_probability: q.recovery_probability(years) }
+        })
+        .collect();
+    let by_temperature = [-20.0, 4.0, 10.0, 25.0]
+        .iter()
+        .map(|&c| TemperatureRow {
+            celsius: c,
+            strand_half_life_years: finite(strand_half_life_years(medium.break_rate_per_nt_year(c), req.strand_len)),
+            shelf_life_years: finite(query(c).shelf_life_years()),
+        })
+        .collect();
+
+    Ok(ShelfLifeResponse {
+        medium: medium.name().to_string(),
+        citation: medium.citation().to_string(),
+        activation_energy_kj_mol: medium.kinetics().activation_energy_kj_mol,
+        break_rate_per_nt_year: rate,
+        strand_half_life_years: finite(strand_half_life_years(rate, req.strand_len)),
+        shelf_life_years: finite(life),
+        curve,
+        by_temperature,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,5 +561,47 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.contains("capped at 2000"));
+    }
+
+    #[test]
+    fn shelf_life_matches_the_published_half_life_and_falls_with_temperature() {
+        let resp = run_shelf_life(ShelfLifeRequest {
+            medium: "encapsulated".into(),
+            celsius: 25.0,
+            strand_len: 150,
+            data_strands: 100,
+            parity_strands: 20,
+            copies_per_strand: 10,
+            target_percent: 99.9,
+        })
+        .unwrap();
+        let half = resp.strand_half_life_years.unwrap();
+        assert!((half - 38_000.0).abs() < 1_000.0, "{half}");
+        let life = resp.shelf_life_years.unwrap();
+        assert_eq!(resp.curve.len(), 48);
+        // Monotone up to floating-point rounding in the binomial sum.
+        assert!(resp.curve.windows(2).all(|w| w[0].recovery_probability + 1e-9 >= w[1].recovery_probability));
+        assert!(resp.curve.first().unwrap().years < life && resp.curve.last().unwrap().years > life);
+        let lives: Vec<f64> = resp.by_temperature.iter().map(|r| r.shelf_life_years.unwrap()).collect();
+        assert!(lives.windows(2).all(|w| w[0] > w[1]), "{lives:?}");
+    }
+
+    #[test]
+    fn shelf_life_rejects_bad_input() {
+        let req = |medium: &str, celsius: f64, target: f64| ShelfLifeRequest {
+            medium: medium.into(),
+            celsius,
+            strand_len: 150,
+            data_strands: 100,
+            parity_strands: 20,
+            copies_per_strand: 10,
+            target_percent: target,
+        };
+        assert!(run_shelf_life(req("tape", 25.0, 99.9)).unwrap_err().contains("unknown storage medium"));
+        assert!(run_shelf_life(req("bone", 500.0, 99.9)).is_err());
+        assert!(run_shelf_life(req("bone", 25.0, 100.0)).is_err());
+        let defaults: ShelfLifeRequest = serde_json::from_str(r#"{"medium":"bone","celsius":10}"#).unwrap();
+        assert_eq!(defaults.strand_len, 150);
+        assert!(run_shelf_life(defaults).is_ok());
     }
 }
