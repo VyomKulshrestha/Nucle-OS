@@ -10,6 +10,7 @@ pub mod codegen;
 pub mod docgen;
 pub mod effects;
 pub mod hardware;
+pub mod imports;
 pub mod lexer;
 pub mod lockfile;
 pub mod middle;

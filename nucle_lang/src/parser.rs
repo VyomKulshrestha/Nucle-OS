@@ -168,11 +168,11 @@ impl Parser {
         self.expect_ident_text("for")?;
         let binding = self.expect_ident_any("loop binding name")?;
         self.expect_ident_text("in")?;
-        let items = self.parse_ident_or_string_list()?;
+        let (items, literal_items) = self.parse_ident_or_string_list()?.into_iter().unzip();
         self.expect(TokenKind::LBrace, "'{' to start for body")?;
         let body = self.parse_declaration_block()?;
         self.expect(TokenKind::RBrace, "'}' to end for body")?;
-        Ok(ForDecl { binding, items, body, span: self.span_since(start) })
+        Ok(ForDecl { binding, items, literal_items, body, span: self.span_since(start) })
     }
 
     /// Shared by `if`/`for`/function bodies: zero or more declarations up
@@ -193,12 +193,12 @@ impl Parser {
     /// item -- mirrors `parse_string_list`'s "bracketed list or singleton"
     /// shape but also accepts identifiers (e.g. pool names), collapsing
     /// both into `String` per `ForDecl::items`.
-    fn parse_ident_or_string_list(&mut self) -> Result<Vec<String>, ParseError> {
-        let parse_item = |p: &mut Self| -> Result<String, ParseError> {
+    fn parse_ident_or_string_list(&mut self) -> Result<Vec<(String, bool)>, ParseError> {
+        let parse_item = |p: &mut Self| -> Result<(String, bool), ParseError> {
             if p.check(TokenKind::String(String::new())) {
-                p.expect_string("for-loop item")
+                Ok((p.expect_string("for-loop item")?, true))
             } else {
-                p.expect_ident_any("for-loop item")
+                Ok((p.expect_ident_any("for-loop item")?, false))
             }
         };
         if !self.check(TokenKind::LBracket) {

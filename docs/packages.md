@@ -10,6 +10,35 @@ of NucleOS's own release cadence.
 Four packages are bundled with this repository today: `presets`, `profiles`,
 `benchmarks`, and `recovery`.
 
+## What an import does
+
+`import { name as alias } from "nuclescript/<package>"` brings the package's
+real declaration into the program. Before type checking, each imported pool,
+`let` binding, function, enum, strand or sequence is spliced in from the
+package's source, after the `import` line, together with every other
+declaration from that package it refers to. Importing `illumina_recovery`
+therefore also brings `illumina_noisy` and `medical_archive`, in that order.
+An `as` alias renames the imported item only. Spliced code takes the
+`import` line's source position, so a diagnostic about it points at the
+import. Importing a name the program also declares is an ordinary duplicate
+(`E-POOL-DUPLICATE`, `E-FUNCTION-DUPLICATE`, ...).
+
+Pipeline exports such as `reliable_store` are checked by name but not
+spliced: declaring a pipeline runs it, and importing a template should not
+store files as a side effect.
+
+Imported functions are called like local ones. A `Pool<Profile>` parameter
+takes a declared pool of that profile (the function's `store ... into
+target` writes to the pool the caller passed), and a `Recovery` parameter
+takes a recovered pool, which is what packages export as recovery
+profiles:
+
+```nuclescript
+import { archive_with_guarantee, medical_archive, illumina_recovery } from "nuclescript/presets"
+
+let saved: DnaFile = archive_with_guarantee("records.csv", medical_archive, illumina_recovery)
+```
+
 ## @nuclescript/presets 0.1.0
 
 GitHub package: `@nuclescript/presets`
@@ -162,4 +191,4 @@ Validate an import in a NucleScript program:
 nucle plan docs/examples/preset_imports.nsl
 ```
 
-The current compiler validates package source names and exported symbols at compile time against a registry initialized from all installed package manifests. Registry-backed package expansion can build on the manifest shape without changing NucleScript source syntax.
+The compiler validates package source names and exported symbols against a registry initialized from all installed package manifests, then expands each import from the package's embedded source (see "What an import does" above).

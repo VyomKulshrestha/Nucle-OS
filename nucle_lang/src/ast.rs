@@ -124,6 +124,12 @@ pub struct IfDecl {
 pub struct ForDecl {
     pub binding: String,
     pub items: Vec<String>,
+    /// `literal_items[i]` is true when `items[i]` was written as a string
+    /// literal (`"report.csv"`) rather than an identifier (a pool name), so
+    /// substituting it into an expression yields a string value, not a
+    /// variable reference. Missing entries count as identifiers.
+    #[serde(default)]
+    pub literal_items: Vec<bool>,
     pub body: Vec<Declaration>,
     pub span: Span,
 }

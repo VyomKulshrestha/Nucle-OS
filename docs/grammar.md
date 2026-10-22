@@ -375,7 +375,11 @@ for target in [archive] {
   and/or string literals -- never an open-ended `while` or a runtime
   collection. Each iteration is unrolled by substituting the loop binding
   with that iteration's value in a fresh copy of the body, and each copy is
-  type-checked independently.
+  type-checked independently. A string-literal item is a string value
+  wherever the binding appears as an expression (`put(f)` with
+  `for f in ["a.txt", "b.txt"]` passes each file name); an identifier item
+  (a pool name) stays a name. A `let` in the body is rebound on every
+  iteration, and the last iteration's value is visible after the loop.
 - Both are fully resolved away during type checking; `codegen`/the
   simulation backend only ever see a plain, control-flow-free program.
 
@@ -747,6 +751,21 @@ complete, runnable examples (the latter exercising a user `enum`, a
 nested match, and exhaustiveness via a trailing wildcard).
 
 ---
+
+### Calling functions with pools, recovery profiles and recursion
+
+A `Pool<Profile>` parameter accepts either a probabilistic pool expression or
+the name of a declared `pool` whose profile matches; a generic `Pool<P>`
+binds `P` to that pool's profile. Inside the function, `store`, `delete` and
+`retrieve` against the parameter's name reach the pool the caller passed. A
+`Recovery` parameter accepts a recovered pool (`Pool<Recovered>`), the shape
+packages export as recovery profiles. A `let` of function type bound from a
+call (`let f: Fn() -> T = make_f()`) is callable as `f()`.
+
+Functions and closures may call themselves. Run-time nesting is capped at 64
+calls: recursion that reaches a base case stays far below it, and recursion
+that never does stops with "exceeded the maximum call depth" instead of
+overflowing the interpreter's stack.
 
 ## Closures (`Fn(...)` / `fn(params) -> T { body }`)
 

@@ -363,16 +363,18 @@ fn eval_expr(
         // ast.rs), so there is no value to produce, but the search still
         // runs and is logged exactly like the statement form.
         Expr::RetrieveExpr(op) => {
-            exec_retrieve_stmt(op, os, steps);
+            exec_retrieve_stmt(&RetrieveOp { pool: resolve_pool_arg(&op.pool, env).to_string(), ..op.clone() }, os, steps);
             EvalOutcome::Value(Value::Unit)
         }
         Expr::Variable(name) => match env.get(name) {
             Some(value) => EvalOutcome::Value(value.clone()),
-            // Unreachable post-typecheck (E-VARIABLE-UNDECLARED would
-            // have already fired) -- surfaced as a runtime error string
-            // rather than panicking, matching how `effects.rs` treats an
-            // unresolvable name as inert-but-shouldn't-happen.
-            None => EvalOutcome::Err(format!("internal error: undeclared variable '{}' reached execution", name)),
+            // A declared pool passed as an argument to a `Pool<...>`
+            // parameter.
+            None if pools.contains_key(name) => EvalOutcome::Value(Value::PoolRef(name.clone())),
+            // Anything else the type checker accepted is a compile-time
+            // value with no runtime shape (a simulated pool or a recovery
+            // profile passed as a `Recovery` guarantee).
+            None => EvalOutcome::Value(Value::Unit),
         },
         // Capture *is* this `env.clone()` -- see `Value::Closure`'s doc
         // comment in value.rs. Nothing to filter: a captured `Pool`/
@@ -506,6 +508,16 @@ fn run_match_arm(
 /// accepted since it was written but never actually resolved -- do
 /// something real when `data` is a bound parameter, instead of silently
 /// treating the identifier's own text as a literal path.
+/// A `store`/`delete`/`retrieve` target that names a `Pool<...>` parameter
+/// resolves to the declared pool the caller passed; any other name is a
+/// pool declared directly.
+fn resolve_pool_arg<'a>(pool: &'a str, env: &'a HashMap<String, Value>) -> &'a str {
+    match env.get(pool) {
+        Some(Value::PoolRef(real)) => real,
+        _ => pool,
+    }
+}
+
 fn resolve_file_arg<'a>(file: &'a str, env: &'a HashMap<String, Value>) -> &'a str {
     match env.get(file) {
         Some(Value::Str(s)) => s,
@@ -601,6 +613,8 @@ fn search_pool(os: &NucleOS, pool: &str, query: &str, top_k: usize) -> Vec<Strin
 }
 
 fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<String, PoolDecl>, os: &mut NucleOS, base_dir: &Path, steps: &mut Vec<String>) -> EvalOutcome {
+    let resolved = resolve_pool_arg(&op.pool, env);
+    let op = &StoreOp { pool: resolved.to_string(), ..op.clone() };
     let Some(pool) = pools.get(&op.pool) else {
         // Unreachable for a program that passed type-checking
         // (`E-STORE-POOL-UNDECLARED` would already have fired) --
@@ -652,6 +666,7 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
 /// same relationship to `execute_vfs_call`'s `VfsCall::Delete` arm as
 /// `eval_store_expr` has to its `VfsCall::Store` arm.
 fn eval_delete_expr(op: &DeleteOp, env: &HashMap<String, Value>, os: &mut NucleOS, steps: &mut Vec<String>) -> EvalOutcome {
+    let op = &DeleteOp { pool: resolve_pool_arg(&op.pool, env).to_string(), ..op.clone() };
     let file = resolve_file_arg(&op.file, env);
     let filename = pool_path(&op.pool, file);
     match os.dna_delete(&filename) {
@@ -674,6 +689,39 @@ fn eval_delete_expr(op: &DeleteOp, env: &HashMap<String, Value>, os: &mut NucleO
 /// `effects::ResolvingSet`'s pattern exactly -- it must be the SAME set
 /// threaded through every nested call, never a fresh one, or the guard
 /// can't see a call already in progress.
+/// Deepest nesting of user function and closure calls a program may
+/// reach. Recursion that terminates (a function calling itself with a
+/// different enum variant, a closure retrying with a fallback) stays far
+/// below it; one that never terminates stops here with an error instead
+/// of overflowing the interpreter's own stack.
+const MAX_CALL_DEPTH: usize = 64;
+
+thread_local! {
+    static CALL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// One level of call nesting, released when dropped.
+struct CallDepth;
+
+impl CallDepth {
+    fn enter() -> Option<CallDepth> {
+        CALL_DEPTH.with(|d| {
+            if d.get() >= MAX_CALL_DEPTH {
+                None
+            } else {
+                d.set(d.get() + 1);
+                Some(CallDepth)
+            }
+        })
+    }
+}
+
+impl Drop for CallDepth {
+    fn drop(&mut self) {
+        CALL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn call_user_function(
     func: &FunctionDecl,
@@ -685,15 +733,17 @@ fn call_user_function(
     steps: &mut Vec<String>,
     calling: &mut HashSet<String>,
 ) -> EvalOutcome {
-    if !calling.insert(func.name.clone()) {
-        return EvalOutcome::Err(format!("'{}' recurses without terminating", func.name));
-    }
+    let Some(_depth) = CallDepth::enter() else {
+        return EvalOutcome::Err(format!(
+            "'{}' exceeded the maximum call depth of {}; it is probably recursing without a base case",
+            func.name, MAX_CALL_DEPTH
+        ));
+    };
     let mut env: HashMap<String, Value> = HashMap::new();
     for (param, arg) in func.params.iter().zip(args) {
         env.insert(param.name.clone(), arg);
     }
     let outcome = exec_function_body(&func.body, &mut env, funcs, pools, os, base_dir, steps, calling);
-    calling.remove(&func.name);
 
     // A `?` inside this function's own body resolves entirely within
     // this call -- the caller sees an ordinary (wrapped) Result value at
@@ -762,6 +812,12 @@ fn call_closure(
     steps: &mut Vec<String>,
     calling: &mut HashSet<String>,
 ) -> EvalOutcome {
+    let Some(_depth) = CallDepth::enter() else {
+        return EvalOutcome::Err(format!(
+            "closure '{}' exceeded the maximum call depth of {}; it is probably recursing without a base case",
+            name, MAX_CALL_DEPTH
+        ));
+    };
     let mut env = captured_env.clone();
     env.insert(
         name.to_string(),
@@ -868,7 +924,9 @@ fn exec_function_body(
                     return EvalOutcome::Err(msg);
                 }
             }
-            Declaration::Operation(Operation::Retrieve(op)) => exec_retrieve_stmt(op, os, steps),
+            Declaration::Operation(Operation::Retrieve(op)) => {
+                exec_retrieve_stmt(&RetrieveOp { pool: resolve_pool_arg(&op.pool, env).to_string(), ..op.clone() }, os, steps)
+            }
             // `assert` is evaluated during type-checking (see
             // `typeck::TypeChecker::check_assert`), not lowered to a VFS
             // call -- it has no runtime effect for this loop to execute,

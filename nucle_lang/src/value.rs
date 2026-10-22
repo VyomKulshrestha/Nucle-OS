@@ -24,6 +24,10 @@ pub enum Value {
     Deleted { filename: String, strands_removed: usize },
     /// `Void`'s one runtime inhabitant.
     Unit,
+    /// A declared pool passed as an argument to a `Pool<...>` parameter;
+    /// `store`/`delete`/`retrieve` against the parameter's name resolve to
+    /// this pool.
+    PoolRef(String),
     /// A plain `Str` value -- today, only ever an `Err`'s message bound
     /// by a `match` arm's `Err(<name>)` pattern (see `codegen::eval_expr`'s
     /// `Expr::Match` arm). Contrast `EvalOutcome::Err`, which is the same

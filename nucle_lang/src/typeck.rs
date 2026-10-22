@@ -242,6 +242,8 @@ impl TypeChecker {
     /// declarations of its resolved branch/unrolled iterations, so the
     /// result never contains either variant.
     fn check(&mut self, program: &Program) -> Program {
+        let expanded = crate::imports::expand_imports(program);
+        let program = &expanded;
         self.predeclare_functions(program);
         let mut declarations = Vec::new();
         for declaration in &program.declarations {
@@ -404,15 +406,44 @@ impl TypeChecker {
     /// Unrolls the loop by substituting `binding` with each item's literal
     /// value in a fresh copy of `body`, type-checking each copy
     /// independently -- see `ForDecl`'s doc comment.
+    ///
+    /// Each iteration's own `let`s are dropped before the next iteration is
+    /// checked, so a loop body can bind a name every time round, the same
+    /// as writing the unrolled copies one after another with shadowing.
+    /// The last iteration's bindings stay visible after the loop.
     fn check_for(&mut self, for_decl: &ForDecl) -> Vec<Declaration> {
+        let body_lets: Vec<String> = for_decl
+            .body
+            .iter()
+            .filter_map(|d| match d {
+                Declaration::Let(l) => Some(l.name.clone()),
+                _ => None,
+            })
+            .collect();
         let mut out = Vec::new();
-        for item in &for_decl.items {
+        for (i, item) in for_decl.items.iter().enumerate() {
+            if i > 0 {
+                for name in &body_lets {
+                    self.forget_binding(name);
+                }
+            }
+            let literal = for_decl.literal_items.get(i).copied().unwrap_or(false);
             for body_decl in &for_decl.body {
-                let substituted = substitute_declaration(body_decl, &for_decl.binding, item);
+                let substituted = substitute_declaration(body_decl, &for_decl.binding, item, literal);
                 out.extend(self.check_declaration_single(&substituted));
             }
         }
         out
+    }
+
+    /// Remove `name` from every binding scope map, so it can be bound again.
+    fn forget_binding(&mut self, name: &str) {
+        self.bindings.remove(name);
+        self.pool_bindings.remove(name);
+        self.result_bindings.remove(name);
+        self.enum_bindings.remove(name);
+        self.closures.remove(name);
+        self.closure_decls.remove(name);
     }
 
     /// Resolves a numeric operand in an `if`/`assert` condition: either a
@@ -919,6 +950,16 @@ impl TypeChecker {
         } else {
             if let TypeExpr::Enum(name) = &actual {
                 self.enum_bindings.insert(binding.name.clone(), name.clone());
+            }
+            // A closure value obtained from a call (`let f: Fn() -> T =
+            // make_f()`) or another binding is callable through `f()` the
+            // same way an `Fn`-typed parameter is: its signature comes
+            // from the type, its effect from the type's declared ceiling.
+            if let TypeExpr::Fn(param_types, ret, effect) = &binding.annotation {
+                self.closures.insert(binding.name.clone(), (Vec::new(), param_types.clone(), (**ret).clone()));
+                if let Some(effect) = effect {
+                    self.fn_param_effects.insert(binding.name.clone(), effect.to_effect());
+                }
             }
             self.bindings.insert(binding.name.clone(), binding.clone());
         }
@@ -1638,7 +1679,7 @@ impl TypeChecker {
         for (expected, arg) in param_types.iter().zip(args.iter()) {
             match expected {
                 TypeExpr::Pool(expected_pool) => {
-                    let Some(inferred_arg) = self.infer_expr(arg, span) else {
+                    let Some(inferred_arg) = self.infer_pool_argument(arg, span) else {
                         self.report.error(span, "E-ARG-TYPE-INVALID", format!("an argument for '{}' must be a Pool type", name));
                         continue;
                     };
@@ -1684,6 +1725,23 @@ impl TypeChecker {
         Some(substitute_pool_state(return_type, &substitution))
     }
 
+    /// The pool type of an argument passed to a `Pool<...>` parameter: a
+    /// probabilistic pool expression as before, or the name of a declared
+    /// `pool`, which stands for that pool at its profile's nominal error
+    /// rate. That is what lets a function such as `fn archive(target:
+    /// Pool<Illumina>, ...)` be called with a real pool, and its body's
+    /// `store ... into target` reach that pool at run time.
+    fn infer_pool_argument(&mut self, arg: &Expr, span: Span) -> Option<ProbPoolType> {
+        if let Expr::Variable(name) = arg {
+            if !self.pool_bindings.contains_key(name) {
+                if let Some(pool) = self.pools.get(name) {
+                    return Some(ProbPoolType::new(PoolState::Profile(pool.profile), profile_error_rate_percent(pool.profile)));
+                }
+            }
+        }
+        self.infer_expr(arg, span)
+    }
+
     /// Checks an ordinary (non-Pool, non-Fn) call argument against its
     /// declared parameter type. String literals are contextually valid
     /// `File` arguments as well as `Str`; every other shape is exact.
@@ -1725,8 +1783,13 @@ impl TypeChecker {
                 .map(|(ok, err)| TypeExpr::Result(Box::new(ok), Box::new(err))),
             _ => None,
         };
+        // A `Recovery` guarantee is supplied as a recovered pool: the
+        // `Pool<Recovered>` bindings packages export as recovery profiles.
         let compatible = actual.as_ref().is_some_and(|actual| {
-            actual == expected || (matches!(expected, TypeExpr::File) && matches!(actual, TypeExpr::Str))
+            actual == expected
+                || (matches!(expected, TypeExpr::File) && matches!(actual, TypeExpr::Str))
+                || (matches!(expected, TypeExpr::Recovery)
+                    && matches!(actual, TypeExpr::Pool(p) if p.state == PoolState::Recovered))
         });
         if !compatible {
             let actual = actual.as_ref().map(crate::docgen::render_type)
@@ -1940,7 +2003,7 @@ impl TypeChecker {
                 }
                 for (param, arg) in func.params.iter().zip(args.iter()) {
                     if let TypeExpr::Pool(expected_pool) = &param.ty {
-                        let Some(inferred_arg) = self.infer_expr(arg, span) else {
+                        let Some(inferred_arg) = self.infer_pool_argument(arg, span) else {
                             self.report.error(span, "E-ARG-TYPE-INVALID", format!(
                                 "argument for parameter '{}' must be a Pool type",
                                 param.name
@@ -2587,13 +2650,13 @@ fn did_you_mean(suggestion: Option<String>) -> String {
 /// unchanged -- a loop is only useful for repeating operations/bindings
 /// that reference the loop variable, and those are the variants handled
 /// below.
-fn substitute_declaration(decl: &Declaration, binding: &str, value: &str) -> Declaration {
+fn substitute_declaration(decl: &Declaration, binding: &str, value: &str, literal: bool) -> Declaration {
     let sub = |s: &str| -> String { if s == binding { value.to_string() } else { s.to_string() } };
     match decl {
         Declaration::Let(d) => Declaration::Let(LetDecl {
             name: d.name.clone(),
             annotation: d.annotation.clone(),
-            expr: substitute_expr(&d.expr, binding, value),
+            expr: substitute_expr(&d.expr, binding, value, literal),
             span: d.span,
         }),
         Declaration::Operation(Operation::Store(op)) => Declaration::Operation(Operation::Store(StoreOp {
@@ -2615,29 +2678,37 @@ fn substitute_declaration(decl: &Declaration, binding: &str, value: &str) -> Dec
             span: op.span,
         })),
         Declaration::Operation(Operation::Assert(op)) => Declaration::Operation(Operation::Assert(AssertOp {
-            condition: substitute_expr(&op.condition, binding, value),
+            condition: substitute_expr(&op.condition, binding, value, literal),
             message: op.message.clone(),
             span: op.span,
         })),
         Declaration::If(d) => Declaration::If(IfDecl {
-            condition: substitute_expr(&d.condition, binding, value),
-            then_branch: d.then_branch.iter().map(|inner| substitute_declaration(inner, binding, value)).collect(),
+            condition: substitute_expr(&d.condition, binding, value, literal),
+            then_branch: d.then_branch.iter().map(|inner| substitute_declaration(inner, binding, value, literal)).collect(),
             else_branch: d
                 .else_branch
                 .as_ref()
-                .map(|branch| branch.iter().map(|inner| substitute_declaration(inner, binding, value)).collect()),
+                .map(|branch| branch.iter().map(|inner| substitute_declaration(inner, binding, value, literal)).collect()),
             span: d.span,
         }),
         Declaration::For(d) => Declaration::For(ForDecl {
             binding: d.binding.clone(),
             items: d.items.iter().map(|item| sub(item)).collect(),
+            // An inner item naming the outer loop variable takes on the
+            // outer item's kind (string literal or identifier).
+            literal_items: d
+                .items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| if item == binding { literal } else { d.literal_items.get(i).copied().unwrap_or(false) })
+                .collect(),
             // An inner loop reusing the same binding name shadows the
             // outer one within its own body, matching ordinary lexical
             // scoping -- don't substitute through it.
             body: if d.binding == binding {
                 d.body.clone()
             } else {
-                d.body.iter().map(|inner| substitute_declaration(inner, binding, value)).collect()
+                d.body.iter().map(|inner| substitute_declaration(inner, binding, value, literal)).collect()
             },
             span: d.span,
         }),
@@ -2646,7 +2717,7 @@ fn substitute_declaration(decl: &Declaration, binding: &str, value: &str) -> Dec
         // above) -- always substitute through its body.
         Declaration::Test(d) => Declaration::Test(TestDecl {
             name: d.name.clone(),
-            body: d.body.iter().map(|inner| substitute_declaration(inner, binding, value)).collect(),
+            body: d.body.iter().map(|inner| substitute_declaration(inner, binding, value, literal)).collect(),
             span: d.span,
         }),
         Declaration::Import(_)
@@ -2659,7 +2730,7 @@ fn substitute_declaration(decl: &Declaration, binding: &str, value: &str) -> Dec
     }
 }
 
-fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
+fn substitute_expr(expr: &Expr, binding: &str, value: &str, literal: bool) -> Expr {
     let sub = |s: &str| -> String { if s == binding { value.to_string() } else { s.to_string() } };
     match expr {
         Expr::SimulatePool { pool, profile } => Expr::SimulatePool { pool: sub(pool), profile: *profile },
@@ -2671,19 +2742,22 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
         }
         Expr::FunctionCall { name, args, explicit_type_args } => Expr::FunctionCall {
             name: name.clone(),
-            args: args.iter().map(|arg| substitute_expr(arg, binding, value)).collect(),
+            args: args.iter().map(|arg| substitute_expr(arg, binding, value, literal)).collect(),
             explicit_type_args: explicit_type_args.clone(),
         },
+        // A string-literal item (`for f in ["a.txt"]`) becomes a string
+        // value wherever the loop variable is used as an expression.
+        Expr::Variable(name) if name == binding && literal => Expr::StringLiteral(value.to_string()),
         Expr::Variable(name) => Expr::Variable(sub(name)),
         Expr::StringLiteral(s) => Expr::StringLiteral(s.clone()),
         Expr::Number(n) => Expr::Number(*n),
         Expr::BinaryOp { op, left, right } => Expr::BinaryOp {
             op: *op,
-            left: Box::new(substitute_expr(left, binding, value)),
-            right: Box::new(substitute_expr(right, binding, value)),
+            left: Box::new(substitute_expr(left, binding, value, literal)),
+            right: Box::new(substitute_expr(right, binding, value, literal)),
         },
-        Expr::Not(inner) => Expr::Not(Box::new(substitute_expr(inner, binding, value))),
-        Expr::Try(inner) => Expr::Try(Box::new(substitute_expr(inner, binding, value))),
+        Expr::Not(inner) => Expr::Not(Box::new(substitute_expr(inner, binding, value, literal))),
+        Expr::Try(inner) => Expr::Try(Box::new(substitute_expr(inner, binding, value, literal))),
         // Mirrors the statement-form Operation::Store/Retrieve/Delete arms
         // in substitute_declaration above exactly -- same fields, same
         // `sub(...)` substitution, since both surface forms wrap the
@@ -2711,13 +2785,13 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
         // `binding` -- only the scrutinee and arm bodies can reference
         // it, so only they get recursed into.
         Expr::Match { scrutinee, arms } => Expr::Match {
-            scrutinee: Box::new(substitute_expr(scrutinee, binding, value)),
+            scrutinee: Box::new(substitute_expr(scrutinee, binding, value, literal)),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
                     variant: arm.variant.clone(),
                     binding: arm.binding.clone(),
-                    body: Box::new(substitute_expr(&arm.body, binding, value)),
+                    body: Box::new(substitute_expr(&arm.body, binding, value, literal)),
                     span: arm.span,
                 })
                 .collect(),
@@ -2729,15 +2803,15 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str) -> Expr {
             type_params: type_params.clone(),
             params: params.clone(),
             return_type: return_type.clone(),
-            body: body.iter().map(|decl| substitute_declaration(decl, binding, value)).collect(),
+            body: body.iter().map(|decl| substitute_declaration(decl, binding, value, literal)).collect(),
             span: *span,
         },
-        Expr::Ok(inner) => Expr::Ok(Box::new(substitute_expr(inner, binding, value))),
-        Expr::Err(inner) => Expr::Err(Box::new(substitute_expr(inner, binding, value))),
+        Expr::Ok(inner) => Expr::Ok(Box::new(substitute_expr(inner, binding, value, literal))),
+        Expr::Err(inner) => Expr::Err(Box::new(substitute_expr(inner, binding, value, literal))),
         Expr::EnumConstruct { enum_name, variant, payload } => Expr::EnumConstruct {
             enum_name: enum_name.clone(),
             variant: variant.clone(),
-            payload: payload.as_ref().map(|inner| Box::new(substitute_expr(inner, binding, value))),
+            payload: payload.as_ref().map(|inner| Box::new(substitute_expr(inner, binding, value, literal))),
         },
     }
 }
