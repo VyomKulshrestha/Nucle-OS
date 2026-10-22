@@ -1,4 +1,4 @@
-# Nucle-OS Architecture
+﻿# Nucle-OS Architecture
 
 ## Design Philosophy
 
@@ -926,6 +926,44 @@ Nanopore's full end-to-end recovery still failed at realistic settings even with
 With the correct pairing, consensus + Reed-Solomon **does** converge reliably at realistic coverage/redundancy, verified directly rather than assumed: 15x coverage / 6 parity strands recovers exactly on 5/5 seeds (`nucle_vfs::tests::test_roundtrip_survives_nanopore_noise_via_consensus`, always-run), and the *exact* original 50x/12 scale this "wall" was first diagnosed at also recovers exactly on 5/5 seeds under the fix (`test_nanopore_recovery_is_reliable_at_the_original_diagnostic_scale_thorough`, `#[ignore]`d for cost, not because the answer is in doubt). `nucle_cli::realistic_synth_seq_pair` now pairs `Illumina`/`OxfordNanopore` (sequencing-only technologies in this project's catalog) with `TwistBioscience` synthesis everywhere the CLI simulates noise, rather than the same profile for both stages — `nucle benchmark -p nanopore -r 4`/`-r 12` now report ~7% error rate per file (matching the documented rate) and **PASS** for every standard fixture at `-r 12`, a complete reversal from the FAIL this section used to describe. `Twist`/`Pristine` are left paired with themselves in that helper: Twist's own error rate is low enough that doubling it is immaterial, and Pristine doubled is still zero.
 
 Two real, if secondary, findings from the investigation that surfaced this, worth naming so they aren't lost: `PoaGraph::heaviest_path`'s edge-weight-sum objective double-counts an interior node's support (once on its incoming edge, once on its outgoing edge) relative to the single-edge bypass around it, biasing the extractor toward a spurious insertion whenever it's independently supported by more than roughly a third of reads rather than requiring an actual majority; and the multi-fold-order polishing ensemble (`CONTESTED_CONFIDENCE_THRESHOLD`) only checks *fold-order independence*, not correctness — three fold orders converging on the same *wrong* answer would pass that check. Neither turned out to be the dominant cause of the Nanopore failure (the doubled noise rate was), and at the coverage/redundancy that now passes reliably, neither has been observed to matter in practice — but they're real, scoped, and worth keeping in mind if a future noise profile or higher error rate resurfaces a similar-looking plateau.
+
+### Measured on real nanopore reads
+
+Simulated noise only tests the model of the channel, so `nucle_ecc::realdata`
+also scores consensus against real reads: the Clustered Nanopore Reads dataset
+(Srinivasavaradhan, Gopi, Pfister and Yekhanin, ISIT 2021), 10,000
+Twist-synthesized 110 nt strands with 269,709 Oxford Nanopore MinION reads.
+`nucle_ecc/examples/real_reads.rs` runs the full set; a 50-cluster sample under
+`nucle_ecc/tests/fixtures/cnr/` runs in CI.
+
+On the first 2,000 clusters (5.77% raw per-base error), the partial-order vote
+alone recovered 81.8% of strands exactly, leaving 0.338% per-base error. The
+failures had one shape: a homopolymer called one base short or long, or two to
+four junk bases on an end. A majority of the cluster's reads shared the error,
+so no vote could remove it.
+
+`nucle_ecc::polish` adds the one fact the vote ignores, the strand length the
+codec wrote. Starting from the vote, it treats the consensus as a candidate
+median string. While the length is wrong, it applies the single insertion or
+deletion that keeps the summed edit distance to all reads lowest. Then it
+applies substitutions while they strictly lower that sum. Forward and backward
+alignment matrices per read score each candidate edit in time linear in the
+read length, so polishing added about 13% to consensus time on that run. Results:
+
+| Decoder | Exact | Residual error |
+|---|---:|---:|
+| Partial-order vote | 81.8% | 0.338% |
+| Vote + median polish, length unknown | 80.4% | 0.226% |
+| Vote + length-aware median polish | 94.7% | 0.100% |
+
+Without the length, polishing still lowers per-base error but recovers fewer
+strands exactly, because a minimal-total-edit string can still be the wrong
+length. The decode pipeline does not need to be told the length:
+`nucle_ecc::pipeline::vote_groups` takes the length shared by a clear majority of
+a file's voted strands (every codec pads to one `strand_length`) and polishes
+only the groups that disagree. With no clear majority it changes nothing.
+`consensus_then_rs_decode`, its retry variant and `RepairPipeline::run_consensus`
+all go through it, so `dna_read` and the block devices inherit the fix.
 
 ## Retrieval Architecture
 

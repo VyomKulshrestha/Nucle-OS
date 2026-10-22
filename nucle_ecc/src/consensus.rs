@@ -824,6 +824,30 @@ pub fn build_consensus_batch(read_groups: &[Vec<DnaStrand>]) -> Vec<Option<Conse
     read_groups.iter().map(|group| build_consensus(group)).collect()
 }
 
+/// [`build_consensus`] followed by [`crate::polish::polish`] toward the
+/// strand length the codec actually wrote.
+///
+/// Use this wherever the expected strand length is known (every codec in
+/// this workspace writes fixed-length strands): it corrects the
+/// homopolymer-length and end-junk errors a majority of reads can share,
+/// which a vote alone cannot. `confidence` is recomputed as the fraction of
+/// reads whose base agrees at each polished position under a global
+/// alignment, so it stays aligned with the returned sequence.
+pub fn build_consensus_with_length(reads: &[DnaStrand], expected_len: usize) -> Option<ConsensusResult> {
+    let voted = build_consensus(reads)?;
+    let sequence = crate::polish::polish(&voted.sequence, reads, Some(expected_len));
+    if sequence == voted.sequence {
+        return Some(voted);
+    }
+    let confidence = crate::polish::column_agreement(&sequence, reads);
+    let avg_confidence = if confidence.is_empty() {
+        0.0
+    } else {
+        confidence.iter().sum::<f64>() / confidence.len() as f64
+    };
+    Some(ConsensusResult { sequence, coverage: voted.coverage, confidence, avg_confidence })
+}
+
 /// Determine if more coverage is needed based on confidence threshold.
 ///
 /// Returns the positions where confidence is below the threshold.

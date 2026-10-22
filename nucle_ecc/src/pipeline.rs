@@ -107,13 +107,49 @@ pub fn consensus_then_rs_decode(
     parity_groups: &[Vec<DnaStrand>],
     rs_config: RsConfig,
 ) -> Vec<DnaStrand> {
-    let consensus_data: Vec<Option<DnaStrand>> = data_groups.iter()
-        .map(|g| consensus::build_consensus(g).map(|r| r.sequence))
-        .collect();
-    let consensus_parity: Vec<Option<DnaStrand>> = parity_groups.iter()
-        .map(|g| consensus::build_consensus(g).map(|r| r.sequence))
-        .collect();
+    let consensus_data: Vec<Option<DnaStrand>> =
+        vote_groups(data_groups).into_iter().map(|r| r.map(|r| r.sequence)).collect();
+    let consensus_parity: Vec<Option<DnaStrand>> =
+        vote_groups(parity_groups).into_iter().map(|r| r.map(|r| r.sequence)).collect();
     rs_decode_from_sequences(&consensus_data, &consensus_parity, rs_config, &HashSet::new(), &HashSet::new())
+}
+
+/// Consensus-vote every group, then length-polish the groups whose vote
+/// came out a different length from the rest.
+///
+/// Every codec here pads its strands to one fixed `strand_length`, so when
+/// a clear majority of a file's consensus strands share one length, that
+/// length is what the codec wrote, and a group that voted to anything else
+/// almost certainly carries a homopolymer-length or end-junk error shared
+/// by most of its reads. Those groups go through
+/// [`consensus::build_consensus_with_length`]. With no clear majority
+/// (strands that legitimately differ in length, or too few groups to
+/// tell), nothing is changed.
+pub fn vote_groups(groups: &[Vec<DnaStrand>]) -> Vec<Option<ConsensusResult>> {
+    let mut voted: Vec<Option<ConsensusResult>> = groups.iter().map(|g| consensus::build_consensus(g)).collect();
+    let Some(target) = modal_length(&voted) else {
+        return voted;
+    };
+    for (slot, group) in voted.iter_mut().zip(groups) {
+        if slot.as_ref().is_some_and(|r| r.sequence.len() != target) {
+            *slot = consensus::build_consensus_with_length(group, target);
+        }
+    }
+    voted
+}
+
+/// The length shared by more than half of the voted strands, if any (and
+/// only when there are at least three to compare).
+fn modal_length(voted: &[Option<ConsensusResult>]) -> Option<usize> {
+    let lens: Vec<usize> = voted.iter().flatten().map(|r| r.sequence.len()).collect();
+    if lens.len() < 3 {
+        return None;
+    }
+    let mut counts = std::collections::HashMap::new();
+    for &l in &lens {
+        *counts.entry(l).or_insert(0usize) += 1;
+    }
+    counts.into_iter().find(|&(_, n)| n * 2 > lens.len()).map(|(l, _)| l)
 }
 
 /// Core RS step shared by `consensus_then_rs_decode` and
@@ -200,8 +236,8 @@ pub fn consensus_then_rs_decode_with_retry(
     // exactly once and reuse the same sequences for the baseline and
     // every retry trial, instead of re-running consensus from scratch on
     // every attempt.
-    let raw_data: Vec<Option<ConsensusResult>> = data_groups.iter().map(|g| consensus::build_consensus(g)).collect();
-    let raw_parity: Vec<Option<ConsensusResult>> = parity_groups.iter().map(|g| consensus::build_consensus(g)).collect();
+    let raw_data: Vec<Option<ConsensusResult>> = vote_groups(data_groups);
+    let raw_parity: Vec<Option<ConsensusResult>> = vote_groups(parity_groups);
     let consensus_data: Vec<Option<DnaStrand>> = raw_data.iter().map(|r| r.as_ref().map(|res| res.sequence.clone())).collect();
     let consensus_parity: Vec<Option<DnaStrand>> = raw_parity.iter().map(|r| r.as_ref().map(|res| res.sequence.clone())).collect();
 
@@ -334,17 +370,15 @@ impl RepairPipeline {
         let mut total_confidence = 0.0;
         let mut total_low_conf = 0;
 
-        for group in read_groups {
-            if let Some(result) = consensus::build_consensus(group) {
-                let low = consensus::low_confidence_positions(
-                    &result,
-                    self.config.consensus_threshold,
-                );
-                total_low_conf += low.len();
-                total_confidence += result.avg_confidence;
-                consensus_strands.push(result.sequence.clone());
-                consensus_results.push(result);
-            }
+        for result in vote_groups(read_groups).into_iter().flatten() {
+            let low = consensus::low_confidence_positions(
+                &result,
+                self.config.consensus_threshold,
+            );
+            total_low_conf += low.len();
+            total_confidence += result.avg_confidence;
+            consensus_strands.push(result.sequence.clone());
+            consensus_results.push(result);
         }
 
         let avg_conf = if consensus_results.is_empty() {
