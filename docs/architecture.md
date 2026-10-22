@@ -817,6 +817,36 @@ DNA storage has a unique error profile unlike any digital channel:
 | Deletion | ~0.02% | ~0.01% | ~2-5% |
 | Strand dropout | 0.5-5% | — | — |
 
+### Storage decay
+
+The table above covers writing and reading. Between the two, stored DNA
+breaks: each phosphodiester bond fails as a first-order process, and a strand
+with any break cannot be amplified because PCR needs both primer sites on one
+molecule. `nucle_synth::decay` models this with the Arrhenius law
+`k(T) = k_ref · exp(−Ea/R · (1/T − 1/T_ref))` and published kinetics:
+
+| Medium | Ea | Reference rate | Source |
+|---|---:|---|---|
+| `encapsulated` (dry, anoxic capsule) | 197 kJ/mol | 3.82 × 10⁻¹⁵ breaks/nt/s at 25 °C | Coudy et al., PLoS ONE 2021 |
+| `bone` (buried fossil bone) | 127 kJ/mol | 5.50 × 10⁻⁶ breaks/nt/year at 13.1 °C | Allentoft et al., Proc. R. Soc. B 2012 |
+
+A molecule of `L` nucleotides survives `t` years with probability
+`exp(−k·L·t)`. A sequence is lost when every one of its physical copies has
+broken, and a file is lost when more sequences are gone than its Reed-Solomon
+parity can rebuild, a binomial tail. `ShelfLifeQuery::shelf_life_years`
+bisects for the age at which whole-file recovery falls below a target
+probability. In the noise engine, `SimulationConfig::with_storage` sets the
+previously unused `simulate_decay`/`decay_rate`/`storage_time` fields, and
+each coverage copy is dropped before sequencing with the broken-molecule
+probability; non-decay simulations draw no extra random numbers, so their
+results are unchanged.
+
+Both data sets are extrapolations: Coudy measured at 100–140 °C, and
+Allentoft's activation energy comes from in vitro depurination between 45 and
+80 °C. Silica encapsulation (Grass et al. 2015, Ea ≈ 155 kJ/mol) is left out
+until a published rate constant can be cited alongside its activation energy;
+`StorageMedium::Custom` accepts any measured kinetics.
+
 ## Codec Strategies
 
 ### Ternary Rotating Cipher (Goldman et al., 2013)

@@ -18,8 +18,10 @@
 //! - Deletions (base dropped)
 //! - Strand dropout (entire strand lost)
 //! - Strand truncation (incomplete synthesis)
+//! - Storage decay (Arrhenius strand breakage over time, see [`decay`])
 
 pub mod strand;
 pub mod errors;
 pub mod profiles;
 pub mod noise;
+pub mod decay;

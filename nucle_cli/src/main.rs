@@ -3,6 +3,7 @@
 //! Unified command-line tool tying all layers together.
 
 mod hardware_cli;
+mod shelf_life_cli;
 
 use clap::{Parser, Subcommand};
 use nucle_hardware::JobHandle;
@@ -256,6 +257,44 @@ enum Commands {
         /// Coverage depth
         #[arg(short, long, default_value = "1")]
         coverage: usize,
+        /// Age the pool this many years in storage before sequencing
+        #[arg(long)]
+        years: Option<f64>,
+        /// Storage temperature for --years, °C
+        #[arg(long, default_value = "25")]
+        celsius: f64,
+        /// Storage medium for --years: encapsulated, bone
+        #[arg(long, default_value = "encapsulated")]
+        medium: String,
+    },
+
+    /// Estimate how long an archive stays readable in storage (Arrhenius decay)
+    #[command(name = "shelf-life")]
+    ShelfLife {
+        /// Storage medium: encapsulated (Coudy 2021), bone (Allentoft 2012)
+        #[arg(long, default_value = "encapsulated")]
+        medium: String,
+        /// Storage temperature, °C
+        #[arg(long, default_value = "25")]
+        celsius: f64,
+        /// Strand length in nucleotides, primers included
+        #[arg(long, default_value = "150")]
+        length: usize,
+        /// Data strands per Reed-Solomon stripe
+        #[arg(long, default_value = "100")]
+        data: usize,
+        /// Parity strands per stripe (sequences that may be lost)
+        #[arg(long, default_value = "20")]
+        parity: usize,
+        /// Physical copies of each sequence in the stored sample
+        #[arg(long, default_value = "10")]
+        copies: u32,
+        /// Required whole-file recovery probability, percent
+        #[arg(long, default_value = "99.9")]
+        target: f64,
+        /// Use the strand counts of a file already stored in the pool
+        #[arg(long)]
+        stored: Option<String>,
     },
 
     /// Benchmark all available codecs
@@ -551,7 +590,15 @@ fn main() {
         Commands::Serve { port, bind } => cmd_serve(&bind, port, &pool_dir, passphrase.as_deref()),
         Commands::Tenants => cmd_tenants(&resolve_base_pool_dir(cli.pool_dir.as_deref()), cli.json),
         Commands::Block { action } => cmd_block(action, cli.json),
-        Commands::Simulate { file, profile, coverage } => cmd_simulate(&file, &profile, coverage, cli.json),
+        Commands::Simulate { file, profile, coverage, years, celsius, medium } => {
+            cmd_simulate(&file, &profile, coverage, years.map(|y| (y, celsius, medium)), cli.json)
+        }
+        Commands::ShelfLife { medium, celsius, length, data, parity, copies, target, stored } => shelf_life_cli::cmd_shelf_life(
+            shelf_life_cli::ShelfLifeArgs { medium, celsius, length, data, parity, copies, target_percent: target, stored },
+            &pool_dir,
+            passphrase.as_deref(),
+            cli.json,
+        ),
         Commands::Bench { file, profile } => cmd_bench(file.as_deref(), &profile, cli.json),
         Commands::Benchmark { file, profile, redundancy } => cmd_benchmark(file.as_deref(), &profile, redundancy, cli.json),
         Commands::Stress { size } => cmd_stress(size, cli.json),
@@ -1493,7 +1540,7 @@ fn realistic_synth_seq_pair(profile: HardwareProfile) -> (HardwareProfile, Hardw
     nucle_synth::noise::realistic_stage_pair(profile)
 }
 
-fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {
+fn cmd_simulate(file: &str, profile: &str, coverage: usize, storage: Option<(f64, f64, String)>, json: bool) {
     let data = match fs::read(file) {
         Ok(d) => d,
         Err(e) => {
@@ -1522,22 +1569,20 @@ fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {
         }
     };
 
-    let (synthesis_profile, sequencing_profile) = realistic_synth_seq_pair(hw_profile);
-    let config = SimulationConfig {
-        seed: 42,
-        coverage_depth: coverage as u32,
-        synthesis_profile,
-        sequencing_profile,
-        simulate_decay: false,
-        decay_rate: 0.0,
-        storage_time: 0.0,
-    };
+    let mut config = SimulationConfig::realistic(hw_profile, coverage as u32, 42);
+    if let Some((years, celsius, medium_name)) = &storage {
+        let Some(medium) = nucle_synth::decay::StorageMedium::parse(medium_name) else {
+            eprintln!("Unknown storage medium '{}'. Use: encapsulated, bone", medium_name);
+            std::process::exit(1);
+        };
+        config = config.with_storage(medium, *celsius, *years);
+    }
 
     let engine = NoiseEngine::new(config);
     let result = engine.simulate(&encoded);
 
     if json {
-        let json_val = serde_json::json!({
+        let mut json_val = serde_json::json!({
             "profile": profile,
             "coverage": coverage,
             "input_strands": encoded.strand_count(),
@@ -1545,6 +1590,11 @@ fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {
             "error_rate": result.avg_error_rate(),
             "survival_rate": result.survival_rate()
         });
+        if let Some((years, celsius, medium)) = &storage {
+            json_val["storage"] = serde_json::json!({
+                "years": years, "celsius": celsius, "medium": medium, "decayed_molecules": result.decayed_count
+            });
+        }
         println!("{}", serde_json::to_string_pretty(&json_val).unwrap());
     } else {
         println!("╔══════════════════════════════════════╗");
@@ -1556,6 +1606,11 @@ fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {
         println!("║ Output:     {:>20} strands ║", result.output_strand_count);
         println!("║ Error rate: {:>23.4}% ║", result.avg_error_rate() * 100.0);
         println!("║ Surviving:  {:>22.1}%  ║", result.survival_rate() * 100.0);
+        if let Some((years, celsius, medium)) = &storage {
+            println!("║ Stored:     {:>13} y @ {:>5.1}°C ║", years, celsius);
+            println!("║ Medium:     {:>24} ║", medium);
+            println!("║ Decayed:    {:>18} molecules ║", result.decayed_count);
+        }
         println!("╚══════════════════════════════════════╝");
     }
 }
@@ -3176,7 +3231,8 @@ fn cmd_help() {
     println!("  nucle serve [--port N] [--bind ADDR]      Serve Prometheus metrics at /metrics");
     println!("  nucle tenants                              List tenants with existing data");
     println!("  (global) --tenant <name>                  Scope any command to an isolated tenant pool");
-    println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise");
+    println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise (--years/--celsius ages it)");
+    println!("  nucle shelf-life [--medium m] [--celsius]  How long an archive stays readable in storage");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");
     println!("  nucle stress [-s size]                    Stress test all codecs");

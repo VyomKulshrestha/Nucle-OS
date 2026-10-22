@@ -6,7 +6,7 @@
 //! Supports:
 //! - Single-pass error injection (one round of errors)
 //! - Multi-copy simulation (coverage depth with independent errors)
-//! - Decay simulation (long-term storage degradation)
+//! - Decay simulation (long-term storage degradation, see [`crate::decay`])
 //! - Pipeline simulation (synthesis → storage → sequencing chain)
 
 use crate::errors::ErrorModel;
@@ -14,7 +14,7 @@ use crate::profiles::HardwareProfile;
 use crate::strand::{SynthStrand, SynthPool};
 use nucle_codec::base::StrandCollection;
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use serde::{Serialize, Deserialize};
 use std::fmt;
 
@@ -39,14 +39,19 @@ pub struct SimulationConfig {
     /// Hardware profile for sequencing errors.
     pub sequencing_profile: HardwareProfile,
 
-    /// Whether to simulate long-term storage decay.
+    /// Whether to simulate long-term storage decay between synthesis and
+    /// sequencing.
     pub simulate_decay: bool,
 
-    /// Decay rate per base per unit time (for storage simulation).
-    /// Typical: ~1e-9 per base per year in ideal conditions.
+    /// Strand breaks per nucleotide per unit of `storage_time`. Use
+    /// [`SimulationConfig::with_storage`] to derive it from a storage medium
+    /// and temperature (then the unit is years).
     pub decay_rate: f64,
 
-    /// Storage time in arbitrary units (for decay simulation).
+    /// How long the pool sits in storage, in the unit `decay_rate` uses.
+    /// Each molecule survives intact with probability
+    /// `exp(-decay_rate * length * storage_time)`; a broken one cannot be
+    /// amplified and drops out before sequencing.
     pub storage_time: f64,
 }
 
@@ -108,6 +113,15 @@ impl SimulationConfig {
         }
     }
 
+    /// Age the pool for `years` in `medium` at `celsius` before sequencing,
+    /// using that medium's published Arrhenius kinetics.
+    pub fn with_storage(mut self, medium: crate::decay::StorageMedium, celsius: f64, years: f64) -> Self {
+        self.simulate_decay = true;
+        self.decay_rate = medium.break_rate_per_nt_year(celsius);
+        self.storage_time = years;
+        self
+    }
+
     /// Set coverage depth.
     pub fn with_coverage(mut self, depth: u32) -> Self {
         self.coverage_depth = depth;
@@ -153,6 +167,8 @@ pub struct SimulationResult {
     pub input_strand_count: usize,
     /// Number of output strands (after dropout, × coverage).
     pub output_strand_count: usize,
+    /// Molecules that broke during storage and so never reached sequencing.
+    pub decayed_count: usize,
 }
 
 impl SimulationResult {
@@ -174,6 +190,9 @@ impl fmt::Display for SimulationResult {
         writeln!(f, "│ Synthesis:     {}", self.config.synthesis_profile.name())?;
         writeln!(f, "│ Sequencing:    {}", self.config.sequencing_profile.name())?;
         writeln!(f, "│ Coverage:      {}×", self.config.coverage_depth)?;
+        if self.config.simulate_decay {
+            writeln!(f, "│ Storage:       {} time units, {} decayed", self.config.storage_time, self.decayed_count)?;
+        }
         writeln!(f, "│ Input strands: {}", self.input_strand_count)?;
         writeln!(f, "│ Output strands:{}", self.output_strand_count)?;
         writeln!(f, "│ Intact:        {}", self.pool.intact_count())?;
@@ -226,6 +245,7 @@ impl NoiseEngine {
 
         let mut all_strands: Vec<SynthStrand> = Vec::new();
         let mut strand_id: u64 = 0;
+        let mut decayed = 0usize;
 
         for strand in &collection.strands {
             // Generate `coverage_depth` copies of each strand
@@ -240,6 +260,22 @@ impl NoiseEngine {
                 if !synth.is_intact {
                     all_strands.push(synth);
                     continue;
+                }
+
+                // Storage: a molecule with any backbone break cannot be
+                // amplified, so it never reaches the sequencer.
+                if self.config.simulate_decay && self.config.decay_rate > 0.0 && self.config.storage_time > 0.0 {
+                    let survival = crate::decay::strand_survival(
+                        self.config.decay_rate,
+                        synth.len(),
+                        self.config.storage_time,
+                    );
+                    if rng.gen::<f64>() >= survival {
+                        synth.is_intact = false;
+                        decayed += 1;
+                        all_strands.push(synth);
+                        continue;
+                    }
                 }
 
                 // Step 2: Apply sequencing errors (on top of synthesis errors)
@@ -263,6 +299,7 @@ impl NoiseEngine {
             config: self.config.clone(),
             input_strand_count: input_count,
             output_strand_count: output_count,
+            decayed_count: decayed,
         }
     }
 
@@ -413,6 +450,34 @@ mod tests {
             realistic_rate < doubled_rate * 0.75,
             "realistic {realistic_rate} vs doubled {doubled_rate}"
         );
+    }
+
+    #[test]
+    fn decay_drops_molecules_at_the_arrhenius_rate() {
+        use crate::decay::{strand_survival, StorageMedium};
+        // 10 strands x 400 copies of 24 nt, in bone at 25 °C for 500 years.
+        let collection = make_test_collection();
+        let config = SimulationConfig::pristine().with_coverage(400).with_storage(StorageMedium::Bone, 25.0, 500.0);
+        let result = NoiseEngine::new(config.clone()).simulate(&collection);
+        let expected_loss = 1.0 - strand_survival(config.decay_rate, 24, 500.0);
+        let observed_loss = result.decayed_count as f64 / 4000.0;
+        assert!(
+            (observed_loss - expected_loss).abs() < 0.03,
+            "observed {observed_loss}, expected {expected_loss}"
+        );
+        assert_eq!(result.pool.intact_count(), 4000 - result.decayed_count);
+    }
+
+    #[test]
+    fn decay_is_off_unless_requested() {
+        let collection = make_test_collection();
+        let result = NoiseEngine::new(SimulationConfig::pristine().with_coverage(50)).simulate(&collection);
+        assert_eq!(result.decayed_count, 0);
+        // Encapsulated DNA barely changes over a decade even at room temperature.
+        let short = SimulationConfig::pristine()
+            .with_coverage(50)
+            .with_storage(crate::decay::StorageMedium::Encapsulated, 25.0, 10.0);
+        assert_eq!(NoiseEngine::new(short).simulate(&collection).decayed_count, 0);
     }
 
     #[test]
