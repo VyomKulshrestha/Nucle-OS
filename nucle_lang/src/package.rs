@@ -243,23 +243,21 @@ pub fn validate_manifest(manifest: &PackageManifest) -> Vec<String> {
         errors.push("Package exports list is empty".to_string());
     }
     
-    // Temporarily register to check resolve_import
-    let original = {
-        let registry = get_registry().lock().unwrap();
-        registry.get(&manifest.import_source).cloned()
-    };
-    register_package(manifest.clone());
-
+    // Checked against the manifest itself, never by registering it in the
+    // process-wide registry: a temporary insert-then-restore there lets a
+    // concurrent `find_package`/`resolve_import` (another test thread, or
+    // the language server) observe the half-registered state.
+    let mut seen = std::collections::HashSet::new();
     for (i, export) in manifest.exports.iter().enumerate() {
         if export.name.is_empty() {
             errors.push(format!("Export #{} name is empty", i));
             continue;
         }
+        if !seen.insert(export.name.as_str()) {
+            errors.push(format!("Export '{}' is declared more than once", export.name));
+        }
         if export.description.is_empty() {
             errors.push(format!("Export '{}' description is empty", export.name));
-        }
-        if resolve_import(&manifest.import_source, &export.name).is_none() {
-            errors.push(format!("Export '{}' fails to resolve via resolve_import", export.name));
         }
         let kind_valid = matches!(
             export.kind.as_str(),
@@ -269,16 +267,6 @@ pub fn validate_manifest(manifest: &PackageManifest) -> Vec<String> {
         );
         if !kind_valid {
             errors.push(format!("Export '{}' has invalid kind '{}'. Must be: pool_schema, pipeline, recovery_profile, function", export.name, export.kind));
-        }
-    }
-
-    // Restore registry
-    {
-        let mut registry = get_registry().lock().unwrap();
-        if let Some(orig) = original {
-            registry.insert(manifest.import_source.clone(), orig);
-        } else {
-            registry.remove(&manifest.import_source);
         }
     }
 
@@ -348,6 +336,21 @@ mod tests {
             let sources = checksum_sources(&entry.name);
             assert!(!sources.is_empty(), "no embedded source for '{}' — check embedded_sources_for_manifest", entry.name);
         }
+    }
+
+    #[test]
+    fn validation_reports_duplicate_exports_without_touching_the_registry() {
+        let mut manifest = presets_manifest();
+        let before = find_package(&manifest.import_source).expect("presets registered");
+        let dup = manifest.exports[0].clone();
+        manifest.name = "@nuclescript/not-presets".to_string();
+        manifest.exports.push(dup.clone());
+        let errors = validate_manifest(&manifest);
+        assert!(errors.iter().any(|e| e.contains(&format!("'{}' is declared more than once", dup.name))), "{errors:?}");
+        // The registered presets package is exactly what it was.
+        let after = find_package(&manifest.import_source).expect("presets still registered");
+        assert_eq!(after.name, before.name);
+        assert_eq!(after.exports.len(), before.exports.len());
     }
 
     #[test]
