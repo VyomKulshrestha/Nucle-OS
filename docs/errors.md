@@ -102,7 +102,7 @@ Codes are grouped by which declaration/operation they check, matching
 | `E-MATCH-NON-EXHAUSTIVE` | error | A `match` is missing an arm for at least one of the scrutinee's declared variants, and has no trailing wildcard `_` arm to cover the rest. |
 | `E-MATCH-DUPLICATE-ARM` | error | Two arms in the same `match` name the same variant. |
 | `E-MATCH-ARM-AFTER-WILDCARD` | error | An arm appears after a wildcard `_` arm — the wildcard must be last, since it's meant to catch everything not already named. |
-| `E-MATCH-ARM-TYPE-MISMATCH` | error | Two arms produce different types (e.g. one arm ends in the bound value directly, another in a still-wrapped `Result`). Every present arm must unify to the same type, which becomes the whole `match` expression's type. |
+| `E-MATCH-ARM-TYPE-MISMATCH` | error | Two arms produce different types (e.g. one arm ends in the bound value directly, another in a still-wrapped `Result`). Every present arm must unify to the same type, which becomes the whole `match` expression's type. Pools in the same state unify at the worse of their error rates; pools in different states still mismatch. |
 | `E-MATCH-ARM-UNTYPABLE` | error | A match arm's body does not resolve to a typed scalar, pattern binding, constructor, nested match, Result, enum, or Pool expression. |
 | `E-OK-CONSTRUCTOR-INVALID` | error | `Ok(<expr>)`'s payload is not a typed NucleScript value expression. String literals, bound values, validated calls, `?`, nested matches, Results, enums, and Pools are supported. |
 | `E-ERR-CONSTRUCTOR-INVALID` | error | `Err(<expr>)`'s payload does not resolve to `Str`. A literal, bound `Str`, or `Str`-returning call is valid. |

@@ -633,7 +633,14 @@ fn archive_with_fallback() returns Result<DnaFile, Str> {
   (`E-MATCH-ARM-TYPE-MISMATCH` otherwise). If every arm of a `Result`
   match happens to still be `Result`-shaped (none used `?`), the match's
   own value is itself a still-wrapped `Result` a caller can `?`/re-match
-  later.
+  later. Pools are the one exception to exact equality: arms producing
+  pools in the same state join at the **worse** error rate, so
+  `match depth { Shallow => consensus_vote(reads, coverage: 2x), Deep(_)
+  => consensus_vote(reads, coverage: 30x) }` is a `Pool<Recovered>`
+  carrying the 2x rate. The type promises only the noise every branch can
+  guarantee. A pool-valued `match` binding is a probabilistic pool like
+  any other, so `if`/`assert` conditions and a function's pool return
+  check can read its rate.
 - **An arm's body is one typed expression** (`E-MATCH-ARM-UNTYPABLE`
   otherwise): a scalar literal/binding/call, the pattern's own bound name
   (`Ok(file) => file`, or `Info(msg) => msg` for a user enum whose
@@ -870,6 +877,11 @@ test "consensus voting reduces the inferred error rate" {
     assert recovered < noisy, "consensus_vote should reduce the error budget"
 }
 ```
+
+A test body sees everything the program declared at top level before it:
+pools, functions, enums, and top-level `let` bindings, including simulated
+pools, so a test can assert on a pool the program itself built
+(`assert recovered < noisy`). A test's own `let`s stay private to that test.
 
 `nucle test` runs every `test { ... }` block against a fresh, isolated VFS
 instance per test (real `store`/`retrieve`/`delete` operations inside a

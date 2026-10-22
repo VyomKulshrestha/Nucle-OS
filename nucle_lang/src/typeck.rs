@@ -346,16 +346,24 @@ impl TypeChecker {
         }
     }
 
-    /// Type-checks a test body in a scope that inherits the enclosing
-    /// program's pools/functions (so a test can exercise real pool
-    /// schemas and helper functions) but starts with fresh bindings (so
-    /// tests don't share simulated state with each other) -- the same
-    /// isolation `check_function` gives a function body, for the same
-    /// reason: independent tests shouldn't be able to see each other's
-    /// local `let`s.
+    /// Type-checks a test body in a scope that inherits everything the
+    /// program declared at top level before it: pools, functions, enums,
+    /// and top-level `let`/`strand`/`seq` bindings, including probabilistic
+    /// pools, so `assert noisy < 1.0` can inspect a pool the program
+    /// simulated. That matches `test_runner::run_tests`, which puts every
+    /// non-test top-level declaration in scope for every test. Each test
+    /// still gets its own copy, so one test's local `let`s are never
+    /// visible to another.
     fn check_test(&mut self, test: &TestDecl) -> TestDecl {
         let mut body_checker = TypeChecker {
             pools: self.pools.clone(),
+            pool_bindings: self.pool_bindings.clone(),
+            bindings: self.bindings.clone(),
+            strands: self.strands.clone(),
+            sequences: self.sequences.clone(),
+            result_bindings: self.result_bindings.clone(),
+            closures: self.closures.clone(),
+            closure_decls: self.closure_decls.clone(),
             functions: self.functions.clone(),
             enums: self.enums.clone(),
             enum_bindings: self.enum_bindings.clone(),
@@ -594,7 +602,7 @@ impl TypeChecker {
         // arm-unification logic, not either of the other two dispatches.
         if let Expr::Match { .. } = &binding.expr {
             if let Some(matched_ty) = self.check_match(&binding.expr, binding.span) {
-                if matched_ty != binding.annotation {
+                if !satisfies_annotation(&binding.annotation, &matched_ty) {
                     self.report.error(binding.span, "E-BINDING-TYPE-MISMATCH", format!(
                         "binding '{}' is annotated as {} but 'match' produces {}",
                         binding.name, crate::docgen::render_type(&binding.annotation), crate::docgen::render_type(&matched_ty)
@@ -602,6 +610,12 @@ impl TypeChecker {
                 } else {
                     if let TypeExpr::Result(ok, err) = &matched_ty {
                         self.result_bindings.insert(binding.name.clone(), ((**ok).clone(), (**err).clone()));
+                    }
+                    // A pool-valued match is a probabilistic pool binding
+                    // like any other, so conditions and return checks
+                    // can read its (joined, worst-case) error rate.
+                    if let TypeExpr::Pool(PoolType { state, error_rate_percent: Some(rate) }) = &matched_ty {
+                        self.pool_bindings.insert(binding.name.clone(), ProbPoolType::new(state.clone(), *rate));
                     }
                     self.bindings.insert(binding.name.clone(), binding.clone());
                 }
@@ -1146,17 +1160,23 @@ impl TypeChecker {
 
         // Pass 4: unify all resolved arm types -- generalizes the old
         // 2-way Ok/Err equality check to N arms.
-        let (_, first_ty) = resolved[0].clone();
+        // Two pools in the same state join at the worse error rate, so a
+        // match whose arms recover at different coverages is typed by
+        // the noise it can actually guarantee.
+        let (_, mut joined) = resolved[0].clone();
         for (arm_span, ty) in &resolved[1..] {
-            if ty != &first_ty {
-                self.report.error(*arm_span, "E-MATCH-ARM-TYPE-MISMATCH", format!(
-                    "match arms produce different types: expected {}, got {}",
-                    crate::docgen::render_type(&first_ty), crate::docgen::render_type(ty)
-                ));
-                return None;
+            match join_arm_types(&joined, ty) {
+                Some(next) => joined = next,
+                None => {
+                    self.report.error(*arm_span, "E-MATCH-ARM-TYPE-MISMATCH", format!(
+                        "match arms produce different types: expected {}, got {}",
+                        crate::docgen::render_type(&joined), crate::docgen::render_type(ty)
+                    ));
+                    return None;
+                }
             }
         }
-        Some(first_ty)
+        Some(joined)
     }
 
     /// A match arm's body is one of: the pattern variable itself (the
@@ -1366,6 +1386,17 @@ impl TypeChecker {
             }
             let return_type = self.lookup_function(name).map(|function| function.return_type.clone());
             let inferred_pool = self.infer_expr(expr, span);
+            // `consensus_vote`'s table entry carries a placeholder return
+            // type (see `stdlib::consensus_vote_decl`); its real result is
+            // the recovered pool `infer_expr` just computed.
+            if name == "consensus_vote" {
+                if let Some(pool_ty) = inferred_pool {
+                    return Some(TypeExpr::Pool(PoolType {
+                        state: pool_ty.state,
+                        error_rate_percent: Some(pool_ty.error_rate_percent),
+                    }));
+                }
+            }
             return match (return_type, inferred_pool) {
                 (Some(TypeExpr::Pool(_)), Some(pool_ty)) => Some(TypeExpr::Pool(PoolType {
                     state: pool_ty.state,
@@ -2747,6 +2778,44 @@ fn normalize_sequence_literal(sequence: &str) -> Result<String, String> {
         return Err("empty sequence literal".into());
     }
     Ok(normalized)
+}
+
+/// The type a `match` produces from two arm types: identical types join to
+/// themselves, and two pools in the same state join to that state at the
+/// higher of their error rates (unknown if either is unknown). Anything else
+/// does not join.
+fn join_arm_types(a: &TypeExpr, b: &TypeExpr) -> Option<TypeExpr> {
+    if a == b {
+        return Some(a.clone());
+    }
+    match (a, b) {
+        (TypeExpr::Pool(x), TypeExpr::Pool(y)) if x.state == y.state => {
+            let error_rate_percent = match (x.error_rate_percent, y.error_rate_percent) {
+                (Some(p), Some(q)) => Some(p.max(q)),
+                _ => None,
+            };
+            Some(TypeExpr::Pool(PoolType { state: x.state.clone(), error_rate_percent }))
+        }
+        _ => None,
+    }
+}
+
+/// Whether an inferred type satisfies a binding's annotation. Pools follow
+/// the same rule `let` already applies: the state must match, and an
+/// annotated error rate must agree to within 0.01 percentage points, while
+/// an annotation without a rate accepts any.
+fn satisfies_annotation(annotation: &TypeExpr, inferred: &TypeExpr) -> bool {
+    match (annotation, inferred) {
+        (TypeExpr::Pool(want), TypeExpr::Pool(got)) => {
+            want.state == got.state
+                && match (want.error_rate_percent, got.error_rate_percent) {
+                    (Some(w), Some(g)) => (w - g).abs() <= 0.01,
+                    (Some(_), None) => false,
+                    (None, _) => true,
+                }
+        }
+        _ => annotation == inferred,
+    }
 }
 
 #[cfg(test)]
