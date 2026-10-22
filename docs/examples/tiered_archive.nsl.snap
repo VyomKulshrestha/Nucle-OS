@@ -1,0 +1,808 @@
+>// A tiered archival policy that combines most of the language in one
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// program: package imports, payload enums, a higher-order function taking
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// a closure, nested Result handling with `?`, generics over a pool's
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// profile, compile-time `if`/`for`, a pipeline, and a `test` block.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>//
+#^^ source.nuclescript comment.line.double-slash.nuclescript
+>// Each pool is its own namespace, so the `for` loop below leaves three
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// independent replicas of sample_a.txt (hot/, warm/, cold/), each with its
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// pool's own codec and redundancy.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>
+>import { medical_archive, illumina_recovery } from "nuclescript/presets"
+#^^^^^^ source.nuclescript keyword.control.nuclescript
+#      ^^^ source.nuclescript
+#         ^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                        ^^ source.nuclescript
+#                          ^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                           ^^^ source.nuclescript
+#                                              ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                  ^ source.nuclescript
+#                                                   ^ source.nuclescript string.quoted.double.nuclescript
+#                                                    ^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                       ^ source.nuclescript string.quoted.double.nuclescript
+>
+>enum Tier {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^ source.nuclescript variable.other.nuclescript
+#         ^^^ source.nuclescript
+>    Hot,
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript variable.other.nuclescript
+#       ^^ source.nuclescript
+>    Warm(Str),
+#^^^^ source.nuclescript
+#    ^^^^ source.nuclescript entity.name.function.nuclescript
+#        ^ source.nuclescript
+#         ^^^ source.nuclescript storage.type.nuclescript
+#            ^^^ source.nuclescript
+>    Cold(Str),
+#^^^^ source.nuclescript
+#    ^^^^ source.nuclescript entity.name.function.nuclescript
+#        ^ source.nuclescript
+#         ^^^ source.nuclescript storage.type.nuclescript
+#            ^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>enum Outcome {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^^ source.nuclescript
+>    Stored(DnaFile),
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript entity.name.function.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                  ^^^ source.nuclescript
+>    Skipped(Str),
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#           ^ source.nuclescript
+#            ^^^ source.nuclescript storage.type.nuclescript
+#               ^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>pool hot: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^ source.nuclescript variable.other.nuclescript
+#        ^^ source.nuclescript
+#          ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                 ^^^ source.nuclescript
+#                    ^^^^^ source.nuclescript variable.other.nuclescript
+#                         ^^ source.nuclescript
+#                           ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                  ^^ source.nuclescript
+#                                    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                              ^^ source.nuclescript
+#                                                ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                  ^^ source.nuclescript
+#                                                    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                           ^^ source.nuclescript
+#                                                             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                     ^^^ source.nuclescript
+>
+>pool warm: DnaPool { codec: YinYang, redundancy: 3x, profile: Twist }
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                  ^^^ source.nuclescript
+#                     ^^^^^ source.nuclescript variable.other.nuclescript
+#                          ^^ source.nuclescript
+#                            ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                   ^^ source.nuclescript
+#                                     ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                               ^^ source.nuclescript
+#                                                 ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                   ^^ source.nuclescript
+#                                                     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                            ^^ source.nuclescript
+#                                                              ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                   ^^^ source.nuclescript
+>
+>pool cold: DnaPool { codec: Fountain, redundancy: 4x, profile: Nanopore }
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                  ^^^ source.nuclescript
+#                     ^^^^^ source.nuclescript variable.other.nuclescript
+#                          ^^ source.nuclescript
+#                            ^^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                    ^^ source.nuclescript
+#                                      ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                ^^ source.nuclescript
+#                                                  ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                    ^^ source.nuclescript
+#                                                      ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                             ^^ source.nuclescript
+#                                                               ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                       ^^^ source.nuclescript
+>
+>/// Store into the pool a tier maps to. Every arm yields a Result, so the
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// match itself is a Result the caller can inspect or propagate.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn place(target: File, tier: Tier) returns Result<DnaFile, Str> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^ source.nuclescript entity.name.function.nuclescript
+#        ^ source.nuclescript
+#         ^^^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^^^ source.nuclescript variable.other.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^^^ source.nuclescript variable.other.nuclescript
+#                                 ^^ source.nuclescript
+#                                   ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                          ^ source.nuclescript
+#                                           ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                  ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                         ^^ source.nuclescript
+#                                                           ^^^ source.nuclescript storage.type.nuclescript
+#                                                              ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                               ^^^ source.nuclescript
+>    let saved: Result<DnaFile, Str> = match tier {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                      ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                             ^^ source.nuclescript
+#                               ^^^ source.nuclescript storage.type.nuclescript
+#                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^ source.nuclescript variable.other.nuclescript
+#                                                ^^^ source.nuclescript
+>        Hot => store target into hot,
+#^^^^^^^^ source.nuclescript
+#        ^^^ source.nuclescript variable.other.nuclescript
+#           ^ source.nuclescript
+#            ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#              ^ source.nuclescript
+#               ^^^^^ source.nuclescript keyword.control.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^^^ source.nuclescript variable.other.nuclescript
+#                           ^ source.nuclescript
+#                            ^^^^ source.nuclescript keyword.control.nuclescript
+#                                ^ source.nuclescript
+#                                 ^^^ source.nuclescript variable.other.nuclescript
+#                                    ^^ source.nuclescript
+>        Warm(reason) => store target into warm,
+#^^^^^^^^ source.nuclescript
+#        ^^^^ source.nuclescript entity.name.function.nuclescript
+#            ^ source.nuclescript
+#             ^^^^^^ source.nuclescript variable.other.nuclescript
+#                   ^^ source.nuclescript
+#                     ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                       ^ source.nuclescript
+#                        ^^^^^ source.nuclescript keyword.control.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^ source.nuclescript variable.other.nuclescript
+#                                              ^^ source.nuclescript
+>        Cold(reason) => store target into cold,
+#^^^^^^^^ source.nuclescript
+#        ^^^^ source.nuclescript entity.name.function.nuclescript
+#            ^ source.nuclescript
+#             ^^^^^^ source.nuclescript variable.other.nuclescript
+#                   ^^ source.nuclescript
+#                     ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                       ^ source.nuclescript
+#                        ^^^^^ source.nuclescript keyword.control.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^ source.nuclescript variable.other.nuclescript
+#                                              ^^ source.nuclescript
+>    }
+#^^^^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// Run any placement and turn a failure into a Skipped outcome instead of
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// aborting the caller.
+#^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn guarded(attempt: Fn() -> Result<DnaFile, Str>) returns Outcome {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^^ source.nuclescript
+#                    ^^ source.nuclescript storage.type.nuclescript
+#                      ^^^ source.nuclescript
+#                         ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                           ^ source.nuclescript
+#                            ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                   ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                          ^^ source.nuclescript
+#                                            ^^^ source.nuclescript storage.type.nuclescript
+#                                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                ^^ source.nuclescript
+#                                                  ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                         ^ source.nuclescript
+#                                                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                 ^^^ source.nuclescript
+>    let r: Result<DnaFile, Str> = attempt()
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^ source.nuclescript storage.type.nuclescript
+#                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                  ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                         ^^ source.nuclescript
+#                           ^^^ source.nuclescript storage.type.nuclescript
+#                              ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                               ^ source.nuclescript
+#                                ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                         ^^^ source.nuclescript
+>    let o: Outcome = match r {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^ source.nuclescript
+#                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^^ source.nuclescript keyword.control.nuclescript
+#                          ^ source.nuclescript
+#                           ^ source.nuclescript variable.other.nuclescript
+#                            ^^^ source.nuclescript
+>        Ok(f) => Outcome::Stored(f),
+#^^^^^^^^ source.nuclescript
+#        ^^ source.nuclescript entity.name.function.nuclescript
+#          ^ source.nuclescript
+#           ^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                ^ source.nuclescript
+#                 ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                        ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                          ^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                ^ source.nuclescript
+#                                 ^ source.nuclescript variable.other.nuclescript
+#                                  ^^^ source.nuclescript
+>        Err(why) => Outcome::Skipped(why),
+#^^^^^^^^ source.nuclescript
+#        ^^^ source.nuclescript entity.name.function.nuclescript
+#           ^ source.nuclescript
+#            ^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                   ^ source.nuclescript
+#                    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                           ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                             ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^ source.nuclescript variable.other.nuclescript
+#                                        ^^^ source.nuclescript
+>    }
+#^^^^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// Primary copy to hot, compliance copy to cold (both guarded), then a
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// warm replica whose failure does propagate through `?`.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archive_all(primary: File, secondary: File) returns Result<DnaFile, Str> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#              ^ source.nuclescript
+#               ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                      ^^ source.nuclescript
+#                        ^^^^ source.nuclescript storage.type.nuclescript
+#                            ^^ source.nuclescript
+#                              ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                       ^^ source.nuclescript
+#                                         ^^^^ source.nuclescript storage.type.nuclescript
+#                                             ^^ source.nuclescript
+#                                               ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                      ^ source.nuclescript
+#                                                       ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                                     ^^ source.nuclescript
+#                                                                       ^^^ source.nuclescript storage.type.nuclescript
+#                                                                          ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                           ^^^ source.nuclescript
+>    let first: Outcome = guarded(fn() -> Result<DnaFile, Str> {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                      ^ source.nuclescript
+#                       ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                ^ source.nuclescript
+#                                 ^^ source.nuclescript keyword.control.nuclescript
+#                                   ^^^ source.nuclescript
+#                                      ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                                        ^ source.nuclescript
+#                                         ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                       ^^ source.nuclescript
+#                                                         ^^^ source.nuclescript storage.type.nuclescript
+#                                                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                             ^^^ source.nuclescript
+>            let r: Result<DnaFile, Str> = place(primary, Tier::Hot)
+#^^^^^^^^^^^^ source.nuclescript
+#            ^^^ source.nuclescript keyword.control.nuclescript
+#               ^ source.nuclescript
+#                ^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^^^ source.nuclescript storage.type.nuclescript
+#                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                          ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                 ^^ source.nuclescript
+#                                   ^^^ source.nuclescript storage.type.nuclescript
+#                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                       ^^ source.nuclescript
+#                                                         ^^^^ source.nuclescript variable.other.nuclescript
+#                                                             ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                               ^^^ source.nuclescript variable.other.nuclescript
+#                                                                  ^^ source.nuclescript
+>    })
+#^^^^^^^ source.nuclescript
+>    let second: Outcome = guarded(fn() -> Result<DnaFile, Str> {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^ source.nuclescript variable.other.nuclescript
+#              ^^ source.nuclescript
+#                ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                       ^ source.nuclescript
+#                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^^ source.nuclescript keyword.control.nuclescript
+#                                    ^^^ source.nuclescript
+#                                       ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                 ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                        ^^ source.nuclescript
+#                                                          ^^^ source.nuclescript storage.type.nuclescript
+#                                                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                              ^^^ source.nuclescript
+>            let r: Result<DnaFile, Str> = place(secondary, Tier::Cold("compliance"))
+#^^^^^^^^^^^^ source.nuclescript
+#            ^^^ source.nuclescript keyword.control.nuclescript
+#               ^ source.nuclescript
+#                ^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^^^ source.nuclescript storage.type.nuclescript
+#                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                          ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                 ^^ source.nuclescript
+#                                   ^^^ source.nuclescript storage.type.nuclescript
+#                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                         ^^ source.nuclescript
+#                                                           ^^^^ source.nuclescript variable.other.nuclescript
+#                                                               ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                                 ^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                                     ^ source.nuclescript
+#                                                                      ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                       ^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                 ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                  ^^^ source.nuclescript
+>    })
+#^^^^^^^ source.nuclescript
+>    let last: DnaFile = (place(primary, Tier::Warm("replica")))?
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^ source.nuclescript
+#                      ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                       ^^ source.nuclescript
+#                         ^^^^^ source.nuclescript entity.name.function.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                      ^^ source.nuclescript
+#                                        ^^^^ source.nuclescript variable.other.nuclescript
+#                                            ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                              ^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                  ^ source.nuclescript
+#                                                   ^ source.nuclescript string.quoted.double.nuclescript
+#                                                    ^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                           ^ source.nuclescript string.quoted.double.nuclescript
+#                                                            ^^^ source.nuclescript
+#                                                               ^ source.nuclescript keyword.operator.try.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// Recover any profile's reads; one function instead of one per profile.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn recover<P>(noisy: Pool<P, 5%>) returns Pool<Recovered> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^ source.nuclescript variable.other.nuclescript
+#          ^ source.nuclescript keyword.operator.comparison.nuclescript
+#           ^ source.nuclescript variable.other.nuclescript
+#            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#             ^ source.nuclescript
+#              ^^^^^ source.nuclescript variable.other.nuclescript
+#                   ^^ source.nuclescript
+#                     ^^^^ source.nuclescript storage.type.nuclescript
+#                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                          ^ source.nuclescript variable.other.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                ^^ source.nuclescript
+#                                  ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^ source.nuclescript storage.type.nuclescript
+#                                              ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                               ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                         ^^^ source.nuclescript
+>    let r: Pool<Recovered> = consensus_vote(noisy, coverage: 20x)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^ source.nuclescript storage.type.nuclescript
+#               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                          ^ source.nuclescript
+#                           ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                            ^ source.nuclescript
+#                             ^^^^^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                 ^^ source.nuclescript
+#                                                   ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                           ^^ source.nuclescript
+#                                                             ^^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                                ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>let noisy_cold: Pool<Nanopore, 5%> = simulate cold under Nanopore
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#              ^^ source.nuclescript
+#                ^^^^ source.nuclescript storage.type.nuclescript
+#                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                     ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                             ^^ source.nuclescript
+#                               ^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                             ^ source.nuclescript
+#                                              ^^^^ source.nuclescript variable.other.nuclescript
+#                                                  ^ source.nuclescript
+#                                                   ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                        ^ source.nuclescript
+#                                                         ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>
+>let noisy_hot: Pool<Illumina, 0.35%> = simulate hot under Illumina
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                            ^^ source.nuclescript
+#                              ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                      ^ source.nuclescript
+#                                       ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^ source.nuclescript variable.other.nuclescript
+#                                                   ^ source.nuclescript
+#                                                    ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                         ^ source.nuclescript
+#                                                          ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+>
+>if noisy_cold > 1.0 && !(noisy_hot > 1.0) {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^ source.nuclescript
+#              ^ source.nuclescript keyword.operator.comparison.nuclescript
+#               ^ source.nuclescript
+#                ^^^ source.nuclescript constant.numeric.nuclescript
+#                   ^ source.nuclescript
+#                    ^^ source.nuclescript keyword.operator.logical.nuclescript
+#                      ^ source.nuclescript
+#                       ^ source.nuclescript keyword.operator.logical.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^ source.nuclescript constant.numeric.nuclescript
+#                                        ^^^^ source.nuclescript
+>    let cold_recovered: Pool<Recovered> = recover(noisy_cold)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                      ^^ source.nuclescript
+#                        ^^^^ source.nuclescript storage.type.nuclescript
+#                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                             ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                 ^ source.nuclescript
+#                                                  ^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                            ^^ source.nuclescript
+>} else {
+#^^ source.nuclescript
+#  ^^^^ source.nuclescript keyword.control.nuclescript
+#      ^^^ source.nuclescript
+>    let cold_recovered: Pool<Recovered> = consensus_vote(noisy_cold, coverage: 5x)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                      ^^ source.nuclescript
+#                        ^^^^ source.nuclescript storage.type.nuclescript
+#                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                             ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                        ^ source.nuclescript
+#                                                         ^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                   ^^ source.nuclescript
+#                                                                     ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                             ^^ source.nuclescript
+#                                                                               ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                                                 ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>for p in [hot, warm, cold] {
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^ source.nuclescript variable.other.nuclescript
+#     ^ source.nuclescript
+#      ^^ source.nuclescript keyword.control.nuclescript
+#        ^^ source.nuclescript
+#          ^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript variable.other.nuclescript
+#                   ^^ source.nuclescript
+#                     ^^^^ source.nuclescript variable.other.nuclescript
+#                         ^^^^ source.nuclescript
+>    store "sample_a.txt" into p { redundancy: 3x, tags: ["tiered"] }
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript keyword.control.nuclescript
+#         ^ source.nuclescript
+#          ^ source.nuclescript string.quoted.double.nuclescript
+#           ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                       ^ source.nuclescript string.quoted.double.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^ source.nuclescript keyword.control.nuclescript
+#                             ^ source.nuclescript
+#                              ^ source.nuclescript variable.other.nuclescript
+#                               ^^^ source.nuclescript
+#                                  ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                            ^^ source.nuclescript
+#                                              ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                ^^ source.nuclescript
+#                                                  ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                      ^^^ source.nuclescript
+#                                                         ^ source.nuclescript string.quoted.double.nuclescript
+#                                                          ^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                 ^^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>// Succeeds: both files exist.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let result: Result<DnaFile, Str> = archive_all("sample_b.txt", "sample_c.txt")
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^ source.nuclescript variable.other.nuclescript
+#          ^^ source.nuclescript
+#            ^^^^^^ source.nuclescript storage.type.nuclescript
+#                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                   ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                          ^^ source.nuclescript
+#                            ^^^ source.nuclescript storage.type.nuclescript
+#                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                ^ source.nuclescript
+#                                 ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                              ^ source.nuclescript
+#                                               ^ source.nuclescript string.quoted.double.nuclescript
+#                                                ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                            ^ source.nuclescript string.quoted.double.nuclescript
+#                                                             ^^ source.nuclescript
+#                                                               ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                            ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                             ^^ source.nuclescript
+>
+>// The hot and warm placements fail (no such file) and the cold copy of
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// sample_d.txt still lands; the warm failure propagates as Err.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let missing: Result<DnaFile, Str> = archive_all("no_such_file.txt", "sample_d.txt")
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^^ source.nuclescript storage.type.nuclescript
+#                                ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^ source.nuclescript string.quoted.double.nuclescript
+#                                                 ^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                 ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                  ^^ source.nuclescript
+#                                                                    ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                     ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                 ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                  ^^ source.nuclescript
+>
+>retrieve from warm where { name contains "sample" }
+#^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#        ^ source.nuclescript
+#         ^^^^ source.nuclescript keyword.control.nuclescript
+#             ^ source.nuclescript
+#              ^^^^ source.nuclescript variable.other.nuclescript
+#                  ^ source.nuclescript
+#                   ^^^^^ source.nuclescript keyword.control.nuclescript
+#                        ^^^ source.nuclescript
+#                           ^^^^ source.nuclescript variable.other.nuclescript
+#                               ^ source.nuclescript
+#                                ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                        ^ source.nuclescript
+#                                         ^ source.nuclescript string.quoted.double.nuclescript
+#                                          ^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                ^ source.nuclescript string.quoted.double.nuclescript
+#                                                 ^^^ source.nuclescript
+>
+>pipeline nightly {
+#^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#        ^ source.nuclescript
+#         ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                ^^^ source.nuclescript
+>    encode "patient_records_2026.csv" using YinYang,
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^ source.nuclescript string.quoted.double.nuclescript
+#            ^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                    ^ source.nuclescript string.quoted.double.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                                   ^^ source.nuclescript
+>    protect with redundancy 4x,
+#^^^^ source.nuclescript
+#    ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#           ^ source.nuclescript
+#            ^^^^ source.nuclescript keyword.control.nuclescript
+#                ^ source.nuclescript
+#                 ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                           ^ source.nuclescript
+#                            ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                              ^^ source.nuclescript
+>    store into cold,
+#^^^^ source.nuclescript
+#    ^^^^^ source.nuclescript keyword.control.nuclescript
+#         ^ source.nuclescript
+#          ^^^^ source.nuclescript keyword.control.nuclescript
+#              ^ source.nuclescript
+#               ^^^^ source.nuclescript variable.other.nuclescript
+#                   ^^ source.nuclescript
+>    verify roundtrip
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+>}
+#^^ source.nuclescript
+>
+>test "nanopore reads are noisier than illumina reads" {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^ source.nuclescript string.quoted.double.nuclescript
+#      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                    ^ source.nuclescript string.quoted.double.nuclescript
+#                                                     ^^^ source.nuclescript
+>    assert noisy_cold > noisy_hot, "nanopore should be noisier than illumina"
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                     ^ source.nuclescript
+#                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                       ^ source.nuclescript
+#                        ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                 ^^ source.nuclescript
+#                                   ^ source.nuclescript string.quoted.double.nuclescript
+#                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                            ^ source.nuclescript string.quoted.double.nuclescript
+>}
+#^^ source.nuclescript
+>

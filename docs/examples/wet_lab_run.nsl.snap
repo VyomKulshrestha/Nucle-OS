@@ -1,0 +1,524 @@
+>// A full wet-lab run plan: synthesis and sequencing behind explicit
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// hardware confirmations, a closure whose effect ceiling is declared in its
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// type, and a generic polishing step whose `match` recovers at different
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// coverages per sequencing platform. The match's pool type joins at the
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// worse of the two error rates, so `recovered_main` is typed by the noise
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// both branches can actually guarantee.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>
+>seq forward_primer: Sequence = "ATCGATCGGCTAGCTA"
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^^ source.nuclescript
+#                    ^^^^^^^^ source.nuclescript storage.type.nuclescript
+#                            ^ source.nuclescript
+#                             ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                              ^ source.nuclescript
+#                               ^ source.nuclescript string.quoted.double.nuclescript
+#                                ^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                ^ source.nuclescript string.quoted.double.nuclescript
+>
+>let reverse_primer = seq"GCTAGCTA-ATCGATCG"
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^ source.nuclescript
+#                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^ source.nuclescript keyword.control.nuclescript
+#                        ^ source.nuclescript string.quoted.double.nuclescript
+#                         ^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                          ^ source.nuclescript string.quoted.double.nuclescript
+>
+>enum Platform {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^^ source.nuclescript
+>    ShortRead,
+#^^^^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+>    LongRead(Str),
+#^^^^ source.nuclescript
+#    ^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#            ^ source.nuclescript
+#             ^^^ source.nuclescript storage.type.nuclescript
+#                ^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>pool order: DnaPool { codec: YinYang, redundancy: 3x, profile: Twist }
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^ source.nuclescript variable.other.nuclescript
+#          ^^ source.nuclescript
+#            ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                   ^^^ source.nuclescript
+#                      ^^^^^ source.nuclescript variable.other.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                    ^^ source.nuclescript
+#                                      ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                ^^ source.nuclescript
+#                                                  ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                    ^^ source.nuclescript
+#                                                      ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                             ^^ source.nuclescript
+#                                                               ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                    ^^^ source.nuclescript
+>
+>pool vendor_b: DnaPool { codec: Ternary, redundancy: 3x, profile: IDT }
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                      ^^^ source.nuclescript
+#                         ^^^^^ source.nuclescript variable.other.nuclescript
+#                              ^^ source.nuclescript
+#                                ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                       ^^ source.nuclescript
+#                                         ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                   ^^ source.nuclescript
+#                                                     ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                       ^^ source.nuclescript
+#                                                         ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                ^^ source.nuclescript
+#                                                                  ^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                     ^^^ source.nuclescript
+>
+>/// Synthesis is a hardware effect; the closure type declares that ceiling,
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// so the call inside is trusted to be confirmed.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn run_synthesis(job: Fn() -> Pool<Twist, 0.03%> confirm hardware) returns Pool<Twist, 0.03%> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                ^ source.nuclescript
+#                 ^^^ source.nuclescript variable.other.nuclescript
+#                    ^^ source.nuclescript
+#                      ^^ source.nuclescript storage.type.nuclescript
+#                        ^^^ source.nuclescript
+#                           ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^ source.nuclescript storage.type.nuclescript
+#                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                   ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                        ^^ source.nuclescript
+#                                          ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                ^ source.nuclescript
+#                                                 ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                        ^ source.nuclescript
+#                                                         ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                 ^^ source.nuclescript
+#                                                                   ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                          ^ source.nuclescript
+#                                                                           ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                                     ^^ source.nuclescript
+#                                                                                       ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                                                                            ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                             ^^^ source.nuclescript
+>    let strands: Pool<Twist, 0.03%> = job()
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^^^ source.nuclescript storage.type.nuclescript
+#                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                      ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^^^ source.nuclescript entity.name.function.nuclescript
+#                                         ^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// Generic over the read pool's profile. Long reads get deeper coverage.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn polish<P>(reads: Pool<P>, platform: Platform) returns Pool<Recovered> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^ source.nuclescript variable.other.nuclescript
+#         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#          ^ source.nuclescript variable.other.nuclescript
+#           ^ source.nuclescript keyword.operator.comparison.nuclescript
+#            ^ source.nuclescript
+#             ^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^^ source.nuclescript
+#                    ^^^^ source.nuclescript storage.type.nuclescript
+#                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                         ^ source.nuclescript variable.other.nuclescript
+#                          ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                     ^^ source.nuclescript
+#                                       ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                               ^^ source.nuclescript
+#                                                 ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                        ^ source.nuclescript
+#                                                         ^^^^ source.nuclescript storage.type.nuclescript
+#                                                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                              ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                                                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                        ^^^ source.nuclescript
+>    let out: Pool<Recovered> = match platform {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^ source.nuclescript storage.type.nuclescript
+#                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                  ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                           ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                            ^ source.nuclescript
+#                             ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                             ^^^ source.nuclescript
+>        ShortRead => consensus_vote(reads, coverage: 10x),
+#^^^^^^^^ source.nuclescript
+#        ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                 ^ source.nuclescript
+#                  ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^^^^^ source.nuclescript variable.other.nuclescript
+#                                         ^^ source.nuclescript
+#                                           ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                   ^^ source.nuclescript
+#                                                     ^^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                        ^^^ source.nuclescript
+>        LongRead(chemistry) => consensus_vote(reads, coverage: 30x),
+#^^^^^^^^ source.nuclescript
+#        ^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                ^ source.nuclescript
+#                 ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                          ^^ source.nuclescript
+#                            ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                             ^ source.nuclescript
+#                                              ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                   ^^ source.nuclescript
+#                                                     ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                             ^^ source.nuclescript
+#                                                               ^^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                                  ^^^ source.nuclescript
+>    }
+#^^^^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>fn full_run() returns Pool<Recovered> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#           ^^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                     ^ source.nuclescript
+#                      ^^^^ source.nuclescript storage.type.nuclescript
+#                          ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                           ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                     ^^^ source.nuclescript
+>    let synthesized: Pool<Twist, 0.03%> = run_synthesis(fn() -> Pool<Twist, 0.03%> {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                   ^^ source.nuclescript
+#                     ^^^^ source.nuclescript storage.type.nuclescript
+#                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                          ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                               ^^ source.nuclescript
+#                                 ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                       ^ source.nuclescript
+#                                                        ^^ source.nuclescript keyword.control.nuclescript
+#                                                          ^^^ source.nuclescript
+#                                                             ^^ source.nuclescript keyword.operator.arrow.nuclescript
+#                                                               ^ source.nuclescript
+#                                                                ^^^^ source.nuclescript storage.type.nuclescript
+#                                                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                     ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                          ^^ source.nuclescript
+#                                                                            ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                                                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                  ^^^ source.nuclescript
+>            let s: Pool<Twist, 0.03%> = synthesise order via Twist confirm hardware
+#^^^^^^^^^^^^ source.nuclescript
+#            ^^^ source.nuclescript keyword.control.nuclescript
+#               ^ source.nuclescript
+#                ^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                        ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                             ^^ source.nuclescript
+#                               ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                  ^ source.nuclescript
+#                                                   ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                        ^ source.nuclescript
+#                                                         ^^^ source.nuclescript keyword.control.nuclescript
+#                                                            ^ source.nuclescript
+#                                                             ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                  ^ source.nuclescript
+#                                                                   ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                          ^ source.nuclescript
+#                                                                           ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>    })
+#^^^^^^^ source.nuclescript
+>    let reads: Pool<Illumina, 0.35%> = sequence synthesized via Illumina confirm hardware
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                            ^^ source.nuclescript
+#                              ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                      ^ source.nuclescript
+#                                       ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                           ^ source.nuclescript
+#                                                            ^^^ source.nuclescript keyword.control.nuclescript
+#                                                               ^ source.nuclescript
+#                                                                ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                        ^ source.nuclescript
+#                                                                         ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                                ^ source.nuclescript
+#                                                                                 ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>    let recovered: Pool<Recovered> = polish(reads, Platform::ShortRead)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                        ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                 ^^ source.nuclescript
+#                                                   ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                           ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                             ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                      ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>let recovered_main: Pool<Recovered> = full_run()
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^^ source.nuclescript
+#                    ^^^^ source.nuclescript storage.type.nuclescript
+#                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                         ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                              ^^^ source.nuclescript
+>
+>let idt_strands: Pool<IDT, 0.05%> = synthesise vendor_b via IDT confirm hardware
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^^^ source.nuclescript storage.type.nuclescript
+#                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                      ^^^ source.nuclescript support.constant.profile.nuclescript
+#                         ^^ source.nuclescript
+#                           ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                              ^ source.nuclescript
+#                                               ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                       ^ source.nuclescript
+#                                                        ^^^ source.nuclescript keyword.control.nuclescript
+#                                                           ^ source.nuclescript
+#                                                            ^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                               ^ source.nuclescript
+#                                                                ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                       ^ source.nuclescript
+#                                                                        ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>
+>let idt_reads: Pool<Nanopore, 5%> = sequence idt_strands via Nanopore confirm hardware
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                            ^^ source.nuclescript
+#                              ^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                            ^ source.nuclescript
+#                                             ^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                        ^ source.nuclescript
+#                                                         ^^^ source.nuclescript keyword.control.nuclescript
+#                                                            ^ source.nuclescript
+#                                                             ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                     ^ source.nuclescript
+#                                                                      ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                                                             ^ source.nuclescript
+#                                                                              ^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>
+>let idt_recovered: Pool<Recovered> = polish::<Nanopore>(idt_reads, Platform::LongRead("R10.4.1"))
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                        ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                           ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                              ^^^^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                      ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                       ^ source.nuclescript
+#                                                        ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                 ^^ source.nuclescript
+#                                                                   ^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                           ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                                             ^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                                                     ^ source.nuclescript
+#                                                                                      ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                       ^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                              ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                               ^^^ source.nuclescript
+>
+>store "sample_e.txt" into order { redundancy: 3x, coverage: 12x, expect recovery > 99.5% }
+#^^^^^ source.nuclescript keyword.control.nuclescript
+#     ^ source.nuclescript
+#      ^ source.nuclescript string.quoted.double.nuclescript
+#       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^ source.nuclescript variable.other.nuclescript
+#                               ^^^ source.nuclescript
+#                                  ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                            ^^ source.nuclescript
+#                                              ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                ^^ source.nuclescript
+#                                                  ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                          ^^ source.nuclescript
+#                                                            ^^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                               ^^ source.nuclescript
+#                                                                 ^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                       ^ source.nuclescript
+#                                                                        ^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                                ^ source.nuclescript
+#                                                                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                                  ^ source.nuclescript
+#                                                                                   ^^^^^ source.nuclescript constant.numeric.percentage.nuclescript
+#                                                                                        ^^^ source.nuclescript
+>
+>delete "sample_e.txt" from order confirm physical_key
+#^^^^^^ source.nuclescript keyword.control.nuclescript
+#      ^ source.nuclescript
+#       ^ source.nuclescript string.quoted.double.nuclescript
+#        ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript string.quoted.double.nuclescript
+#                     ^ source.nuclescript
+#                      ^^^^ source.nuclescript keyword.control.nuclescript
+#                          ^ source.nuclescript
+#                           ^^^^^ source.nuclescript variable.other.nuclescript
+#                                ^ source.nuclescript
+#                                 ^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+#                                        ^ source.nuclescript
+#                                         ^^^^^^^^^^^^ source.nuclescript keyword.control.confirmation.nuclescript
+>
+>test "long-read polishing still leaves nanopore reads noisy before consensus" {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^ source.nuclescript string.quoted.double.nuclescript
+#      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                            ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                             ^^^ source.nuclescript
+>    assert idt_reads > 1.0, "nanopore reads are noisy"
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                    ^ source.nuclescript
+#                     ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                      ^ source.nuclescript
+#                       ^^^ source.nuclescript constant.numeric.nuclescript
+#                          ^^ source.nuclescript
+#                            ^ source.nuclescript string.quoted.double.nuclescript
+#                             ^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                     ^ source.nuclescript string.quoted.double.nuclescript
+>    assert idt_recovered < idt_reads, "consensus must reduce the error rate"
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                        ^ source.nuclescript
+#                         ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                          ^ source.nuclescript
+#                           ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                    ^^ source.nuclescript
+#                                      ^ source.nuclescript string.quoted.double.nuclescript
+#                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                           ^ source.nuclescript string.quoted.double.nuclescript
+>}
+#^^ source.nuclescript
+>

@@ -35,6 +35,8 @@ nucle run docs/examples/store.nsl
 | `recovery_plan.nsl` | User-defined enums, payload binding, nested `Result`/enum matches, and exhaustive wildcard handling |
 | `closure_retry.nsl` | Closures: a genuinely higher-order `fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>)` that calls whatever closure it's given, and a `let`-bound closure that captures a `Result` binding from its enclosing function |
 | `effect_annotated_closure.nsl` | Effect-annotated `Fn(...)` types that preserve destructive confirmation requirements through indirect closure calls |
+| `tiered_archive.nsl` | Most of the language in one program: preset imports, payload enums, a higher-order function taking closures, `?` propagation, generic recovery, compile-time `if`/`for`, a pipeline, and a `test`. Its three pools are separate namespaces, so the `for` loop leaves three independent replicas |
+| `wet_lab_run.nsl` | A confirmed synthesis/sequencing run through an effect-annotated closure, and a generic `polish<P>` whose `match` recovers at 10x or 30x; the match's pool type joins at the worse error rate. Its `test` asserts on pools the program simulated at top level |
 
 `patient_records_2026.csv` and `sample_a.txt` through the other `sample_*.txt`
 files are small payloads used by the examples.
