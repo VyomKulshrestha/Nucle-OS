@@ -498,6 +498,19 @@ impl TypeChecker {
                 pool.name
             ));
         }
+        if let Some(storage) = pool.storage {
+            if storage.celsius < -273.15 {
+                self.report.error(pool.span, "E-STORAGE-TEMPERATURE", format!(
+                    "pool '{}' is stored at {}C, below absolute zero",
+                    pool.name, storage.celsius
+                ));
+            } else if storage.celsius > 100.0 {
+                self.report.warning(pool.span, "E-STORAGE-TEMPERATURE", format!(
+                    "pool '{}' is stored at {}C; above 100C its strands break within days and the decay model's extrapolation is meaningless",
+                    pool.name, storage.celsius
+                ));
+            }
+        }
         self.pools.insert(pool.name.clone(), pool.clone());
     }
 
@@ -2416,6 +2429,7 @@ impl TypeChecker {
                 // Synthesized from a probabilistic `let` binding, not a
                 // real `pool` declaration -- there is no separate span to
                 // point to, so borrow the enclosing `store`'s.
+                storage: None,
                 span: store.span,
                 doc: None,
             }
@@ -2430,6 +2444,19 @@ impl TypeChecker {
                 "store '{}' is tagged critical but uses only 1x redundancy",
                 store.file
             ));
+        }
+        if let Some(years) = store.options.retain_years {
+            if years <= 0.0 {
+                self.report.error(store.span, "E-RETAIN-INVALID", format!(
+                    "store '{}' asks to retain for {} years; retention must be positive",
+                    store.file, years
+                ));
+            } else if pool.storage.is_none() {
+                self.report.error(store.span, "E-RETAIN-WITHOUT-STORAGE", format!(
+                    "store '{}' sets retain: {}y but pool '{}' declares no storage conditions; add e.g. `storage: encapsulated at 4C`",
+                    store.file, years, store.pool
+                ));
+            }
         }
         let coverage = store.options.coverage.unwrap_or(redundancy);
         if pool.profile == Profile::Nanopore
@@ -2845,6 +2872,7 @@ mod tests {
                     codec: Codec::Ternary,
                     redundancy: 3,
                     profile: Profile::Illumina,
+                    storage: None,
                     span: Span::default(),
                     doc: None,
                 }),
@@ -2887,6 +2915,7 @@ mod tests {
                     codec: Codec::Ternary,
                     redundancy: 3,
                     profile: Profile::Illumina,
+                    storage: None,
                     span: Span::default(),
                     doc: None,
                 }),
@@ -2916,6 +2945,7 @@ mod tests {
                     codec: Codec::Ternary,
                     redundancy: 3,
                     profile: Profile::Twist,
+                    storage: None,
                     span: Span::default(),
                     doc: None,
                 }),
@@ -2946,6 +2976,7 @@ mod tests {
                     codec: Codec::Ternary,
                     redundancy: 3,
                     profile: Profile::Twist,
+                    storage: None,
                     span: Span::default(),
                     doc: None,
                 }),
@@ -2982,6 +3013,7 @@ mod tests {
                     codec: Codec::Ternary,
                     redundancy: 3,
                     profile: Profile::Illumina,
+                    storage: None,
                     span: Span::default(),
                     doc: None,
                 }),

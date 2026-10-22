@@ -47,6 +47,8 @@ pub enum VfsCall {
         coverage: usize,
         profile: Profile,
         verify_roundtrip: bool,
+        retain_years: Option<f64>,
+        storage: Option<StorageSpec>,
     },
     Retrieve {
         pool: String,
@@ -92,6 +94,8 @@ pub fn compile_program(program: Program, type_report: TypeReport) -> CompiledPla
                 coverage,
                 profile,
                 verify_roundtrip,
+                retain_years,
+                storage,
                 ..
             } => calls.push(VfsCall::Store {
                 file,
@@ -102,6 +106,8 @@ pub fn compile_program(program: Program, type_report: TypeReport) -> CompiledPla
                 coverage,
                 profile,
                 verify_roundtrip,
+                retain_years,
+                storage,
             }),
             MirOp::Retrieve { pool, query, .. } => calls.push(VfsCall::Retrieve { pool, query }),
             MirOp::Delete { file, pool, .. } => calls.push(VfsCall::Delete { file, pool }),
@@ -121,7 +127,7 @@ pub fn compile_program(program: Program, type_report: TypeReport) -> CompiledPla
 /// byte-identical output (see `nucle_lang/tests/result_backward_compat.rs`).
 fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &mut Vec<String>) -> Result<(), String> {
     match call {
-        VfsCall::Store { file, pool, codec, redundancy, simulate, coverage, profile, verify_roundtrip } => {
+        VfsCall::Store { file, pool, codec, redundancy, simulate, coverage, profile, verify_roundtrip, retain_years, storage } => {
             let path = resolve_source_path(base_dir, file);
             let data = std::fs::read(&path)
                 .map_err(|err| format!("failed to read '{}': {}", path.display(), err))?;
@@ -135,6 +141,9 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
             let codec_kind = codec_to_vfs_kind(*codec);
             let result = os.dna_write_with_codec(&filename, &data, *redundancy, codec_kind)?;
             steps.push(format!("✓ store into {}: {}", pool, result));
+            if let (Some(years), Some(storage)) = (retain_years, storage) {
+                check_retention(os, &result, storage, *years, steps)?;
+            }
 
             if *verify_roundtrip {
                 let recovered = os.dna_read(&filename)?;
@@ -504,6 +513,70 @@ fn resolve_file_arg<'a>(file: &'a str, env: &'a HashMap<String, Value>) -> &'a s
     }
 }
 
+/// Physical copies of each sequence the retention check assumes are kept.
+/// The language has no way to state it yet; ten molecules per sequence is
+/// a conservative low-copy aliquot.
+const RETENTION_COPIES_PER_STRAND: u32 = 10;
+
+/// Whole-file recovery probability a `retain` requirement must hold.
+const RETENTION_TARGET: f64 = 0.999;
+
+/// `retain: Ny` against the strands this write actually produced: how long
+/// until the file's chance of decoding drops below 99.9% in its pool's
+/// storage conditions (`nucle_synth::decay`). Logs a step either way and
+/// returns `Err` when the requirement is not met. The file stays stored;
+/// the caller decides whether to delete it or store again with more
+/// redundancy.
+fn check_retention(
+    os: &NucleOS,
+    result: &nucle_vfs::syscall::WriteResult,
+    storage: &StorageSpec,
+    years: f64,
+    steps: &mut Vec<String>,
+) -> Result<(), String> {
+    let parity_budget = os
+        .catalog
+        .get_by_name(&result.filename)
+        .map(|f| if f.rs_parity_per_stripe > 0 { f.rs_parity_per_stripe } else { f.parity_strand_count })
+        .unwrap_or(result.parity_strand_count);
+    let query = nucle_synth::decay::ShelfLifeQuery {
+        medium: storage.medium.to_medium(),
+        celsius: storage.celsius,
+        strand_len: (os.dna_stat().avg_strand_length.round() as usize).max(1),
+        data_strands: result.data_strand_count.max(1),
+        parity_strands: parity_budget,
+        copies_per_strand: RETENTION_COPIES_PER_STRAND,
+        target_recovery: RETENTION_TARGET,
+    };
+    let life = query.shelf_life_years();
+    let conditions = format!("{} at {}C", storage.medium.name(), storage.celsius);
+    if life >= years {
+        steps.push(format!("✓ retain {}y: '{}' stays readable for {} in {}", years, result.filename, render_years(life), conditions));
+        Ok(())
+    } else {
+        let msg = format!(
+            "'{}' is readable for only {} in {}, short of the required {}y; store it with more redundancy or colder storage",
+            result.filename, render_years(life), conditions, years
+        );
+        steps.push(format!("✗ retain {}y: {}", years, msg));
+        Err(msg)
+    }
+}
+
+fn render_years(y: f64) -> String {
+    if !y.is_finite() {
+        "over 10^15 years".to_string()
+    } else if y < 10_000.0 {
+        format!("~{:.0} years", y)
+    } else if y < 1e6 {
+        format!("~{:.0} thousand years", y / 1e3)
+    } else if y < 1e9 {
+        format!("~{:.1} million years", y / 1e6)
+    } else {
+        format!("~{:.1} billion years", y / 1e9)
+    }
+}
+
 /// The VFS path a pool's file lives at: `<pool>/<file name>`. Each
 /// declared pool is its own namespace, so storing `report.csv` into `hot`
 /// and into `cold` keeps two independent replicas rather than making the
@@ -561,6 +634,11 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
     match os.dna_write_with_codec(&filename, &data, redundancy, codec_kind) {
         Ok(result) => {
             steps.push(format!("✓ store into {}: {}", op.pool, result));
+            if let (Some(years), Some(storage)) = (op.options.retain_years, pool.storage) {
+                if let Err(msg) = check_retention(os, &result, &storage, years, steps) {
+                    return EvalOutcome::Value(Value::Result(Err(msg)));
+                }
+            }
             EvalOutcome::Value(Value::Result(Ok(Box::new(Value::DnaFile { filename: result.filename, pool: op.pool.clone() }))))
         }
         Err(msg) => {
@@ -834,7 +912,7 @@ mod tests {
 
     #[test]
     fn lowers_pipeline_to_store_call() {
-        let pool = PoolDecl { name: "archive".into(), codec: Codec::Ternary, redundancy: 3, profile: Profile::Illumina, span: Span::default(), doc: None };
+        let pool = PoolDecl { name: "archive".into(), codec: Codec::Ternary, redundancy: 3, profile: Profile::Illumina, storage: None, span: Span::default(), doc: None };
         let pipeline = PipelineDecl {
             name: "backup".into(),
             steps: vec![

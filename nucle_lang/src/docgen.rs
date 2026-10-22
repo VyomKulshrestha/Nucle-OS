@@ -28,8 +28,12 @@ pub fn generate_docs(program: &Program) -> String {
             name: &d.name,
             doc: d.doc.as_deref(),
             signature: format!(
-                "pool {}: DnaPool {{ codec: {}, redundancy: {}x, profile: {} }}",
-                d.name, d.codec, d.redundancy, d.profile
+                "pool {}: DnaPool {{ codec: {}, redundancy: {}x, profile: {}{} }}",
+                d.name,
+                d.codec,
+                d.redundancy,
+                d.profile,
+                d.storage.map(|st| format!(", storage: {} at {}C", st.medium.name(), st.celsius)).unwrap_or_default()
             ),
         }),
         _ => None,
@@ -225,6 +229,7 @@ mod tests {
                 codec: Codec::Ternary,
                 redundancy: 3,
                 profile: Profile::Illumina,
+                storage: None,
                 span: Span::default(),
                 doc: None,
             })],

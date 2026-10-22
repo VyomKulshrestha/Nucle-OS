@@ -326,6 +326,7 @@ mod tests {
                     codec: Codec::Ternary,
                     redundancy: 3,
                     profile: Profile::Illumina,
+                    storage: None,
                     span: Span::default(),
                     doc: None,
                 }),

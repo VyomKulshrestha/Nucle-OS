@@ -1,0 +1,209 @@
+>// Retention requirements: each pool states where its DNA is kept, and a
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// store can demand the file stay readable for a number of years. The check
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// runs against the strands actually written, using published Arrhenius
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// decay kinetics for the storage medium (see `nucle shelf-life`).
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>//
+#^^ source.nuclescript comment.line.double-slash.nuclescript
+>// The room-temperature shelf cannot keep a file readable for 10,000 years,
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// so that store returns Err and the policy falls back to the cold capsule.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>
+>pool shelf: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist, storage: bone at 25C }
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^ source.nuclescript variable.other.nuclescript
+#          ^^ source.nuclescript
+#            ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                   ^^^ source.nuclescript
+#                      ^^^^^ source.nuclescript variable.other.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                    ^^ source.nuclescript
+#                                      ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                ^^ source.nuclescript
+#                                                  ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                    ^^ source.nuclescript
+#                                                      ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                             ^^ source.nuclescript
+#                                                               ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                    ^^ source.nuclescript
+#                                                                      ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                             ^^ source.nuclescript
+#                                                                               ^^^^ source.nuclescript support.constant.storage.nuclescript
+#                                                                                   ^ source.nuclescript
+#                                                                                    ^^ source.nuclescript keyword.control.nuclescript
+#                                                                                      ^ source.nuclescript
+#                                                                                       ^^^ source.nuclescript constant.numeric.unit.nuclescript
+#                                                                                          ^^^ source.nuclescript
+>
+>pool capsule: DnaPool { codec: YinYang, redundancy: 3x, profile: Twist, storage: encapsulated at -20C }
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript support.constant.storage.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^^ source.nuclescript
+#                        ^^^^^ source.nuclescript variable.other.nuclescript
+#                             ^^ source.nuclescript
+#                               ^^^^^^^ source.nuclescript support.constant.codec.nuclescript
+#                                      ^^ source.nuclescript
+#                                        ^^^^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                  ^^ source.nuclescript
+#                                                    ^^ source.nuclescript constant.numeric.multiplier.nuclescript
+#                                                      ^^ source.nuclescript
+#                                                        ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                               ^^ source.nuclescript
+#                                                                 ^^^^^ source.nuclescript support.constant.profile.nuclescript
+#                                                                      ^^ source.nuclescript
+#                                                                        ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                               ^^ source.nuclescript
+#                                                                                 ^^^^^^^^^^^^ source.nuclescript support.constant.storage.nuclescript
+#                                                                                             ^ source.nuclescript
+#                                                                                              ^^ source.nuclescript keyword.control.nuclescript
+#                                                                                                ^ source.nuclescript
+#                                                                                                 ^^^^ source.nuclescript constant.numeric.unit.nuclescript
+#                                                                                                     ^^^ source.nuclescript
+>
+>/// Try the shelf first; if it cannot meet the retention requirement, store
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// in the capsule instead, which must meet it or fail the whole call.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archive_for(target: File) returns Result<DnaFile, Str> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#              ^ source.nuclescript
+#               ^^^^^^ source.nuclescript variable.other.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^^^ source.nuclescript storage.type.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                           ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                            ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                   ^^ source.nuclescript
+#                                                     ^^^ source.nuclescript storage.type.nuclescript
+#                                                        ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                         ^^^ source.nuclescript
+>    let attempt: Result<DnaFile, Str> = store target into shelf { retain: 10000y }
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^^^^^ source.nuclescript storage.type.nuclescript
+#                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                        ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                               ^^ source.nuclescript
+#                                 ^^^ source.nuclescript storage.type.nuclescript
+#                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                     ^ source.nuclescript
+#                                      ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                       ^ source.nuclescript
+#                                        ^^^^^ source.nuclescript keyword.control.nuclescript
+#                                             ^ source.nuclescript
+#                                              ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                    ^ source.nuclescript
+#                                                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                         ^ source.nuclescript
+#                                                          ^^^^^ source.nuclescript variable.other.nuclescript
+#                                                               ^^^ source.nuclescript
+#                                                                  ^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                        ^^ source.nuclescript
+#                                                                          ^^^^^^ source.nuclescript constant.numeric.unit.nuclescript
+#                                                                                ^^^ source.nuclescript
+>    let saved: DnaFile = match attempt {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                      ^ source.nuclescript
+#                       ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^^ source.nuclescript keyword.control.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                      ^^^ source.nuclescript
+>        Ok(file) => file,
+#^^^^^^^^ source.nuclescript
+#        ^^ source.nuclescript entity.name.function.nuclescript
+#          ^ source.nuclescript
+#           ^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                   ^ source.nuclescript
+#                    ^^^^ source.nuclescript variable.other.nuclescript
+#                        ^^ source.nuclescript
+>        Err(reason) => (store target into capsule { retain: 10000y })?
+#^^^^^^^^ source.nuclescript
+#        ^^^ source.nuclescript entity.name.function.nuclescript
+#           ^ source.nuclescript
+#            ^^^^^^ source.nuclescript variable.other.nuclescript
+#                  ^^ source.nuclescript
+#                    ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                      ^^ source.nuclescript
+#                        ^^^^^ source.nuclescript keyword.control.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^^^^^^^ source.nuclescript support.constant.storage.nuclescript
+#                                                 ^^^ source.nuclescript
+#                                                    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                          ^^ source.nuclescript
+#                                                            ^^^^^^ source.nuclescript constant.numeric.unit.nuclescript
+#                                                                  ^^^ source.nuclescript
+#                                                                     ^ source.nuclescript keyword.operator.try.nuclescript
+>    }
+#^^^^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>let records: Result<DnaFile, Str> = archive_for("patient_records_2026.csv")
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^ source.nuclescript variable.other.nuclescript
+#           ^^ source.nuclescript
+#             ^^^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                           ^^ source.nuclescript
+#                             ^^^ source.nuclescript storage.type.nuclescript
+#                                ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                   ^ source.nuclescript
+#                                    ^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                               ^ source.nuclescript
+#                                                ^ source.nuclescript string.quoted.double.nuclescript
+#                                                 ^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                         ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                          ^^ source.nuclescript
+>
+>// A short requirement the shelf can meet on its own.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>store "sample_a.txt" into shelf { retain: 50y }
+#^^^^^ source.nuclescript keyword.control.nuclescript
+#     ^ source.nuclescript
+#      ^ source.nuclescript string.quoted.double.nuclescript
+#       ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                   ^ source.nuclescript string.quoted.double.nuclescript
+#                    ^ source.nuclescript
+#                     ^^^^ source.nuclescript keyword.control.nuclescript
+#                         ^ source.nuclescript
+#                          ^^^^^ source.nuclescript variable.other.nuclescript
+#                               ^^^ source.nuclescript
+#                                  ^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                        ^^ source.nuclescript
+#                                          ^^^ source.nuclescript constant.numeric.unit.nuclescript
+#                                             ^^^ source.nuclescript
+>

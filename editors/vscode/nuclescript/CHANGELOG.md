@@ -4,6 +4,18 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.15]
+
+- Highlighting for pool `storage: <medium> at <temp>C` conditions and store
+  `retain: <years>y` requirements: the `storage`, `retain` and `at`
+  keywords, the `encapsulated`/`bone` media (and their aliases), and signed
+  temperature and duration literals such as `-20C` and `1000y`.
+- Added the runnable `retention_policy.nsl` example and refreshed grammar
+  snapshots for the new `tiered_archive.nsl` and `wet_lab_run.nsl` examples.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.32 runtime, the first whose compiler understands `storage`/`retain`,
+  each pool as its own namespace, and pool-valued `match` typing.
+
 ## [0.1.14]
 
 - Added `IDT`, `idtopools`, and `idt-opools` highlighting, backed by the

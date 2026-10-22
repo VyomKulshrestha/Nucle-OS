@@ -345,6 +345,7 @@ impl Parser {
         let mut codec = None;
         let mut redundancy = None;
         let mut profile = None;
+        let mut storage = None;
 
         while !self.check(TokenKind::RBrace) {
             let key = self.expect_ident_any("pool property")?;
@@ -359,6 +360,15 @@ impl Parser {
                     let ident = self.expect_ident_any("profile")?;
                     profile = Some(Profile::parse(&ident).ok_or_else(|| self.error_previous(format!("unknown profile '{}'", ident)))?);
                 }
+                "storage" => {
+                    let ident = self.expect_ident_any("storage medium")?;
+                    let medium = StorageMediumKind::parse(&ident).ok_or_else(|| {
+                        self.error_previous(format!("unknown storage medium '{}' (expected encapsulated or bone)", ident))
+                    })?;
+                    self.expect_ident_text("at")?;
+                    let celsius = self.expect_suffixed_number("storage temperature, e.g. 4C", &['C', 'c'])?;
+                    storage = Some(StorageSpec { medium, celsius });
+                }
                 other => return Err(self.error_previous(format!("unknown pool property '{}'", other))),
             }
             self.consume_comma();
@@ -370,6 +380,7 @@ impl Parser {
             codec: codec.ok_or_else(|| self.error_here("pool missing codec"))?,
             redundancy: redundancy.unwrap_or(1),
             profile: profile.ok_or_else(|| self.error_here("pool missing profile"))?,
+            storage,
             span: self.span_since(start),
             doc,
         })
@@ -985,6 +996,7 @@ impl Parser {
                     "redundancy" => options.redundancy = Some(self.expect_multiplier("redundancy multiplier")?),
                     "coverage" => options.coverage = Some(self.expect_multiplier("coverage multiplier")?),
                     "tag" | "tags" => options.tags = self.parse_string_list()?,
+                    "retain" => options.retain_years = Some(self.expect_suffixed_number("retention, e.g. 1000y", &['y'])?),
                     other => return Err(self.error_previous(format!("unknown store option '{}'", other))),
                 }
             }
@@ -1130,6 +1142,19 @@ impl Parser {
             return Err(self.error_previous(format!("{} must be at least 1", what)));
         }
         Ok(value)
+    }
+
+    /// A number literal carrying exactly one of `suffixes` (`4C`, `-20C`,
+    /// `1000y`), returned without it.
+    fn expect_suffixed_number(&mut self, what: &str, suffixes: &[char]) -> Result<f64, ParseError> {
+        let raw = self.expect_number(what)?;
+        let Some(body) = raw.strip_suffix(|c: char| suffixes.contains(&c)) else {
+            return Err(self.error_previous(format!("expected {}, got '{}'", what, raw)));
+        };
+        body.parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| self.error_previous(format!("invalid {} '{}'", what, raw)))
     }
 
     fn expect_percent(&mut self, what: &str) -> Result<f64, ParseError> {

@@ -34,6 +34,9 @@ pub enum MirOp {
         profile: Profile,
         simulate: bool,
         verify_roundtrip: bool,
+        /// `retain: Ny`, checked after the write against `storage`.
+        retain_years: Option<f64>,
+        storage: Option<StorageSpec>,
         effect: Effect,
     },
     Retrieve {
@@ -99,6 +102,8 @@ pub fn lower_program(program: &Program) -> MirProgram {
                         profile: pool.profile,
                         simulate: store.simulate,
                         verify_roundtrip: false,
+                        retain_years: store.options.retain_years,
+                        storage: pool.storage,
                         effect: operation_effect(&Operation::Store(store.clone())),
                     });
                 }
@@ -278,6 +283,8 @@ fn lower_pipeline(pipeline: &PipelineDecl, pools: &HashMap<String, PoolDecl>) ->
         profile: pool.profile,
         simulate: false,
         verify_roundtrip,
+        retain_years: None,
+        storage: pool.storage,
         effect: Effect::Synthesis,
     })
 }
@@ -334,6 +341,8 @@ mod tests {
                 profile: Profile::Nanopore,
                 simulate: true,
                 verify_roundtrip: false,
+                retain_years: None,
+                storage: None,
                 effect: Effect::Pure,
             }],
             notes: Vec::new(),

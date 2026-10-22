@@ -27,6 +27,7 @@ Codes are grouped by which declaration/operation they check, matching
 | Code | Level | Meaning |
 |------|-------|---------|
 | `E-POOL-DUPLICATE` | error | Two `pool` declarations use the same name in one program. |
+| `E-STORAGE-TEMPERATURE` | error / warning | A pool's `storage: ... at <T>C` is below absolute zero (error), or above 100 °C, where strands break within days and the decay extrapolation means nothing (warning). |
 | `E-POOL-LOW-REDUNDANCY` | warning | A pool declares `redundancy: 1x`. Critical files should use at least `2x` so Reed-Solomon has parity to recover from. |
 | `E-POOL-UNDECLARED` | error | A `simulate`/`synthesize`/`sequence` expression references a pool name that isn't declared (via `pool` or a prior probabilistic `let` binding). Includes a "did you mean X?" suggestion when a same-scope name is within edit distance 2. |
 
@@ -139,6 +140,8 @@ Codes are grouped by which declaration/operation they check, matching
 | `E-STORE-SYNTHESIS-WITHOUT-SIMULATE` | warning | A non-`simulate` `store` has a `Synthesis` effect — real hardware submission, not a dry run. |
 | `E-STORE-POOL-UNDECLARED` | error | `store ... into <pool>` references an undeclared pool. Includes a "did you mean X?" suggestion. |
 | `E-STORE-CRITICAL-LOW-REDUNDANCY` | warning | A store tagged `"critical"` uses only `1x` redundancy. |
+| `E-RETAIN-WITHOUT-STORAGE` | error | A `store` sets `retain: Ny` but its pool declares no `storage:` conditions, so there is no decay rate to check against. |
+| `E-RETAIN-INVALID` | error | `retain:` is zero or negative. |
 | `E-STORE-UNSATISFIABLE-RECOVERY` | warning | `expect recovery > 99.5%` is requested for a Nanopore-profile pool at `1x` or less coverage — statistically unreachable at that coverage. |
 | `E-STORE-IMPLICIT-COVERAGE` | warning | A `simulate store` doesn't set `coverage` explicitly, so it silently inherits the redundancy value as the assumed coverage. |
 

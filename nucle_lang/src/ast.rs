@@ -160,6 +160,11 @@ pub struct PoolDecl {
     pub codec: Codec,
     pub redundancy: usize,
     pub profile: Profile,
+    /// `storage: <medium> at <temp>C` -- where the synthesized pool is kept,
+    /// which sets how fast its strands break (see `nucle_synth::decay`).
+    /// Required by any `store ... { retain: Ny }` into this pool.
+    #[serde(default)]
+    pub storage: Option<StorageSpec>,
     #[serde(default)]
     pub span: Span,
     /// The `///` doc comment immediately preceding this declaration, if
@@ -624,6 +629,51 @@ pub struct StoreOptions {
     pub coverage: Option<usize>,
     pub tags: Vec<String>,
     pub expect_recovery_gt: Option<f64>,
+    /// `retain: 1000y` -- the stored file must stay recoverable for this
+    /// many years under its pool's `storage` conditions. Checked at run
+    /// time against the strands actually written.
+    #[serde(default)]
+    pub retain_years: Option<f64>,
+}
+
+/// A pool's storage conditions: `storage: encapsulated at 4C`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct StorageSpec {
+    pub medium: StorageMediumKind,
+    pub celsius: f64,
+}
+
+/// Storage media with published decay kinetics (see `nucle_synth::decay`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StorageMediumKind {
+    /// Dry, anoxic encapsulation (Coudy et al. 2021).
+    Encapsulated,
+    /// Buried bone (Allentoft et al. 2012).
+    Bone,
+}
+
+impl StorageMediumKind {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "encapsulated" | "capsule" | "dnashell" => Some(Self::Encapsulated),
+            "bone" | "fossil" => Some(Self::Bone),
+            _ => None,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Encapsulated => "encapsulated",
+            Self::Bone => "bone",
+        }
+    }
+
+    pub fn to_medium(self) -> nucle_synth::decay::StorageMedium {
+        match self {
+            Self::Encapsulated => nucle_synth::decay::StorageMedium::Encapsulated,
+            Self::Bone => nucle_synth::decay::StorageMedium::Bone,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

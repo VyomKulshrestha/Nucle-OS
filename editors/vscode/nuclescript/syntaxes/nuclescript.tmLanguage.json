@@ -13,6 +13,7 @@
     { "include": "#profile-constants" },
     { "include": "#codec-constants" },
     { "include": "#pool-state-constants" },
+    { "include": "#storage-medium-constants" },
     { "include": "#operators" },
     { "include": "#function-calls" },
     { "include": "#identifiers" }
@@ -59,6 +60,11 @@
           "match": "\\b\\d+(\\.\\d+)?%"
         },
         {
+          "comment": "storage temperature, e.g. 4C or -20C, and retention duration, e.g. 1000y",
+          "name": "constant.numeric.unit.nuclescript",
+          "match": "(?<![\\w.])-?\\d+(\\.\\d+)?[Cy]\\b"
+        },
+        {
           "comment": "multiplier literal, e.g. 3x, 10X",
           "name": "constant.numeric.multiplier.nuclescript",
           "match": "\\b\\d+[xX]\\b"
@@ -82,7 +88,7 @@
       "patterns": [
         {
           "name": "keyword.control.nuclescript",
-          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test|match|enum)\\b"
+          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|retain|storage|at|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test|match|enum)\\b"
         }
       ]
     },
@@ -100,6 +106,15 @@
         {
           "name": "support.constant.profile.nuclescript",
           "match": "\\b(Illumina|illumina|Nanopore|OxfordNanopore|oxfordnanopore|oxford-nanopore|Twist|TwistBioscience|twistbioscience|twist-bioscience|IDT|idt|IDToPools|idtopools|idt-opools)\\b"
+        }
+      ]
+    },
+    "storage-medium-constants": {
+      "comment": "StorageMediumKind::parse (ast.rs): media with published decay kinetics, plus their aliases",
+      "patterns": [
+        {
+          "name": "support.constant.storage.nuclescript",
+          "match": "\\b(encapsulated|capsule|dnashell|bone|fossil)\\b"
         }
       ]
     },

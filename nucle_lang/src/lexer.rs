@@ -114,6 +114,11 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     TokenKind::Arrow
                 }
+                // A negative number literal, e.g. a `-20C` storage temperature.
+                '-' if self.peek_next().is_some_and(|c| c.is_ascii_digit()) => {
+                    self.bump();
+                    TokenKind::Number(format!("-{}", self.lex_number_like()))
+                }
                 '"' => TokenKind::String(self.lex_string(line, column)?),
                 '/' if self.peek_next() == Some('/') && self.peek_at(2) == Some('/') => {
                     TokenKind::DocComment(self.lex_doc_comment())

@@ -46,6 +46,11 @@ NucleScript, the declarative DNA-storage operations language for
   function works for `Illumina`/`Nanopore`/`Twist`/`IDT` instead of needing one
   copy per profile. Highlighting, diagnostics, hover, formatting, and
   `nucle doc` all render and check the type-parameter list correctly.
+- **Storage conditions and retention requirements** — `storage:
+  encapsulated at -20C` on a pool and `retain: 10000y` on a store. Run File
+  checks the requirement against the strands actually written using
+  published DNA decay kinetics, and an unmet one is a catchable `Err`.
+  Highlighting covers the new keywords, media and `4C`/`1000y` literals.
 - **Typed IDT oPools support** — `IDT`, `idtopools`, and `idt-opools` are
   highlighted aliases for the same `Pool<IDT, E>` state, with the compiler's
   0.05% error model and exact-profile vendor preflight.

@@ -31,6 +31,9 @@ PoolPropertyList    ::= PoolProperty ( ',' PoolProperty )* ','?
 PoolProperty        ::= 'codec' ':' CodecLiteral
                       | 'redundancy' ':' MultiplierLiteral
                       | 'profile' ':' ProfileLiteral
+                      | 'storage' ':' MediumLiteral 'at' TemperatureLiteral
+
+MediumLiteral       ::= 'encapsulated' | 'capsule' | 'dnashell' | 'bone' | 'fossil'
 
 CodecLiteral        ::= 'YinYang' | 'yin-yang' | 'Ternary' | 'ternary-rotating' | 'ternary-rotating-cipher' | 'Fountain' | 'dna-fountain'
 ProfileLiteral      ::= 'Illumina' | 'Nanopore' | 'oxfordnanopore' | 'oxford-nanopore' | 'Twist' | 'twistbioscience' | 'twist-bioscience' | 'IDT' | 'idtopools' | 'idt-opools'
@@ -216,6 +219,7 @@ StoreOption         ::= 'redundancy' ':' MultiplierLiteral
                       | 'tag' ':' StringList
                       | 'tags' ':' StringList
                       | 'expect' 'recovery' '>' PercentLiteral
+                      | 'retain' ':' YearsLiteral
 
 StringList          ::= StringLiteral
                       | '[' StringLiteral ( ',' StringLiteral )* ','? ']'
@@ -261,6 +265,8 @@ MultiplierLiteral   ::= [0-9]+ [xX]
 PercentLiteral      ::= [0-9]+ ( '.' [0-9]+ )? '%'
 DateLiteral         ::= [0-9]{4} '-' [0-9]{2} '-' [0-9]{2}
 SizeBytesLiteral    ::= [0-9]+ ( 'mb' | 'MB' | 'kb' | 'KB' )
+TemperatureLiteral  ::= '-'? [0-9]+ ( '.' [0-9]+ )? 'C'
+YearsLiteral        ::= [0-9]+ ( '.' [0-9]+ )? 'y'
 ```
 
 ---
@@ -303,6 +309,34 @@ history, rather than making the second write a new version of the first.
 `delete "report.csv" from hot` removes only `hot/report.csv`, and `retrieve
 from cold where { ... }` returns only files stored in `cold`. Run output and
 `DnaFile` values carry the full `<pool>/<file>` path.
+
+### Storage conditions and retention (`storage` / `retain`)
+
+```nsl
+pool shelf: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist, storage: bone at 25C }
+pool capsule: DnaPool { codec: YinYang, redundancy: 3x, profile: Twist, storage: encapsulated at -20C }
+
+let attempt: Result<DnaFile, Str> = store "records.csv" into shelf { retain: 10000y }
+```
+
+`storage: <medium> at <temperature>C` records where a pool's DNA is kept.
+`encapsulated` (dry, anoxic capsules; Coudy et al. 2021) and `bone` (DNA in
+buried bone; Allentoft et al. 2012) are the media with published decay
+kinetics. `retain: <years>y` on a `store` requires the file to stay
+recoverable that long: after the write, `nucle run` takes the strands actually
+written (data count, per-stripe Reed-Solomon parity, strand length), assumes
+ten physical copies per sequence, and computes how long whole-file recovery
+stays at or above 99.9% under Arrhenius strand breakage (see
+`nucle shelf-life` and `docs/architecture.md`). It logs `✓ retain` or
+`✗ retain` with that figure. An unmet requirement makes the store's
+`Result` an `Err`, so a program can fall back to colder storage or more
+redundancy with `match`/`?`; a statement-level store with an unmet
+requirement fails the run. The file stays written either way, since rolling
+back a versioned write would also remove the versions before it.
+
+`retain` on a pool without `storage` is `E-RETAIN-WITHOUT-STORAGE`, a
+non-positive retention is `E-RETAIN-INVALID`, and a temperature below
+absolute zero is `E-STORAGE-TEMPERATURE` (a warning above 100 °C).
 
 ---
 
