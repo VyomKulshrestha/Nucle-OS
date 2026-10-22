@@ -4,6 +4,19 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.16]
+
+- Run File and diagnostics understand real package imports: an imported
+  pool, recovery profile or function is part of the program, imported
+  functions accept declared pools and recovery profiles as arguments, and
+  diagnostics in imported code point at the import line.
+- `for` loops over file names pass each name to functions, loop bodies can
+  bind a `let` every iteration, closures returned from functions are
+  callable, and named functions can recurse.
+- Added the runnable `package_workflow.nsl` example.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.35 runtime, which contains all of the above.
+
 ## [0.1.15]
 
 - Highlighting for pool `storage: <medium> at <temp>C` conditions and store

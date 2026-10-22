@@ -46,6 +46,11 @@ NucleScript, the declarative DNA-storage operations language for
   function works for `Illumina`/`Nanopore`/`Twist`/`IDT` instead of needing one
   copy per profile. Highlighting, diagnostics, hover, formatting, and
   `nucle doc` all render and check the type-parameter list correctly.
+- **Real package imports** — `import { archive_with_guarantee, medical_archive }
+  from "nuclescript/presets"` brings the package's actual pools, recovery
+  profiles and functions into the program, so Run File executes imported
+  functions against imported pools. Diagnostics in imported code point at
+  the import line.
 - **Storage conditions and retention requirements** — `storage:
   encapsulated at -20C` on a pool and `retain: 10000y` on a store. Run File
   checks the requirement against the strands actually written using
