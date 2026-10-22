@@ -39,7 +39,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-858d, 30 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-fbf0, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -65,7 +65,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-858d, 30 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-fbf0, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -90,7 +90,7 @@ execution failed: file 'old_archive.bin' not found
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   patient_records_2026.csv (ID: archive-ba61, 109 B, 4d+4p strands, 2.0×)
+║   patient_records_2026.csv (ID: archive-4736, 109 B, 4d+4p strands, 2.0×)
 ╚══════════════════════════════════════╝
 
 --- Recovery Manifest: patient_records_2026.csv ---
@@ -124,7 +124,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-858d, 30 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-fbf0, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -151,8 +151,8 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-858d, 30 B, 2d+4p strands, 3.0×)
-║   sample_b.txt (ID: archive-34b5, 30 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-fbf0, 30 B, 2d+4p strands, 3.0×)
+║   sample_b.txt (ID: archive-5672, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -171,13 +171,13 @@ NucleScript diagnostics:
 ║ Total strands:      10               ║
 ║ Data strands:        2               ║
 ║ Parity strands:      8               ║
-║ Nucleotides:      5915               ║
-║ Avg strand len:    592 nt            ║
+║ Nucleotides:      5889               ║
+║ Avg strand len:    589 nt            ║
 ║ Redundancy:      5.00×              ║
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-8ded, 30 B, 2d+8p strands, 5.0×)
+║   sample_a.txt (ID: archive-f42c, 30 B, 2d+8p strands, 5.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -199,7 +199,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-858d, 30 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-fbf0, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 --- Recovery Manifest: sample_a.txt ---
@@ -271,7 +271,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-858d, 30 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-fbf0, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -303,15 +303,15 @@ NucleScript diagnostics:
 ╠══════════════════════════════════════╣
 ║ Files:               1               ║
 ║ Total strands:      58               ║
-║ Data strands:       19               ║
-║ Parity strands:     39               ║
-║ Nucleotides:     30657               ║
-║ Avg strand len:    529 nt            ║
-║ Redundancy:      3.05×              ║
+║ Data strands:       20               ║
+║ Parity strands:     38               ║
+║ Nucleotides:     30169               ║
+║ Avg strand len:    520 nt            ║
+║ Redundancy:      2.90×              ║
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-c17c, 30 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-f42c, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -335,7 +335,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-858d, 30 B, 2d+4p strands, 3.0×)
+║   sample_a.txt (ID: archive-fbf0, 30 B, 2d+4p strands, 3.0×)
 ╚══════════════════════════════════════╝
 
 
@@ -506,7 +506,7 @@ NucleScript diagnostics:
 ║ Encrypted:          no               ║
 ╟──────────────────────────────────────╢
 ║ Files:                               ║
-║   sample_a.txt (ID: archive-7e4a, 30 B, 1d+3p strands, 4.0×)
+║   sample_a.txt (ID: archive-2f8d, 30 B, 1d+3p strands, 4.0×)
 ╚══════════════════════════════════════╝
 
 

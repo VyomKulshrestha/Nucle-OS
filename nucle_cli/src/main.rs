@@ -1490,10 +1490,7 @@ fn cmd_block(action: BlockAction, json: bool) {
 /// rate is low enough that doubling it is immaterial, and Pristine
 /// doubled is still zero.
 fn realistic_synth_seq_pair(profile: HardwareProfile) -> (HardwareProfile, HardwareProfile) {
-    match profile {
-        HardwareProfile::Illumina | HardwareProfile::OxfordNanopore => (HardwareProfile::TwistBioscience, profile),
-        other => (other, other),
-    }
+    nucle_synth::noise::realistic_stage_pair(profile)
 }
 
 fn cmd_simulate(file: &str, profile: &str, coverage: usize, json: bool) {

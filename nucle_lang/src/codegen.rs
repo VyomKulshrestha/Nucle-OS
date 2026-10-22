@@ -132,15 +132,7 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
 
             if *simulate {
                 os.simulate_noise = true;
-                os.noise_config = SimulationConfig {
-                    seed: 42,
-                    coverage_depth: *coverage as u32,
-                    synthesis_profile: profile_to_hardware(*profile),
-                    sequencing_profile: profile_to_hardware(*profile),
-                    simulate_decay: false,
-                    decay_rate: 0.0,
-                    storage_time: 0.0,
-                };
+                os.noise_config = SimulationConfig::realistic(profile_to_hardware(*profile), *coverage as u32, 42);
             }
 
             let codec_kind = codec_to_vfs_kind(*codec);
@@ -540,15 +532,7 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
 
     if op.simulate {
         os.simulate_noise = true;
-        os.noise_config = SimulationConfig {
-            seed: 42,
-            coverage_depth: coverage as u32,
-            synthesis_profile: profile_to_hardware(pool.profile),
-            sequencing_profile: profile_to_hardware(pool.profile),
-            simulate_decay: false,
-            decay_rate: 0.0,
-            storage_time: 0.0,
-        };
+        os.noise_config = SimulationConfig::realistic(profile_to_hardware(pool.profile), coverage as u32, 42);
     }
 
     let codec_kind = codec_to_vfs_kind(pool.codec);

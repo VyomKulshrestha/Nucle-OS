@@ -110,6 +110,14 @@ fn execution_output_matches_pre_result_baseline() {
     let names = baseline_file_names(&expected_raw);
     assert!(!names.is_empty(), "expected the baseline fixture to list at least one file");
 
+    // An intentional change to execution output regenerates the fixture
+    // over the same file list: NUCLE_REGENERATE_BASELINE=1 cargo test.
+    if std::env::var_os("NUCLE_REGENERATE_BASELINE").is_some() {
+        let raw: String = names.iter().map(|name| render(&dir.join(name))).collect();
+        std::fs::write(&baseline_path, raw).expect("write regenerated baseline");
+        return;
+    }
+
     let actual: String = names.iter().map(|name| normalize(&render(&dir.join(name)))).collect();
 
     assert_eq!(

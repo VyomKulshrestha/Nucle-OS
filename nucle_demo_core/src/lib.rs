@@ -151,15 +151,7 @@ pub fn estimate_recovery_probability(
 
     let mut successes = 0u64;
     for t in 0..trials {
-        let config = SimulationConfig {
-            seed: 9000 + t,
-            coverage_depth: RECOVERY_COVERAGE_DEPTH,
-            synthesis_profile: profile,
-            sequencing_profile: profile,
-            simulate_decay: false,
-            decay_rate: 0.0,
-            storage_time: 0.0,
-        };
+        let config = SimulationConfig::realistic(profile, RECOVERY_COVERAGE_DEPTH, 9000 + t);
         let data_sim = NoiseEngine::new(config.clone()).simulate(&data_collection);
         let data_groups = grouped_reads(&data_sim, RECOVERY_COVERAGE_DEPTH, encoded.strands.len());
 
@@ -300,15 +292,7 @@ pub fn run_pipeline_demo(req: PipelineRequest) -> Result<PipelineResponse, Strin
 
     let combined = StrandCollection::from_strands(all_strands.clone(), data.len());
 
-    let config = SimulationConfig {
-        seed: 42,
-        coverage_depth: 1,
-        synthesis_profile: profile,
-        sequencing_profile: profile,
-        simulate_decay: false,
-        decay_rate: 0.0,
-        storage_time: 0.0,
-    };
+    let config = SimulationConfig::realistic(profile, 1, 42);
     let sim_result = NoiseEngine::new(config).simulate(&combined);
     let survival_rate = sim_result.survival_rate();
     let avg_error_rate = sim_result.avg_error_rate();

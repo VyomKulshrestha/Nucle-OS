@@ -92,6 +92,22 @@ impl SimulationConfig {
         }
     }
 
+    /// A realistic run for a pool declared with `profile`: synthesis and
+    /// sequencing come from [`realistic_stage_pair`], at the given coverage
+    /// and seed, with no decay.
+    pub fn realistic(profile: HardwareProfile, coverage_depth: u32, seed: u64) -> Self {
+        let (synthesis_profile, sequencing_profile) = realistic_stage_pair(profile);
+        Self {
+            seed,
+            coverage_depth,
+            synthesis_profile,
+            sequencing_profile,
+            simulate_decay: false,
+            decay_rate: 0.0,
+            storage_time: 0.0,
+        }
+    }
+
     /// Set coverage depth.
     pub fn with_coverage(mut self, depth: u32) -> Self {
         self.coverage_depth = depth;
@@ -102,6 +118,23 @@ impl SimulationConfig {
     pub fn with_seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
+    }
+}
+
+/// The (synthesis, sequencing) profiles a real run uses for a pool whose
+/// declared profile is `profile`.
+///
+/// Illumina and Oxford Nanopore are sequencers: nobody synthesizes DNA on
+/// them, so those pools are written by Twist and read by the named
+/// instrument. Applying a sequencer's error model to both stages doubles
+/// its per-base error rate (Nanopore would simulate at roughly 14% instead
+/// of roughly 7%). Every other profile is used for both stages; Twist's
+/// and IDT's own rates are low enough that applying them twice is
+/// immaterial, and Pristine twice is still zero.
+pub fn realistic_stage_pair(profile: HardwareProfile) -> (HardwareProfile, HardwareProfile) {
+    match profile {
+        HardwareProfile::Illumina | HardwareProfile::OxfordNanopore => (HardwareProfile::TwistBioscience, profile),
+        other => (other, other),
     }
 }
 
@@ -345,6 +378,41 @@ mod tests {
             42,
         );
         assert_eq!(result.input_strand_count, 10);
+    }
+
+    #[test]
+    fn sequencer_profiles_are_written_by_twist_and_read_by_the_sequencer() {
+        assert_eq!(
+            realistic_stage_pair(HardwareProfile::OxfordNanopore),
+            (HardwareProfile::TwistBioscience, HardwareProfile::OxfordNanopore)
+        );
+        assert_eq!(
+            realistic_stage_pair(HardwareProfile::Illumina),
+            (HardwareProfile::TwistBioscience, HardwareProfile::Illumina)
+        );
+        assert_eq!(realistic_stage_pair(HardwareProfile::Idt), (HardwareProfile::Idt, HardwareProfile::Idt));
+        let config = SimulationConfig::realistic(HardwareProfile::OxfordNanopore, 7, 3);
+        assert_eq!(config.synthesis_profile, HardwareProfile::TwistBioscience);
+        assert_eq!(config.coverage_depth, 7);
+        assert_eq!(config.seed, 3);
+    }
+
+    #[test]
+    fn realistic_nanopore_noise_is_half_the_doubled_rate() {
+        let collection = make_test_collection();
+        let doubled = SimulationConfig {
+            synthesis_profile: HardwareProfile::OxfordNanopore,
+            sequencing_profile: HardwareProfile::OxfordNanopore,
+            ..SimulationConfig::default()
+        }
+        .with_coverage(40);
+        let realistic = SimulationConfig::realistic(HardwareProfile::OxfordNanopore, 40, 42);
+        let doubled_rate = NoiseEngine::new(doubled).simulate(&collection).avg_error_rate();
+        let realistic_rate = NoiseEngine::new(realistic).simulate(&collection).avg_error_rate();
+        assert!(
+            realistic_rate < doubled_rate * 0.75,
+            "realistic {realistic_rate} vs doubled {doubled_rate}"
+        );
     }
 
     #[test]
