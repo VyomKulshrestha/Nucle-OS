@@ -2207,8 +2207,15 @@ impl TypeChecker {
             }
         }
 
+        // A function body sees the program's compile-time constants
+        // declared before it -- simulated and recovered pools, strands,
+        // sequences -- but not top-level run-time values, because each
+        // call starts from an empty run-time environment.
         let mut body_checker = TypeChecker {
             pools: self.pools.clone(),
+            pool_bindings: self.pool_bindings.clone(),
+            strands: self.strands.clone(),
+            sequences: self.sequences.clone(),
             functions: self.functions.clone(),
             enums: self.enums.clone(),
             enum_bindings: self.enum_bindings.clone(),

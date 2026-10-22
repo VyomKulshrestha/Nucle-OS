@@ -1,0 +1,282 @@
+>// Packages are real code: importing a function also brings the pools and
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// recovery profiles it depends on, and the imported function runs against
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>// whatever pool the caller passes it.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>
+>import { archive_with_guarantee, medical_archive, illumina_recovery } from "nuclescript/presets"
+#^^^^^^ source.nuclescript keyword.control.nuclescript
+#      ^^^ source.nuclescript
+#         ^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                               ^^ source.nuclescript
+#                                 ^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                ^^ source.nuclescript
+#                                                  ^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                   ^^^ source.nuclescript
+#                                                                      ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                                          ^ source.nuclescript
+#                                                                           ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                            ^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                               ^ source.nuclescript string.quoted.double.nuclescript
+>
+>import { recover_with_consensus, recovery_consensus_20x } from "nuclescript/recovery"
+#^^^^^^ source.nuclescript keyword.control.nuclescript
+#      ^^^ source.nuclescript
+#         ^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                               ^^ source.nuclescript
+#                                 ^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                       ^^^ source.nuclescript
+#                                                          ^^^^ source.nuclescript keyword.control.nuclescript
+#                                                              ^ source.nuclescript
+#                                                               ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                ^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                    ^ source.nuclescript string.quoted.double.nuclescript
+>
+>import { illumina_standard as clinic } from "nuclescript/profiles"
+#^^^^^^ source.nuclescript keyword.control.nuclescript
+#      ^^^ source.nuclescript
+#         ^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                          ^ source.nuclescript
+#                           ^^ source.nuclescript keyword.control.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                    ^^^ source.nuclescript
+#                                       ^^^^ source.nuclescript keyword.control.nuclescript
+#                                           ^ source.nuclescript
+#                                            ^ source.nuclescript string.quoted.double.nuclescript
+#                                             ^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                 ^ source.nuclescript string.quoted.double.nuclescript
+>
+>enum Attempt {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^^^^^^^ source.nuclescript variable.other.nuclescript
+#            ^^^ source.nuclescript
+>    Direct,
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript variable.other.nuclescript
+#          ^^ source.nuclescript
+>    ViaPreset(Str),
+#^^^^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#             ^ source.nuclescript
+#              ^^^ source.nuclescript storage.type.nuclescript
+#                 ^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>/// Store directly into the clinic pool, or go through the preset's
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// guaranteed archive function, which stores into the pool it is handed
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>/// and checks the recovery profile it is given.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>fn archive(file: File, attempt: Attempt) returns Result<DnaFile, Str> {
+#^^ source.nuclescript keyword.control.nuclescript
+#  ^ source.nuclescript
+#   ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#          ^ source.nuclescript
+#           ^^^^ source.nuclescript variable.other.nuclescript
+#               ^^ source.nuclescript
+#                 ^^^^ source.nuclescript storage.type.nuclescript
+#                     ^^ source.nuclescript
+#                       ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                              ^^ source.nuclescript
+#                                ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                       ^^ source.nuclescript
+#                                         ^^^^^^^ source.nuclescript keyword.control.nuclescript
+#                                                ^ source.nuclescript
+#                                                 ^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                       ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                        ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                                                               ^^ source.nuclescript
+#                                                                 ^^^ source.nuclescript storage.type.nuclescript
+#                                                                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                                                     ^^^ source.nuclescript
+>    let saved: DnaFile = match attempt {
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                      ^ source.nuclescript
+#                       ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^^ source.nuclescript keyword.control.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                      ^^^ source.nuclescript
+>        Direct => (store file into clinic)?,
+#^^^^^^^^ source.nuclescript
+#        ^^^^^^ source.nuclescript variable.other.nuclescript
+#              ^ source.nuclescript
+#               ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                 ^^ source.nuclescript
+#                   ^^^^^ source.nuclescript keyword.control.nuclescript
+#                        ^ source.nuclescript
+#                         ^^^^ source.nuclescript variable.other.nuclescript
+#                             ^ source.nuclescript
+#                              ^^^^ source.nuclescript keyword.control.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^ source.nuclescript keyword.operator.try.nuclescript
+#                                           ^^ source.nuclescript
+>        ViaPreset(reason) => archive_with_guarantee(file, medical_archive, illumina_recovery),
+#^^^^^^^^ source.nuclescript
+#        ^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                 ^ source.nuclescript
+#                  ^^^^^^ source.nuclescript variable.other.nuclescript
+#                        ^^ source.nuclescript
+#                          ^^ source.nuclescript keyword.operator.match-arm.nuclescript
+#                            ^ source.nuclescript
+#                             ^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                   ^ source.nuclescript
+#                                                    ^^^^ source.nuclescript variable.other.nuclescript
+#                                                        ^^ source.nuclescript
+#                                                          ^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                         ^^ source.nuclescript
+#                                                                           ^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                                            ^^^ source.nuclescript
+>    }
+#^^^^^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>let first: Result<DnaFile, Str> = archive("sample_a.txt", Attempt::Direct)
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^ source.nuclescript variable.other.nuclescript
+#         ^^ source.nuclescript
+#           ^^^^^^ source.nuclescript storage.type.nuclescript
+#                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                  ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                         ^^ source.nuclescript
+#                           ^^^ source.nuclescript storage.type.nuclescript
+#                              ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                               ^ source.nuclescript
+#                                ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                 ^ source.nuclescript
+#                                  ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                         ^ source.nuclescript
+#                                          ^ source.nuclescript string.quoted.double.nuclescript
+#                                           ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                       ^ source.nuclescript string.quoted.double.nuclescript
+#                                                        ^^ source.nuclescript
+#                                                          ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                 ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                                   ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                         ^^ source.nuclescript
+>
+>let second: Result<DnaFile, Str> = archive("sample_b.txt", Attempt::ViaPreset("compliance"))
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^ source.nuclescript variable.other.nuclescript
+#          ^^ source.nuclescript
+#            ^^^^^^ source.nuclescript storage.type.nuclescript
+#                  ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                   ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                          ^^ source.nuclescript
+#                            ^^^ source.nuclescript storage.type.nuclescript
+#                               ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                ^ source.nuclescript
+#                                 ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                          ^ source.nuclescript
+#                                           ^ source.nuclescript string.quoted.double.nuclescript
+#                                            ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                        ^ source.nuclescript string.quoted.double.nuclescript
+#                                                         ^^ source.nuclescript
+#                                                           ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                  ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                                    ^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                                             ^ source.nuclescript
+#                                                                              ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                               ^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                         ^ source.nuclescript string.quoted.double.nuclescript
+#                                                                                          ^^^ source.nuclescript
+>
+>// Imported functions check their pool and recovery arguments like local ones.
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript comment.line.double-slash.nuclescript
+>let recovered: Pool<Recovered> = recover_with_consensus(clinic, recovery_consensus_20x)
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#             ^^ source.nuclescript
+#               ^^^^ source.nuclescript storage.type.nuclescript
+#                   ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                    ^^^^^^^^^ source.nuclescript support.constant.pool-state.nuclescript
+#                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                              ^ source.nuclescript
+#                               ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                ^ source.nuclescript
+#                                 ^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                                       ^ source.nuclescript
+#                                                        ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                              ^^ source.nuclescript
+#                                                                ^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                                                      ^^ source.nuclescript
+>
+>for f in ["sample_c.txt", "sample_d.txt"] {
+#^^^ source.nuclescript keyword.control.nuclescript
+#   ^ source.nuclescript
+#    ^ source.nuclescript variable.other.nuclescript
+#     ^ source.nuclescript
+#      ^^ source.nuclescript keyword.control.nuclescript
+#        ^^ source.nuclescript
+#          ^ source.nuclescript string.quoted.double.nuclescript
+#           ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                       ^ source.nuclescript string.quoted.double.nuclescript
+#                        ^^ source.nuclescript
+#                          ^ source.nuclescript string.quoted.double.nuclescript
+#                           ^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                       ^ source.nuclescript string.quoted.double.nuclescript
+#                                        ^^^^ source.nuclescript
+>    let copy: Result<DnaFile, Str> = archive(f, Attempt::Direct)
+#^^^^ source.nuclescript
+#    ^^^ source.nuclescript keyword.control.nuclescript
+#       ^ source.nuclescript
+#        ^^^^ source.nuclescript variable.other.nuclescript
+#            ^^ source.nuclescript
+#              ^^^^^^ source.nuclescript storage.type.nuclescript
+#                    ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                     ^^^^^^^ source.nuclescript storage.type.nuclescript
+#                            ^^ source.nuclescript
+#                              ^^^ source.nuclescript storage.type.nuclescript
+#                                 ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                                  ^ source.nuclescript
+#                                   ^ source.nuclescript keyword.operator.assignment.nuclescript
+#                                    ^ source.nuclescript
+#                                     ^^^^^^^ source.nuclescript entity.name.function.nuclescript
+#                                            ^ source.nuclescript
+#                                             ^ source.nuclescript variable.other.nuclescript
+#                                              ^^ source.nuclescript
+#                                                ^^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                       ^^ source.nuclescript keyword.operator.scope.nuclescript
+#                                                         ^^^^^^ source.nuclescript variable.other.nuclescript
+#                                                               ^^ source.nuclescript
+>}
+#^^ source.nuclescript
+>
+>test "imported recovery profiles really reduce noise" {
+#^^^^ source.nuclescript keyword.control.nuclescript
+#    ^ source.nuclescript
+#     ^ source.nuclescript string.quoted.double.nuclescript
+#      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ source.nuclescript string.quoted.double.nuclescript
+#                                                    ^ source.nuclescript string.quoted.double.nuclescript
+#                                                     ^^^ source.nuclescript
+>    assert illumina_recovery < 0.35
+#^^^^ source.nuclescript
+#    ^^^^^^ source.nuclescript keyword.control.nuclescript
+#          ^ source.nuclescript
+#           ^^^^^^^^^^^^^^^^^ source.nuclescript variable.other.nuclescript
+#                            ^ source.nuclescript
+#                             ^ source.nuclescript keyword.operator.comparison.nuclescript
+#                              ^ source.nuclescript
+#                               ^^^^ source.nuclescript constant.numeric.nuclescript
+>}
+#^^ source.nuclescript
+>

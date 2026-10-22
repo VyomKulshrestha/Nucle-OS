@@ -760,7 +760,11 @@ binds `P` to that pool's profile. Inside the function, `store`, `delete` and
 `retrieve` against the parameter's name reach the pool the caller passed. A
 `Recovery` parameter accepts a recovered pool (`Pool<Recovered>`), the shape
 packages export as recovery profiles. A `let` of function type bound from a
-call (`let f: Fn() -> T = make_f()`) is callable as `f()`.
+call (`let f: Fn() -> T = make_f()`) is callable as `f()`. A function body
+sees the compile-time constants declared before it at top level (simulated
+and recovered pools, strands, sequences), so it can pass a package's
+recovery profile along; top-level run-time values such as a stored
+`Result<DnaFile, Str>` are not visible inside it.
 
 Functions and closures may call themselves. Run-time nesting is capped at 64
 calls: recursion that reaches a base case stays far below it, and recursion

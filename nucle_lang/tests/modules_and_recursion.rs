@@ -148,3 +148,19 @@ fn unbounded_recursion_stops_with_an_error_instead_of_overflowing() {
     let err = execute_program(&mut NucleOS::new(16), &mut plan, &dir).unwrap_err();
     assert!(err.contains("exceeded the maximum call depth"), "{err}");
 }
+
+#[test]
+fn a_function_body_sees_top_level_compile_time_pools_but_not_runtime_values() {
+    let ok = "import { archive_with_guarantee, medical_archive, illumina_recovery } from \"nuclescript/presets\"\n\
+              fn keep(f: File) returns DnaFile {\n\
+              \x20   let saved: DnaFile = archive_with_guarantee(f, medical_archive, illumina_recovery)\n\
+              }\n";
+    assert!(errors(ok).is_empty(), "{:?}", errors(ok));
+
+    let runtime_value = "pool p: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }\n\
+                         let stored: Result<DnaFile, Str> = store \"a.txt\" into p\n\
+                         fn peek() returns Result<DnaFile, Str> {\n\
+                         \x20   let again: Result<DnaFile, Str> = stored\n\
+                         }\n";
+    assert!(!errors(runtime_value).is_empty(), "a run-time top-level value must not be visible in a function");
+}

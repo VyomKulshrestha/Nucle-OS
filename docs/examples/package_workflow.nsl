@@ -1,0 +1,39 @@
+// Packages are real code: importing a function also brings the pools and
+// recovery profiles it depends on, and the imported function runs against
+// whatever pool the caller passes it.
+
+import { archive_with_guarantee, medical_archive, illumina_recovery } from "nuclescript/presets"
+
+import { recover_with_consensus, recovery_consensus_20x } from "nuclescript/recovery"
+
+import { illumina_standard as clinic } from "nuclescript/profiles"
+
+enum Attempt {
+    Direct,
+    ViaPreset(Str),
+}
+
+/// Store directly into the clinic pool, or go through the preset's
+/// guaranteed archive function, which stores into the pool it is handed
+/// and checks the recovery profile it is given.
+fn archive(file: File, attempt: Attempt) returns Result<DnaFile, Str> {
+    let saved: DnaFile = match attempt {
+        Direct => (store file into clinic)?,
+        ViaPreset(reason) => archive_with_guarantee(file, medical_archive, illumina_recovery),
+    }
+}
+
+let first: Result<DnaFile, Str> = archive("sample_a.txt", Attempt::Direct)
+
+let second: Result<DnaFile, Str> = archive("sample_b.txt", Attempt::ViaPreset("compliance"))
+
+// Imported functions check their pool and recovery arguments like local ones.
+let recovered: Pool<Recovered> = recover_with_consensus(clinic, recovery_consensus_20x)
+
+for f in ["sample_c.txt", "sample_d.txt"] {
+    let copy: Result<DnaFile, Str> = archive(f, Attempt::Direct)
+}
+
+test "imported recovery profiles really reduce noise" {
+    assert illumina_recovery < 0.35
+}
