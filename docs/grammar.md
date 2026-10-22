@@ -294,6 +294,16 @@ arbitrary loss is guaranteed only within the separate outer Reed–Solomon bound
 droplets must form a full-rank equation set. See the runnable
 [`fountain_roundtrip.nsl`](examples/fountain_roundtrip.nsl) example.
 
+### Pools are namespaces
+
+Each declared pool is its own namespace in the VFS: `store "report.csv" into
+hot` writes `hot/report.csv`. Storing the same file into `hot` and `cold` keeps
+two independent replicas, each with its own codec, redundancy and version
+history, rather than making the second write a new version of the first.
+`delete "report.csv" from hot` removes only `hot/report.csv`, and `retrieve
+from cold where { ... }` returns only files stored in `cold`. Run output and
+`DnaFile` values carry the full `<pool>/<file>` path.
+
 ---
 
 ## Control Flow (`if` / `for`)

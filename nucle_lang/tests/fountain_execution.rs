@@ -65,7 +65,7 @@ let saved: Result<DnaFile, Str> = store "direct.bin" into archive
     assert_no_unsupported_codec_diagnostic(&plan);
     let mut os = NucleOS::new(10);
     execute_program(&mut os, &mut plan, &dir).expect("Fountain store must execute");
-    assert_fountain_file(&mut os, "direct.bin", data);
+    assert_fountain_file(&mut os, "archive/direct.bin", data);
 
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -103,7 +103,7 @@ pipeline fountain_backup {
         "pipeline did not report an exact roundtrip: {:?}",
         report.steps
     );
-    assert_fountain_file(&mut os, "pipeline.bin", data);
+    assert_fountain_file(&mut os, "archive/pipeline.bin", data);
 
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -130,7 +130,7 @@ store "boundary.bin" into archive
 
     let file = os
         .catalog
-        .get_by_name("boundary.bin")
+        .get_by_name("archive/boundary.bin")
         .expect("Fountain store must create a VFS file")
         .clone();
     let config = file
@@ -157,7 +157,7 @@ store "boundary.bin" into archive
         assert!(os.pool.remove_strand(id));
     }
     assert_eq!(
-        os.dna_read("boundary.bin").unwrap(),
+        os.dna_read("archive/boundary.bin").unwrap(),
         data,
         "outer RS must recover exactly at its four-erasure boundary"
     );
@@ -170,7 +170,7 @@ store "boundary.bin" into archive
     }
     assert!(data_ids.len() < segment_count);
 
-    let error = os.dna_read("boundary.bin").unwrap_err();
+    let error = os.dna_read("archive/boundary.bin").unwrap_err();
     assert!(
         error.contains("codec decoding failed"),
         "a rank-impossible Fountain survivor set must fail in the real codec path, got: {error}"

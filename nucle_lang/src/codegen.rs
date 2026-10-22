@@ -125,10 +125,7 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
             let path = resolve_source_path(base_dir, file);
             let data = std::fs::read(&path)
                 .map_err(|err| format!("failed to read '{}': {}", path.display(), err))?;
-            let filename = Path::new(file)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or(file);
+            let filename = pool_path(pool, file);
 
             if *simulate {
                 os.simulate_noise = true;
@@ -136,11 +133,11 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
             }
 
             let codec_kind = codec_to_vfs_kind(*codec);
-            let result = os.dna_write_with_codec(filename, &data, *redundancy, codec_kind)?;
+            let result = os.dna_write_with_codec(&filename, &data, *redundancy, codec_kind)?;
             steps.push(format!("✓ store into {}: {}", pool, result));
 
             if *verify_roundtrip {
-                let recovered = os.dna_read(filename)?;
+                let recovered = os.dna_read(&filename)?;
                 if recovered == data {
                     steps.push(format!("✓ verify roundtrip: '{}' recovered exactly", filename));
                 } else {
@@ -149,7 +146,7 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
             }
         }
         VfsCall::Retrieve { pool, query } => {
-            let results = os.dna_search(query, 10);
+            let results = search_pool(os, pool, query, 10);
             if results.is_empty() {
                 steps.push(format!("- retrieve from {} where {}: no matches", pool, query));
             } else {
@@ -160,11 +157,8 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
             }
         }
         VfsCall::Delete { file, pool } => {
-            let filename = Path::new(file)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or(file);
-            let result = os.dna_delete(filename)?;
+            let filename = pool_path(pool, file);
+            let result = os.dna_delete(&filename)?;
             steps.push(format!(
                 "delete from {}: removed '{}' ({} strands)",
                 pool, result.filename, result.strands_removed
@@ -357,8 +351,12 @@ fn eval_expr(
             None => EvalOutcome::Value(Value::EnumInstance { enum_name: enum_name.clone(), variant: variant.clone(), payload: None }),
         },
         // Never Result-shaped (see the type's own doc comment in
-        // ast.rs) -- nothing meaningful to produce.
-        Expr::RetrieveExpr(_) => EvalOutcome::Value(Value::Unit),
+        // ast.rs), so there is no value to produce, but the search still
+        // runs and is logged exactly like the statement form.
+        Expr::RetrieveExpr(op) => {
+            exec_retrieve_stmt(op, os, steps);
+            EvalOutcome::Value(Value::Unit)
+        }
         Expr::Variable(name) => match env.get(name) {
             Some(value) => EvalOutcome::Value(value.clone()),
             // Unreachable post-typecheck (E-VARIABLE-UNDECLARED would
@@ -506,6 +504,29 @@ fn resolve_file_arg<'a>(file: &'a str, env: &'a HashMap<String, Value>) -> &'a s
     }
 }
 
+/// The VFS path a pool's file lives at: `<pool>/<file name>`. Each
+/// declared pool is its own namespace, so storing `report.csv` into `hot`
+/// and into `cold` keeps two independent replicas rather than making the
+/// second a new version of the first, and `delete`/`retrieve` only ever
+/// touch the pool they name.
+fn pool_path(pool: &str, file: &str) -> String {
+    let name = Path::new(file).file_name().and_then(|n| n.to_str()).unwrap_or(file);
+    format!("{pool}/{name}")
+}
+
+/// Search hits whose file lives in `pool` (see [`pool_path`]), best first,
+/// at most `top_k` of them, rendered for the step log.
+fn search_pool(os: &NucleOS, pool: &str, query: &str, top_k: usize) -> Vec<String> {
+    let prefix = format!("{pool}/");
+    let everything = os.dna_list("").len().max(top_k);
+    os.dna_search(query, everything)
+        .into_iter()
+        .filter(|r| r.meta.as_ref().is_some_and(|m| m.filename.starts_with(&prefix)))
+        .take(top_k)
+        .map(|r| r.to_string())
+        .collect()
+}
+
 fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<String, PoolDecl>, os: &mut NucleOS, base_dir: &Path, steps: &mut Vec<String>) -> EvalOutcome {
     let Some(pool) = pools.get(&op.pool) else {
         // Unreachable for a program that passed type-checking
@@ -528,7 +549,7 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
             return EvalOutcome::Value(Value::Result(Err(msg)));
         }
     };
-    let filename = Path::new(file).file_name().and_then(|name| name.to_str()).unwrap_or(file);
+    let filename = pool_path(&op.pool, file);
 
     if op.simulate {
         os.simulate_noise = true;
@@ -537,7 +558,7 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
 
     let codec_kind = codec_to_vfs_kind(pool.codec);
 
-    match os.dna_write_with_codec(filename, &data, redundancy, codec_kind) {
+    match os.dna_write_with_codec(&filename, &data, redundancy, codec_kind) {
         Ok(result) => {
             steps.push(format!("✓ store into {}: {}", op.pool, result));
             EvalOutcome::Value(Value::Result(Ok(Box::new(Value::DnaFile { filename: result.filename, pool: op.pool.clone() }))))
@@ -554,8 +575,8 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
 /// `eval_store_expr` has to its `VfsCall::Store` arm.
 fn eval_delete_expr(op: &DeleteOp, env: &HashMap<String, Value>, os: &mut NucleOS, steps: &mut Vec<String>) -> EvalOutcome {
     let file = resolve_file_arg(&op.file, env);
-    let filename = Path::new(file).file_name().and_then(|name| name.to_str()).unwrap_or(file);
-    match os.dna_delete(filename) {
+    let filename = pool_path(&op.pool, file);
+    match os.dna_delete(&filename) {
         Ok(result) => {
             steps.push(format!("delete from {}: removed '{}' ({} strands)", op.pool, result.filename, result.strands_removed));
             EvalOutcome::Value(Value::Result(Ok(Box::new(Value::Deleted { filename: result.filename, strands_removed: result.strands_removed }))))
@@ -692,7 +713,7 @@ fn call_closure(
 /// comment in ast.rs), so there's nothing to propagate.
 fn exec_retrieve_stmt(op: &RetrieveOp, os: &mut NucleOS, steps: &mut Vec<String>) {
     let query = crate::middle::query_to_mir_search(&op.query);
-    let results = os.dna_search(&query, 10);
+    let results = search_pool(os, &op.pool, &query, 10);
     if results.is_empty() {
         steps.push(format!("- retrieve from {} where {}: no matches", op.pool, query));
     } else {
