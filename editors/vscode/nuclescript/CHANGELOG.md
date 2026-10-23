@@ -4,6 +4,18 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.17]
+
+- `codec: Hedges` pools and `encode ... using hedges` pipelines are
+  highlighted and run: Run File stores the file with the HEDGES codec,
+  which decodes each sequencing read on its own through insertions and
+  deletions and writes its Reed-Solomon parity as HEDGES strands too.
+- `storage: silica at 4C` (alias `sio2`) is highlighted, and retention
+  requirements on silica pools are checked against the silica-particle
+  decay kinetics of Grass et al. 2015.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.46 runtime, the first that knows both.
+
 ## [0.1.16]
 
 - Run File and diagnostics understand real package imports: an imported

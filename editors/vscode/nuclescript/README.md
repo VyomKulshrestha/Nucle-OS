@@ -56,6 +56,12 @@ NucleScript, the declarative DNA-storage operations language for
   checks the requirement against the strands actually written using
   published DNA decay kinetics, and an unmet one is a catchable `Err`.
   Highlighting covers the new keywords, media and `4C`/`1000y` literals.
+  `storage: silica at 4C` uses the silica-particle kinetics of Grass et
+  al. 2015.
+- **HEDGES storage** — `codec: Hedges` pools and `encode ... using hedges`
+  pipelines store files with the HEDGES codec (Press et al. 2020), which
+  decodes each sequencing read on its own, insertions and deletions
+  included, and keeps its Reed-Solomon parity as HEDGES strands.
 - **Typed IDT oPools support** — `IDT`, `idtopools`, and `idt-opools` are
   highlighted aliases for the same `Pool<IDT, E>` state, with the compiler's
   0.05% error model and exact-profile vendor preflight.
