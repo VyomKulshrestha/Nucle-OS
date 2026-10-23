@@ -885,8 +885,8 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
                 <div class="legend">
                     <span><span class="swatch" style="background: var(--signal-dim); border:1px solid var(--signal);"></span> Data strand</span>
                     <span><span class="swatch" style="background: var(--parity-dim); border:1px solid var(--parity);"></span> Parity strand</span>
-                    <span><span class="swatch" style="background: var(--warn-dim); border:1px solid var(--warn);"></span> Corrupted</span>
-                    <span><span class="swatch" style="background: transparent; border:1px dashed var(--danger);"></span> Dropped</span>
+                    <span><span class="swatch" style="background: var(--warn-dim); border:1px solid var(--warn);"></span> Sample read has errors</span>
+                    <span><span class="swatch" style="background: transparent; border:1px dashed var(--danger);"></span> No read survived</span>
                 </div>
 
                 <div class="stage-columns">
@@ -1282,12 +1282,13 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
                     const block = document.createElement('div');
                     block.className = 'strand-block ' + strandClass(s, 'noise');
                     block.textContent = strandLabel(s);
-                    block.title = (s.dropped ? 'DROPPED' : s.corrupted ? `${s.error_count} error(s)` : 'clean')
-                        + '\nAfter noise: ' + s.after_noise.slice(0, 40) + (s.after_noise.length > 40 ? '...' : '');
+                    block.title = (s.dropped ? 'No read survived' : `${s.reads} of ${report.coverage} reads survived; consensus ${s.consensus_exact ? 'exact' : 'still wrong'}`)
+                        + (s.dropped ? '' : '\nSample read: ' + (s.corrupted ? `${s.error_count} error(s)` : 'clean')
+                        + '\n' + s.after_noise.slice(0, 40) + (s.after_noise.length > 40 ? '...' : ''));
                     noiseGrid.appendChild(block);
                     setTimeout(() => block.classList.add('show'), i * 30);
                 });
-                noiseStats.textContent = `Survival: ${(report.survival_rate * 100).toFixed(0)}% · Avg error rate: ${(report.avg_error_rate * 100).toFixed(2)}%`;
+                noiseStats.textContent = `${report.coverage} reads per strand · ${(report.survival_rate * 100).toFixed(0)}% survived · read error ${(report.avg_error_rate * 100).toFixed(2)}% · consensus exact for ${report.consensus_exact} of ${report.strands.length} strands`;
 
                 await sleep(report.strands.length * 30 + 500);
 
@@ -1296,9 +1297,13 @@ let final: Pool<Recovered> = recover_pool(noisy)</textarea>
                 recoveryPanel.className = 'recovery-result ' + (rec.success ? 'success' : 'failure');
                 recoveryPanel.style.cssText = '';
                 if (rec.success) {
-                    recoveryPanel.innerHTML = `<strong>Recovered exactly</strong><br><br>"${escapeHtml(rec.recovered_preview)}"`;
+                    const rebuilt = report.strands.length - report.consensus_exact;
+                    const how = rebuilt === 0
+                        ? `Voting across ${report.coverage} reads fixed every strand.`
+                        : `Voting across ${report.coverage} reads fixed ${report.consensus_exact} of ${report.strands.length} strands; Reed-Solomon rebuilt the other ${rebuilt}.`;
+                    recoveryPanel.innerHTML = `<strong>Recovered exactly</strong><br><br>${how}<br><br>"${escapeHtml(rec.recovered_preview)}"`;
                 } else {
-                    recoveryPanel.innerHTML = `<strong>Recovery failed</strong><br><br>Too many strands were corrupted or dropped for Reed-Solomon + the codec to reconstruct the original data at this redundancy/profile combination. Try increasing redundancy or switching to a lower-error profile.`;
+                    recoveryPanel.innerHTML = `<strong>Recovery failed</strong><br><br>After voting across ${report.coverage} reads per strand, ${report.strands.length - report.consensus_exact} of ${report.strands.length} strands were still wrong or missing, more than Reed-Solomon can rebuild at this redundancy. Try more redundancy or a lower-error profile.`;
                 }
             } catch (err) {
                 recoveryPanel.className = 'recovery-result failure';

@@ -107,11 +107,21 @@ pub fn consensus_then_rs_decode(
     parity_groups: &[Vec<DnaStrand>],
     rs_config: RsConfig,
 ) -> Vec<DnaStrand> {
-    let consensus_data: Vec<Option<DnaStrand>> =
-        vote_groups(data_groups).into_iter().map(|r| r.map(|r| r.sequence)).collect();
-    let consensus_parity: Vec<Option<DnaStrand>> =
-        vote_groups(parity_groups).into_iter().map(|r| r.map(|r| r.sequence)).collect();
-    rs_decode_from_sequences(&consensus_data, &consensus_parity, rs_config, &HashSet::new(), &HashSet::new())
+    rs_decode_voted(&vote_groups(data_groups), &vote_groups(parity_groups), rs_config)
+}
+
+/// The Reed-Solomon half of [`consensus_then_rs_decode`], for callers that
+/// already ran [`vote_groups`] and want to look at the votes too (a group
+/// with no vote is an erasure).
+pub fn rs_decode_voted(
+    voted_data: &[Option<ConsensusResult>],
+    voted_parity: &[Option<ConsensusResult>],
+    rs_config: RsConfig,
+) -> Vec<DnaStrand> {
+    let sequences = |voted: &[Option<ConsensusResult>]| -> Vec<Option<DnaStrand>> {
+        voted.iter().map(|r| r.as_ref().map(|r| r.sequence.clone())).collect()
+    };
+    rs_decode_from_sequences(&sequences(voted_data), &sequences(voted_parity), rs_config, &HashSet::new(), &HashSet::new())
 }
 
 /// Consensus-vote every group, then length-polish the groups whose vote

@@ -1046,8 +1046,11 @@ reimplemented math, no mocked data):
   recovery estimate, not a lookup table.
 - **Pipeline Visualizer** — encodes real input through the actual
   codec/ECC/noise engine and animates each strand through
-  encode → synthesize/sequence (noise) → recover, including honest failures
-  when redundancy/profile can't reconstruct the data.
+  encode → synthesize/sequence (noise) → recover. Each strand is read 10
+  times, voted to a consensus and then Reed-Solomon decoded, as `dna_read`
+  does, and the result says how many strands the vote fixed and how many
+  parity rebuilt. Failures are real ones, when redundancy/profile can't
+  reconstruct the data.
 - **Shelf Life** — pick a storage medium, temperature, parity and copies per
   sequence; the published Arrhenius kinetics behind `nucle shelf-life` give
   the strand half-life, how long the whole file stays readable, a
@@ -1335,8 +1338,8 @@ nucle agent "pool status"
 | `nucle_blockdev` | 25 | The `BlockDevice` contract against both backends; write-once synthesis-array and rewritable-Nanopore behavior; real consensus + Reed-Solomon corruption recovery; batched array latency; blob layout; and atomic, versioned image save/load including backend dimensions, written blocks, Nanopore read counters, write generations, and malformed-image rejection |
 | `nucle-cli` | 71 | Cross-process pool persistence, namespace/concurrency/capacity/audit/encryption/integrity/metrics/tenant behavior; version history/retrieve/delete/rename; real Fountain binary round-trip, migration to/from Fountain with historical reads, cross-process droplet extension, empty/unknown codec rejection; persistent block-device images; complete pinned-workspace doctor checks; fail-closed hardware capability/profile validation and strict config handling; loopback-only Twist/IDT/Illumina submit-and-resume flows; Nanopore credential refusal; plus NucleScript check/explain/fmt/test/run/doc/new/package/hardware flows through the real compiled CLI, and `shelf-life`/`simulate --years` (published half-life, temperature and parity ordering, stored-file strand counts, input rejection, decayed molecules reported), and `nucle reads` on the real MinION sample (labelled and blind scoring, `--limit`, rejection of non-dataset input), and `nucle cost` (nucleotides from a real encoding, prices that scale, more parity costing more, unknown codecs refused), and `nucle bootstrap export|inspect` (the file table recovered from a shuffled FASTA dump with no pool at hand, junk input refused) |
 | `nucle_lsp` | 17 | UTF-16-correct positions, diagnostics, hover, definition, symbols, context-aware completion, references, safe prepare/rename, and semantic tokens, including real Content-Length-framed JSON-RPC integration tests cross-checked against `nucle check`. |
-| `nucle_demo_core` | 7 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection, and the shelf-life calculator (published half-life, monotone recovery curve, temperature ordering, input validation and defaults) |
-| **Total** | **873 discovered tests (872 runnable, 1 ignored; includes 3 doctests)** | **All 872 runnable tests passed with `cargo test --workspace --no-fail-fast` on 23 October 2026.** |
+| `nucle_demo_core` | 8 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection, the pipeline visualizer recovering its default message through Illumina and Nanopore noise with 10 reads per strand (and replaying the same run for the same message), and the shelf-life calculator (published half-life, monotone recovery curve, temperature ordering, input validation and defaults) |
+| **Total** | **874 discovered tests (873 runnable, 1 ignored; includes 3 doctests)** | **All 873 runnable tests passed with `cargo test --workspace --no-fail-fast` on 23 October 2026.** |
 
 ---
 

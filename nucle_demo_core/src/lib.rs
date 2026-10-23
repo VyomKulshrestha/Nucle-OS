@@ -12,10 +12,11 @@ use nucle_codec::benchmark::benchmark_codec;
 use nucle_codec::fountain::{FountainCodec, FountainConfig};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
-use nucle_ecc::pipeline::consensus_then_rs_decode;
+use nucle_ecc::pipeline::{consensus_then_rs_decode, rs_decode_voted, vote_groups};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
 use nucle_synth::noise::{NoiseEngine, SimulationConfig, SimulationResult};
 use nucle_synth::profiles::HardwareProfile;
+use nucle_synth::strand::SynthStrand;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -239,6 +240,9 @@ fn default_redundancy() -> usize {
     2
 }
 
+/// One logical strand in the visualizer. `after_noise`, `corrupted` and
+/// `error_count` describe one sample read of it; `dropped` means none of
+/// its reads survived.
 #[derive(Debug, Serialize)]
 pub struct StrandView {
     pub index: usize,
@@ -248,6 +252,10 @@ pub struct StrandView {
     pub corrupted: bool,
     pub dropped: bool,
     pub error_count: usize,
+    /// Reads of this strand that survived to sequencing.
+    pub reads: usize,
+    /// Whether the consensus of those reads equals the written strand.
+    pub consensus_exact: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -263,10 +271,26 @@ pub struct PipelineResponse {
     pub profile: String,
     pub redundancy: usize,
     pub original_size: usize,
+    /// Reads sequenced per strand.
+    pub coverage: u32,
+    /// Share of all reads that survived.
     pub survival_rate: f64,
+    /// Per-base error rate of the surviving reads.
     pub avg_error_rate: f64,
+    /// Strands whose consensus came out exact, before Reed-Solomon.
+    pub consensus_exact: usize,
     pub strands: Vec<StrandView>,
     pub recovery: RecoveryView,
+}
+
+/// Noise seed for one pipeline run: the same message and settings always
+/// replay the same run, and different messages see different noise.
+fn pipeline_seed(data: &[u8], redundancy: usize) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a
+    for &b in data.iter().chain(&(redundancy as u64).to_le_bytes()) {
+        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
+    h
 }
 
 pub fn run_pipeline_demo(req: PipelineRequest) -> Result<PipelineResponse, String> {
@@ -297,69 +321,61 @@ pub fn run_pipeline_demo(req: PipelineRequest) -> Result<PipelineResponse, Strin
 
     let combined = StrandCollection::from_strands(all_strands.clone(), data.len());
 
-    let config = SimulationConfig::realistic(profile, 1, 42);
+    // Sequence every strand at real coverage and vote, the way dna_read and
+    // the benchmark tab do. A single read per strand leaves Reed-Solomon to
+    // correct every read error as a whole wrong strand, which Illumina- and
+    // Nanopore-grade noise exceeds on nearly every run.
+    let coverage = RECOVERY_COVERAGE_DEPTH;
+    let config = SimulationConfig::realistic(profile, coverage, pipeline_seed(data, req.redundancy));
     let sim_result = NoiseEngine::new(config).simulate(&combined);
-    let survival_rate = sim_result.survival_rate();
-    let avg_error_rate = sim_result.avg_error_rate();
+    let groups = grouped_reads(&sim_result, coverage, all_strands.len());
+    let voted_data = vote_groups(&groups[..data_strand_count]);
+    let voted_parity = vote_groups(&groups[data_strand_count..]);
+    let exact: Vec<bool> = voted_data
+        .iter()
+        .chain(&voted_parity)
+        .zip(&all_strands)
+        .map(|(vote, written)| vote.as_ref().is_some_and(|v| &v.sequence == written))
+        .collect();
 
-    let strands: Vec<StrandView> = sim_result
-        .pool
-        .strands
+    // One sample read per strand for the noise stage: the first that
+    // survived, else the first copy.
+    let survived = |x: &SynthStrand| x.is_intact && !x.is_truncated;
+    let mut samples: Vec<Option<&SynthStrand>> = vec![None; all_strands.len()];
+    for s in &sim_result.pool.strands {
+        if let Some(slot) = samples.get_mut((s.strand_id / u64::from(coverage)) as usize) {
+            if slot.is_none_or(|kept| !survived(kept) && survived(s)) {
+                *slot = Some(s);
+            }
+        }
+    }
+    let strands: Vec<StrandView> = samples
         .iter()
         .enumerate()
-        .map(|(i, s)| StrandView {
+        .map(|(i, sample)| StrandView {
             index: i,
             is_parity: i >= parity_start,
-            original: s.original.as_ref().map(|o| o.to_string()).unwrap_or_default(),
-            after_noise: s.sequence.to_string(),
-            corrupted: s.has_errors(),
-            dropped: !s.is_intact,
-            error_count: s.error_count.total(),
+            original: all_strands[i].to_string(),
+            after_noise: sample.map(|s| s.sequence.to_string()).unwrap_or_default(),
+            corrupted: sample.is_some_and(|s| s.has_errors()),
+            dropped: groups[i].is_empty(),
+            error_count: sample.map_or(0, |s| s.error_count.total()),
+            reads: groups[i].len(),
+            consensus_exact: exact[i],
         })
         .collect();
 
-    // Attempt real recovery: RS-decode using post-noise strands (dropped -> erasure), then codec-decode.
-    let received: Vec<Option<Vec<u8>>> = sim_result
-        .pool
-        .strands
-        .iter()
-        .take(data_strand_count)
-        .map(|s| if s.is_intact { Some(dna_to_bytes(&s.sequence)) } else { None })
-        .collect();
-    // Keep a slot per parity strand (not a dense list of survivors) --
-    // dropping a missing one would shift every later parity strand onto
-    // the wrong codeword position and corrupt the whole stripe's math.
-    let parity_received: Vec<Option<Vec<u8>>> = sim_result
-        .pool
-        .strands
-        .iter()
-        .skip(data_strand_count)
-        .map(|s| if s.is_intact { Some(s.sequence.unpack_bytes()) } else { None })
-        .collect();
-
-    let recovery = if req.redundancy > 0 && parity_received.iter().any(Option::is_some) {
-        let rs = ReedSolomon::new(RsConfig::new(req.redundancy));
-        match rs.decode_block(&received, &parity_received) {
-            Ok(recovered_bytes) => {
-                let recovered_strands: Vec<DnaStrand> = recovered_bytes.iter().map(|b| bytes_to_dna(b)).collect();
-                let collection = StrandCollection::from_strands(recovered_strands, data.len());
-                attempt_final_decode(&codec, &collection)
-            }
-            Err(_) => RecoveryView { attempted: true, success: false, recovered_preview: String::new(), is_text: false },
-        }
-    } else {
-        // No parity requested/available -- decode directly from whatever survived.
-        let direct: Vec<DnaStrand> = sim_result.pool.to_strand_collection(data.len()).strands;
-        let collection = StrandCollection::from_strands(direct, data.len());
-        attempt_final_decode(&codec, &collection)
-    };
+    let recovered = rs_decode_voted(&voted_data, &voted_parity, RsConfig::new(req.redundancy));
+    let recovery = attempt_final_decode(&codec, &StrandCollection::from_strands(recovered, data.len()));
 
     Ok(PipelineResponse {
         profile: req.profile,
         redundancy: req.redundancy,
         original_size: data.len(),
-        survival_rate,
-        avg_error_rate,
+        coverage,
+        survival_rate: sim_result.survival_rate(),
+        avg_error_rate: sim_result.avg_error_rate(),
+        consensus_exact: exact.iter().filter(|&&e| e).count(),
         strands,
         recovery,
     })
@@ -553,6 +569,30 @@ mod tests {
         .unwrap();
         assert!(result.recovery.success);
         assert_eq!(result.recovery.recovered_preview, "hello nucle");
+    }
+
+    /// The visualizer's default message under its default settings used to
+    /// fail every time for both sequencers: one read per strand left
+    /// Reed-Solomon facing more wrong strands than its parity covers.
+    #[test]
+    fn pipeline_demo_recovers_the_default_message_through_sequencer_noise() {
+        for profile in ["illumina", "nanopore"] {
+            let request = || PipelineRequest {
+                data: "Hello NucleOS! DNA storage demo.".into(),
+                profile: profile.into(),
+                redundancy: 3,
+            };
+            let result = run_pipeline_demo(request()).unwrap();
+            assert!(result.recovery.success, "{profile}");
+            assert_eq!(result.recovery.recovered_preview, "Hello NucleOS! DNA storage demo.");
+            assert_eq!(result.coverage, 10);
+            assert!(result.strands.iter().all(|s| s.reads <= 10 && s.dropped == (s.reads == 0)));
+            assert_eq!(result.consensus_exact, result.strands.iter().filter(|s| s.consensus_exact).count());
+            // The same message and settings replay the same run.
+            let again = run_pipeline_demo(request()).unwrap();
+            let reads = |r: &PipelineResponse| r.strands.iter().map(|s| s.after_noise.clone()).collect::<Vec<_>>();
+            assert_eq!(reads(&result), reads(&again), "{profile}");
+        }
     }
 
     #[test]
