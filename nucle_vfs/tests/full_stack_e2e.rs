@@ -646,3 +646,18 @@ fn test_hedges_recovers_through_the_measured_low_fidelity_channel() {
         assert_eq!(os.dna_read("lofi.bin").unwrap(), original, "seed {seed}");
     }
 }
+
+/// Nanopore-grade reads (about 7% error) are too noisy for HEDGES to decode
+/// one at a time, so the read path falls back to the length-aware consensus
+/// of each strand's three reads and decodes it with costs weighted by how
+/// strongly the reads agreed; the file still comes back exactly.
+#[test]
+fn test_hedges_recovers_through_nanopore_noise_at_three_reads_per_strand() {
+    for seed in 0..2 {
+        let noise = SimulationConfig::realistic(HardwareProfile::OxfordNanopore, 3, 50 + seed);
+        let mut os = NucleOS::new(10).with_noise(noise);
+        let original: Vec<u8> = (0..160u8).map(|i| i.wrapping_mul(91)).collect();
+        os.dna_write_with_codec("nano.bin", &original, 6, CodecKind::Hedges).unwrap();
+        assert_eq!(os.dna_read("nano.bin").unwrap(), original, "seed {seed}");
+    }
+}

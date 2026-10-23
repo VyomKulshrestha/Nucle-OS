@@ -38,6 +38,7 @@
 use crate::base::{DnaCodec, DnaError, DnaStrand, Nucleotide, StrandCollection};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+use std::hash::{BuildHasherDefault, Hasher};
 
 const ORDER: [Nucleotide; 4] = [Nucleotide::A, Nucleotide::C, Nucleotide::G, Nucleotide::T];
 
@@ -58,6 +59,12 @@ impl EditCosts {
     pub fn for_channel(substitution: f64, insertion: f64, deletion: f64) -> Self {
         let cost = |p: f64| (-10.0 * p.clamp(1e-9, 0.5).ln()).round().max(1.0) as u32;
         Self { substitution: cost(substitution), insertion: cost(insertion), deletion: cost(deletion) }
+    }
+}
+
+impl EditCosts {
+    fn with_deletion(self, deletion: u32) -> Self {
+        Self { deletion, ..self }
     }
 }
 
@@ -157,10 +164,24 @@ impl HedgesCodec {
         &self,
         read: &[Nucleotide],
         n_bits: usize,
+        accept: impl FnMut(&[u8]) -> bool,
+    ) -> Option<(Vec<u8>, u32)> {
+        let costs = vec![self.config.costs; read.len()];
+        self.search(read, &costs, n_bits, accept)
+    }
+
+    /// The A* search behind the decoders, with the cost of substituting or
+    /// inserting each read base given per position (`costs[j]` for read
+    /// base `j`; deletions use the configured cost).
+    fn search(
+        &self,
+        read: &[Nucleotide],
+        costs: &[EditCosts],
+        n_bits: usize,
         mut accept: impl FnMut(&[u8]) -> bool,
     ) -> Option<(Vec<u8>, u32)> {
-        let costs = self.config.costs;
-        let indel = costs.insertion.min(costs.deletion);
+        let deletion = self.config.costs.deletion;
+        let indel = costs.iter().map(|c| c.insertion).min().unwrap_or(u32::MAX).min(deletion);
         let mut candidates = 0usize;
         #[derive(Clone, Copy)]
         struct Node {
@@ -177,7 +198,7 @@ impl HedgesCodec {
         let mut arena: Vec<Node> = vec![Node { i: 0, j: 0, history: 0, prev: Nucleotide::A, cost: 0, parent: u32::MAX, bit: 2 }];
         let mut heap = BinaryHeap::new();
         heap.push(Reverse((bound(0, 0), 0u32)));
-        let mut best: HashMap<(u32, u32, u64, u8), u32> = HashMap::new();
+        let mut best: HashMap<(u32, u32, u64, u8), u32, BuildHasherDefault<StateHasher>> = HashMap::default();
         let mut expansions = 0usize;
 
         while let Some(Reverse((_, idx))) = heap.pop() {
@@ -225,7 +246,7 @@ impl HedgesCodec {
 
             // An extra base in the read.
             if j < len {
-                push(&mut arena, &mut heap, Node { j: node.j + 1, cost: node.cost + costs.insertion, parent: idx, bit: 2, ..node });
+                push(&mut arena, &mut heap, Node { j: node.j + 1, cost: node.cost + costs[j].insertion, parent: idx, bit: 2, ..node });
             }
             if i < n_bits {
                 for b in 0..2u8 {
@@ -233,11 +254,11 @@ impl HedgesCodec {
                     let history = (node.history << 1) | b as u64;
                     // Read base matches or was substituted.
                     if j < len {
-                        let cost = node.cost + if read[j] != expected { costs.substitution } else { 0 };
+                        let cost = node.cost + if read[j] != expected { costs[j].substitution } else { 0 };
                         push(&mut arena, &mut heap, Node { i: node.i + 1, j: node.j + 1, history, prev: expected, cost, parent: idx, bit: b });
                     }
                     // The written base is missing from the read.
-                    push(&mut arena, &mut heap, Node { i: node.i + 1, j: node.j, history, prev: expected, cost: node.cost + costs.deletion, parent: idx, bit: b });
+                    push(&mut arena, &mut heap, Node { i: node.i + 1, j: node.j, history, prev: expected, cost: node.cost + deletion, parent: idx, bit: b });
                 }
             }
         }
@@ -247,13 +268,37 @@ impl HedgesCodec {
     /// Decode one read into (strand index, payload), or `None` if it does
     /// not decode or its CRC fails.
     pub fn decode_read(&self, read: &DnaStrand) -> Option<(u16, Vec<u8>)> {
-        let n_bits = self.strand_len();
+        self.decode_with_costs(read, &vec![self.config.costs; read.len()])
+    }
+
+    /// Like [`Self::decode_read`], for a consensus of several reads:
+    /// `confidence[j]` is the share of reads that agreed on base `j`. A base
+    /// every read agreed on is expensive to call a substitution or an
+    /// insertion, one they split on is cheap, so the search spends its
+    /// budget where the reads disagreed (soft-decision decoding). Falls back
+    /// to [`Self::decode_read`] when the lengths do not match.
+    pub fn decode_consensus(&self, consensus: &DnaStrand, confidence: &[f64]) -> Option<(u16, Vec<u8>)> {
+        if confidence.len() != consensus.len() {
+            return self.decode_read(consensus);
+        }
+        let floor = CONSENSUS_ERROR_FLOOR;
+        let costs: Vec<EditCosts> = confidence
+            .iter()
+            .map(|&c| {
+                let wrong = (1.0 - c).clamp(floor, 0.5);
+                EditCosts::for_channel(wrong, wrong, 0.0).with_deletion(self.config.costs.deletion)
+            })
+            .collect();
+        self.decode_with_costs(consensus, &costs)
+    }
+
+    fn decode_with_costs(&self, read: &DnaStrand, costs: &[EditCosts]) -> Option<(u16, Vec<u8>)> {
         let crc_ok = |bits: &[u8]| {
             let bytes = bits_to_bytes(bits);
             let body = bytes.len() - 1;
             crc8(&bytes[..body]) == bytes[body]
         };
-        let (bits, _) = self.decode_bits_where(read.bases(), n_bits, crc_ok)?;
+        let (bits, _) = self.search(read.bases(), costs, self.strand_len(), crc_ok)?;
         let bytes = bits_to_bytes(&bits);
         let body = bytes.len() - 1;
         Some((u16::from_be_bytes([bytes[0], bytes[1]]), bytes[2..body].to_vec()))
@@ -309,6 +354,45 @@ impl HedgesCodec {
             .into_iter()
             .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
             .map(|(payload, _)| self.strand_for(index, &payload))
+    }
+}
+
+/// The lowest error probability a consensus base is given, however many
+/// reads agreed on it: errors made in synthesis are shared by every read
+/// of that molecule.
+pub const CONSENSUS_ERROR_FLOOR: f64 = 0.002;
+
+/// Hashes the search's small integer state keys with one multiply and
+/// rotate per field (the Fx scheme). The default SipHash resists
+/// adversarial keys, which these are not, and costs several times more per
+/// lookup in a search that does one per expanded state.
+#[derive(Default)]
+struct StateHasher(u64);
+
+impl StateHasher {
+    fn add(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+impl Hasher for StateHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        bytes.iter().for_each(|&b| self.add(u64::from(b)));
+    }
+    fn write_u8(&mut self, x: u8) {
+        self.add(u64::from(x));
+    }
+    fn write_u32(&mut self, x: u32) {
+        self.add(u64::from(x));
+    }
+    fn write_u64(&mut self, x: u64) {
+        self.add(x);
+    }
+    fn write_usize(&mut self, x: usize) {
+        self.add(x as u64);
+    }
+    fn finish(&self) -> u64 {
+        self.0
     }
 }
 
@@ -498,6 +582,27 @@ mod tests {
         }
         // A strand's reads never repair to another position.
         assert_eq!(codec.repair(&written.strands[..1], 1), None);
+    }
+
+    #[test]
+    fn consensus_confidence_steers_the_search_to_disputed_bases() {
+        let budget = HedgesConfig { max_expansions: 3_000, ..HedgesConfig::default() };
+        let codec = HedgesCodec::new(budget);
+        let written = codec.encode(&[0x5Au8; 16]).unwrap().strands.remove(0);
+        // Five wrong bases, each in a column the reads split on.
+        let mut bases = written.bases().to_vec();
+        let mut confidence = vec![1.0; bases.len()];
+        for k in [9, 37, 70, 101, 133] {
+            bases[k] = ORDER[(ORDER.iter().position(|&n| n == bases[k]).unwrap() + 2) % 4];
+            confidence[k] = 1.0 / 3.0;
+        }
+        let consensus = DnaStrand::new(bases);
+        let decoded = codec.decode_consensus(&consensus, &confidence).expect("soft decoding fits the budget");
+        assert_eq!(decoded, (0, vec![0x5Au8; 16]));
+        // Mismatched lengths fall back to the plain decoder.
+        assert_eq!(codec.decode_consensus(&written, &[1.0]).map(|d| d.0), Some(0));
+        // Without the confidence, the same budget runs out.
+        assert_eq!(codec.decode_read(&consensus), None);
     }
 
     #[test]

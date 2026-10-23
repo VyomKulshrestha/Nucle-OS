@@ -26,7 +26,8 @@ use nucle_codec::hedges::{HedgesCodec, HedgesConfig, RepairStats};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
-use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, vote_groups, RecoveryManifest};
+use nucle_ecc::consensus::build_consensus_with_length;
+use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, RecoveryManifest};
 use nucle_index::primer::PrimerLibrary;
 use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
@@ -155,23 +156,30 @@ fn hedges_parity_strands(data: &[u8], data_strand_count: usize, redundancy: usiz
 /// single reads in a quarter of the time the full budget takes.
 const HEDGES_PER_READ_EXPANSIONS: usize = 50_000;
 
-/// Reads tried before [`hedges_rebuild_data_strands`] judges whether
-/// per-read decoding is working, and the share that must decode for it to
-/// carry on.
-const HEDGES_PER_READ_TRIAL: usize = 24;
+/// Strands [`hedges_rebuild_data_strands`] decodes read by read before
+/// judging whether that is working, the search states each trial read
+/// gets, and the share of reads that must decode for it to carry on. Even
+/// at this small budget most reads of the measured low-fidelity array
+/// channel decode and almost no Nanopore-grade ones do, so the trial tells
+/// the two apart for a fraction of the time a full search would take.
+const HEDGES_TRIAL_STRANDS: usize = 8;
+const HEDGES_TRIAL_EXPANSIONS: usize = 20_000;
 const HEDGES_PER_READ_MIN_SHARE: f64 = 0.25;
 
 /// The exact data strands of a HEDGES file, from its reads. Every strand,
 /// parity included, is rebuilt read by read ([`HedgesCodec::repair`]) or,
-/// when no read decodes on its own, from the consensus of its reads; then
-/// Reed-Solomon over the data bytes restores whatever is still missing or
-/// wrong. Positions nothing could restore are left out, so the codec
-/// reports them.
+/// when no read decodes on its own, from the length-aware consensus of its
+/// reads, decoded with each base's edit costs set by how strongly the reads
+/// agreed on it ([`HedgesCodec::decode_consensus`]); then Reed-Solomon over
+/// the data bytes restores whatever is still missing or wrong. Positions nothing could restore are left out, so the
+/// codec reports them.
 ///
-/// Reads noisier than HEDGES can follow (Nanopore-grade, about 7% error)
-/// make every per-read search run to its limit, so once fewer than a
-/// quarter of the reads tried decode, the remaining strands go straight to
-/// consensus.
+/// Reads noisier than HEDGES can follow one at a time (Nanopore-grade,
+/// about 7% error) make every per-read search run to its limit, so the
+/// first strands are tried read by read to see whether that pays: if fewer
+/// than a quarter of the reads tried decode, the rest go straight to
+/// consensus. Strands are independent, so after that trial they are
+/// decoded on every available core.
 fn hedges_rebuild_data_strands(
     data_groups: &[Vec<DnaStrand>],
     parity_groups: &[Vec<DnaStrand>],
@@ -179,20 +187,43 @@ fn hedges_rebuild_data_strands(
 ) -> Vec<DnaStrand> {
     let hedges = HedgesCodec::new(HedgesConfig::default());
     let per_read = HedgesCodec::new(HedgesConfig { max_expansions: HEDGES_PER_READ_EXPANSIONS, ..HedgesConfig::default() });
-    let mut stats = RepairStats::default();
-    let mut payload = |group: &[DnaStrand], index: usize| -> Option<Vec<u8>> {
+    let trial_reader = HedgesCodec::new(HedgesConfig { max_expansions: HEDGES_TRIAL_EXPANSIONS, ..HedgesConfig::default() });
+    let groups: Vec<&[DnaStrand]> = data_groups.iter().chain(parity_groups).map(Vec::as_slice).collect();
+    // Each strand: decoded read by read with `reader` (when given), else
+    // from its length-aware consensus.
+    let payload = |index: usize, reader: Option<&HedgesCodec>, stats: &mut RepairStats| -> Option<Vec<u8>> {
+        let group = groups[index];
         let index = u16::try_from(index).ok()?;
-        let worth_it = stats.tried < HEDGES_PER_READ_TRIAL
-            || stats.decoded as f64 >= HEDGES_PER_READ_MIN_SHARE * stats.tried as f64;
-        let strand = worth_it
-            .then(|| per_read.repair_counting(group, index, &mut stats))
-            .flatten()
-            .or_else(|| vote_groups(&[group.to_vec()]).pop().flatten().map(|r| r.sequence))?;
-        hedges.decode_read(&strand).filter(|(i, _)| *i == index).map(|(_, p)| p)
+        let decoded = match reader.and_then(|r| r.repair_counting(group, index, stats)) {
+            Some(strand) => hedges.decode_read(&strand),
+            None => {
+                let consensus = build_consensus_with_length(group, hedges.strand_len())?;
+                hedges.decode_consensus(&consensus.sequence, &consensus.confidence)
+            }
+        };
+        decoded.filter(|(i, _)| *i == index).map(|(_, p)| p)
     };
-    let data_rows: Vec<Option<Vec<u8>>> = data_groups.iter().enumerate().map(|(i, g)| payload(g, i)).collect();
-    let parity_rows: Vec<Option<Vec<u8>>> =
-        parity_groups.iter().enumerate().map(|(j, g)| payload(g, data_groups.len() + j)).collect();
+
+    // Trial: the first strands, read by read and in parallel, to see
+    // whether single reads decode on this channel.
+    let trial: Vec<usize> = (0..groups.len().min(HEDGES_TRIAL_STRANDS)).collect();
+    let mut stats = RepairStats::default();
+    let mut rows: Vec<Option<Vec<u8>>> = Vec::with_capacity(groups.len());
+    for (row, trial_stats) in parallel_map(&trial, |&i| {
+        let mut stats = RepairStats::default();
+        (payload(i, Some(&trial_reader), &mut stats), stats)
+    }) {
+        rows.push(row);
+        stats.tried += trial_stats.tried;
+        stats.decoded += trial_stats.decoded;
+    }
+    let read_by_read = stats.decoded as f64 >= HEDGES_PER_READ_MIN_SHARE * stats.tried as f64;
+    let rest: Vec<usize> = (rows.len()..groups.len()).collect();
+    let reader = read_by_read.then_some(&per_read);
+    rows.extend(parallel_map(&rest, |&i| payload(i, reader, &mut RepairStats::default())));
+
+    let parity_rows = rows.split_off(data_groups.len());
+    let data_rows = rows;
     let rows = if parity_rows.is_empty() {
         data_rows
     } else {
@@ -205,6 +236,35 @@ fn hedges_rebuild_data_strands(
         .enumerate()
         .filter_map(|(i, row)| row.as_ref().map(|r| hedges.strand_for(i as u16, r)))
         .collect()
+}
+
+/// `f` over `items` on every available core, results in input order. Work
+/// is handed out one item at a time, so a few slow items do not leave the
+/// other threads idle.
+fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(items.len());
+    if workers <= 1 {
+        return items.iter().map(f).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut done: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(item) = items.get(i) else { break };
+                        mine.push((i, f(item)));
+                    }
+                    mine
+                })
+            })
+            .collect();
+        handles.into_iter().flat_map(|h| h.join().expect("a HEDGES decoding thread panicked")).collect()
+    });
+    done.sort_unstable_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, r)| r).collect()
 }
 
 // ---------------------------------------------------------------------------

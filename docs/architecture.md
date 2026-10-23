@@ -999,29 +999,55 @@ written as HEDGES strands with the indices after the data strands, the
 inner-HEDGES, outer-Reed-Solomon layout Press et al. describe. The other
 codecs' parity strands are packed bytes, about 600 nt each, which an
 insertion scrambles; at 1.5% error with indels they came out of a two- or
-three-read consensus wrong and could not rebuild anything. The first pass
-gives each read 50,000 search states, enough for 94.8% of single reads on
-the measured low-fidelity channel. Once 24 reads have been tried, it keeps
-going only while a quarter or more of them decode; reads too noisy for
-HEDGES then go straight to consensus.
+three-read consensus wrong and could not rebuild anything.
+
+Reading a HEDGES file takes three steps:
+
+1. **Trial.** The first 8 strands are decoded read by read, in parallel, at
+   20,000 search states per read. On the measured low-fidelity channel 81 to
+   100% of those reads decode; at Nanopore-grade noise at most 2 of 30 do. If
+   a quarter or more decode, the remaining strands are also decoded read by
+   read, at 50,000 states per read.
+2. **Consensus fallback.** A strand whose reads do not decode on their own,
+   or every strand once the trial has failed, is rebuilt from the
+   length-aware consensus of its reads (`build_consensus_with_length` at
+   HEDGES's 152 nt), and that consensus is decoded with soft decisions:
+   `HedgesCodec::decode_consensus` sets each base's substitution and
+   insertion cost from the share of reads that agreed on it (a base all
+   reads agreed on costs about 62, one only a third agreed on about 7), so
+   the search spends its budget where the reads disagreed. On a consensus
+   with five wrong bases in disputed columns, the soft search finishes in
+   3,000 states where the plain one runs out.
+3. **Parallel.** Strands are independent, so after the trial they are
+   decoded on every available core, handed out one at a time so a few hard
+   strands do not leave the other threads idle.
+
+The search itself keys its visited states with a multiply-and-rotate hash
+instead of the default SipHash, which halved single-read decoding time
+(500 reads of the measured low-fidelity channel: 14.0 s to 6.4 s, the same
+496 decoded).
 
 A 1 KB file with 16 parity strands per stripe, written and read 10 times per
 row through the realistic channels (synthesis, sequencing, dropout and, for
-the measured pools, coverage spread):
+the measured pools, coverage spread); read time per file on a 24-thread
+machine (HEDGES uses all of them, the consensus path of the other codecs
+one):
 
 | Channel | Reads per strand | Ternary | HEDGES | Strands (ternary / HEDGES) |
 |---|---:|---:|---:|---:|
-| `array-lofi` (measured, 1.5% error) | 6 | 0 / 10 | **10 / 10** | 58 / 80 |
-| `array-lofi` | 3 | 0 / 10 | 3 / 10 | 58 / 80 |
-| `array-hifi` (measured, 0.11%) | 3 | 10 / 10 | 10 / 10, 35× faster | 58 / 80 |
-| Illumina | 3 | 10 / 10 | 10 / 10, 40× faster | 58 / 80 |
-| Nanopore (about 7%) | 3 | 0 / 10 | 5 / 10 | 58 / 80 |
+| `array-lofi` (measured, 1.5% error) | 6 | 0 / 10, 5.3 s | **10 / 10, 0.37 s** | 58 / 80 |
+| `array-lofi` | 3 | 0 / 10, 2.0 s | 3 / 10, 0.25 s | 58 / 80 |
+| `array-hifi` (measured, 0.11%) | 3 | 10 / 10, 6.5 s | 10 / 10, 0.09 s | 58 / 80 |
+| Illumina | 3 | 10 / 10, 9.5 s | 10 / 10, 0.16 s | 58 / 80 |
+| Nanopore (about 7%) | 3 | 0 / 10, 4.9 s | **10 / 10, 1.0 s** | 58 / 80 |
+| Nanopore | 6 | 0 / 10, 10.4 s | **10 / 10, 0.55 s** | 58 / 80 |
 
-HEDGES spends more DNA (80 strands where ternary uses 58) and wins where
-insertions and deletions decide the outcome. On clean reads both recover
-everything, and HEDGES reads faster because it skips consensus. At
-Nanopore-grade noise single-read decoding fails, so the gain comes from the
-indel-proof parity; a 1 KB file then takes about 8 seconds to read.
+Before the trial ran in parallel and the consensus was length-aware and
+soft-decoded, Nanopore at 3 reads per strand recovered 5 of 10 files at 17.4
+s each. HEDGES spends more DNA (80 strands where ternary uses 58) and wins
+where insertions and deletions decide the outcome. The `array-lofi` row at 3
+reads is limited by coverage, not decoding: that pool's coverage spread
+leaves more strands with no read at all than 16 parity strands can replace.
 
 ## Error Correction Architecture
 
