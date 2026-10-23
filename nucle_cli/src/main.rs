@@ -273,7 +273,7 @@ enum Commands {
         /// Storage temperature for --years, °C
         #[arg(long, default_value = "25")]
         celsius: f64,
-        /// Storage medium for --years: encapsulated, bone
+        /// Storage medium for --years: encapsulated, bone, silica
         #[arg(long, default_value = "encapsulated")]
         medium: String,
     },
@@ -319,7 +319,7 @@ enum Commands {
     /// Estimate how long an archive stays readable in storage (Arrhenius decay)
     #[command(name = "shelf-life")]
     ShelfLife {
-        /// Storage medium: encapsulated (Coudy 2021), bone (Allentoft 2012)
+        /// Storage medium: encapsulated (Coudy 2021), bone (Allentoft 2012), silica (Grass 2015)
         #[arg(long, default_value = "encapsulated")]
         medium: String,
         /// Storage temperature, °C
@@ -1634,7 +1634,7 @@ fn cmd_simulate(file: &str, profile: &str, coverage: usize, storage: Option<(f64
     let mut config = SimulationConfig::realistic(hw_profile, coverage as u32, 42);
     if let Some((years, celsius, medium_name)) = &storage {
         let Some(medium) = nucle_synth::decay::StorageMedium::parse(medium_name) else {
-            eprintln!("Unknown storage medium '{}'. Use: encapsulated, bone", medium_name);
+            eprintln!("Unknown storage medium '{}'. Use: encapsulated, bone, silica", medium_name);
             std::process::exit(1);
         };
         config = config.with_storage(medium, *celsius, *years);

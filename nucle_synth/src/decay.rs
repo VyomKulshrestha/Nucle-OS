@@ -27,9 +27,20 @@
 //!   kinetics in 158 dated fossils", Proc. R. Soc. B 279: 4724–4733
 //!   (2012): 5.50 × 10⁻⁶ breaks per nucleotide per year at an effective
 //!   13.1 °C, with Ea = 127 kJ/mol taken from in vitro depurination.
+//! - [`StorageMedium::Silica`]: DNA encapsulated in silica particles. Grass
+//!   et al., "Robust chemical preservation of digital information on DNA
+//!   in silica with error-correcting codes", Angew. Chem. Int. Ed. 54:
+//!   2552–2555 (2015) aged 158 nt strands in silica at 70 °C and 50%
+//!   relative humidity and report Ea = 155 kJ/mol. Their week at 70 °C was
+//!   four strand half-lives (Heckel, Mikutis and Grass, Sci. Rep. 9: 9663
+//!   (2019)), which is 2.9 × 10⁻⁸ breaks per nucleotide per second; W. D.
+//!   Chen's 2019 ETH Zurich thesis tabulates the same data as 4.37 × 10⁻⁶
+//!   s⁻¹ for a 150 nt strand. Independent readings of Grass's data (Coudy
+//!   et al. 2021, Fig. 6; Doricchi et al., ACS Nano 2022, Table 1) agree
+//!   within a factor of 3, which is about how far to trust the rate.
 //!
-//! Both are extrapolations below the temperatures they were measured at,
-//! as their authors state; [`StorageMedium::Custom`] takes any other
+//! All three are extrapolations below the temperatures they were measured
+//! at, as their authors state; [`StorageMedium::Custom`] takes any other
 //! measured kinetics.
 
 use serde::{Deserialize, Serialize};
@@ -45,6 +56,8 @@ pub enum StorageMedium {
     Encapsulated,
     /// Buried bone (Allentoft et al. 2012).
     Bone,
+    /// Silica particles (Grass et al. 2015).
+    Silica,
     /// Caller-supplied kinetics.
     Custom {
         /// Activation energy, kJ/mol.
@@ -65,12 +78,13 @@ pub struct Kinetics {
 }
 
 impl StorageMedium {
-    /// Parse a CLI-style name: `encapsulated` (aliases `capsule`, `dnashell`)
-    /// or `bone`.
+    /// Parse a CLI-style name: `encapsulated` (aliases `capsule`, `dnashell`),
+    /// `bone` (alias `fossil`) or `silica` (alias `sio2`).
     pub fn parse(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "encapsulated" | "capsule" | "dnashell" => Some(Self::Encapsulated),
             "bone" | "fossil" => Some(Self::Bone),
+            "silica" | "sio2" => Some(Self::Silica),
             _ => None,
         }
     }
@@ -79,6 +93,7 @@ impl StorageMedium {
         match self {
             Self::Encapsulated => "encapsulated",
             Self::Bone => "bone",
+            Self::Silica => "silica",
             Self::Custom { .. } => "custom",
         }
     }
@@ -88,6 +103,7 @@ impl StorageMedium {
         match self {
             Self::Encapsulated => "Coudy et al., PLoS ONE 16(11): e0259868 (2021)",
             Self::Bone => "Allentoft et al., Proc. R. Soc. B 279: 4724-4733 (2012)",
+            Self::Silica => "Grass et al., Angew. Chem. Int. Ed. 54: 2552-2555 (2015); rate via Heckel et al., Sci. Rep. 9: 9663 (2019)",
             Self::Custom { .. } => "user-supplied kinetics",
         }
     }
@@ -103,6 +119,12 @@ impl StorageMedium {
                 activation_energy_kj_mol: 127.0,
                 rate_per_nt_year: 5.50e-6,
                 reference_celsius: 13.1,
+            },
+            // ln 2 / (one week / 4 half-lives) / 158 nt, at 70 °C.
+            Self::Silica => Kinetics {
+                activation_energy_kj_mol: 155.0,
+                rate_per_nt_year: 2.90e-8 * SECONDS_PER_YEAR,
+                reference_celsius: 70.0,
             },
             Self::Custom { activation_energy_kj_mol, rate_per_nt_year, reference_celsius } => {
                 Kinetics { activation_energy_kj_mol, rate_per_nt_year, reference_celsius }
@@ -246,8 +268,29 @@ mod tests {
     }
 
     #[test]
+    fn silica_reproduces_grass_and_the_independent_readings_of_it() {
+        let silica = StorageMedium::Silica;
+        // Grass's week at 70 °C was four half-lives of a 158 nt strand.
+        let week_years = 7.0 / 365.25;
+        let half_life = strand_half_life_years(silica.break_rate_per_nt_year(70.0), 158);
+        assert!(close(half_life, week_years / 4.0, 0.01), "{half_life}");
+        // ...and, at Ea = 155 kJ/mol, as much decay as about 2,000 years at 9.4 °C.
+        let equivalent = week_years * silica.break_rate_per_nt_year(70.0) / silica.break_rate_per_nt_year(9.4);
+        assert!((1_900.0..2_500.0).contains(&equivalent), "{equivalent}");
+        // Coudy et al. read 8 years at 25 °C for a 150 nt fragment, Doricchi et
+        // al. 540 years at 10 °C: both within the factor of 3 the rate carries.
+        let at = |celsius| strand_half_life_years(silica.break_rate_per_nt_year(celsius), 150);
+        assert!((8.0 / 3.0..8.0 * 3.0).contains(&at(25.0)), "{}", at(25.0));
+        assert!((540.0 / 3.0..540.0 * 3.0).contains(&at(10.0)), "{}", at(10.0));
+        // Sealed anoxic capsules outlast silica by three orders of magnitude
+        // at room temperature (Coudy's Fig. 6: 38,000 years against 8).
+        let k25 = |m: StorageMedium| m.break_rate_per_nt_year(25.0);
+        assert!(k25(silica) > 1_000.0 * k25(StorageMedium::Encapsulated));
+    }
+
+    #[test]
     fn colder_storage_is_slower_and_higher_ea_is_more_temperature_sensitive() {
-        for m in [StorageMedium::Encapsulated, StorageMedium::Bone] {
+        for m in [StorageMedium::Encapsulated, StorageMedium::Bone, StorageMedium::Silica] {
             assert!(m.break_rate_per_nt_year(-20.0) < m.break_rate_per_nt_year(4.0));
             assert!(m.break_rate_per_nt_year(4.0) < m.break_rate_per_nt_year(25.0));
         }
@@ -320,6 +363,7 @@ mod tests {
     fn parses_cli_names() {
         assert_eq!(StorageMedium::parse("DNAshell"), Some(StorageMedium::Encapsulated));
         assert_eq!(StorageMedium::parse("bone"), Some(StorageMedium::Bone));
+        assert_eq!(StorageMedium::parse("SiO2"), Some(StorageMedium::Silica));
         assert_eq!(StorageMedium::parse("tape"), None);
     }
 }

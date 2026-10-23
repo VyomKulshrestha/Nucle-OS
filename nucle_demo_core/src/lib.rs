@@ -402,7 +402,7 @@ fn attempt_final_decode(codec: &TernaryCodec, collection: &StrandCollection) -> 
 
 #[derive(Debug, Deserialize)]
 pub struct ShelfLifeRequest {
-    /// `encapsulated` or `bone`.
+    /// `encapsulated`, `bone` or `silica`.
     pub medium: String,
     pub celsius: f64,
     #[serde(default = "default_strand_len")]
@@ -460,7 +460,7 @@ fn finite(x: f64) -> Option<f64> {
 pub fn run_shelf_life(req: ShelfLifeRequest) -> Result<ShelfLifeResponse, String> {
     use nucle_synth::decay::{strand_half_life_years, ShelfLifeQuery, StorageMedium};
     let medium = StorageMedium::parse(&req.medium)
-        .ok_or_else(|| format!("unknown storage medium '{}' (expected encapsulated or bone)", req.medium))?;
+        .ok_or_else(|| format!("unknown storage medium '{}' (expected encapsulated, bone or silica)", req.medium))?;
     if !(req.target_percent > 0.0 && req.target_percent < 100.0) {
         return Err("target_percent must be between 0 and 100".to_string());
     }

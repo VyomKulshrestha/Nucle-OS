@@ -33,7 +33,7 @@ PoolProperty        ::= 'codec' ':' CodecLiteral
                       | 'profile' ':' ProfileLiteral
                       | 'storage' ':' MediumLiteral 'at' TemperatureLiteral
 
-MediumLiteral       ::= 'encapsulated' | 'capsule' | 'dnashell' | 'bone' | 'fossil'
+MediumLiteral       ::= 'encapsulated' | 'capsule' | 'dnashell' | 'bone' | 'fossil' | 'silica' | 'sio2'
 
 CodecLiteral        ::= 'YinYang' | 'yin-yang' | 'Ternary' | 'ternary-rotating' | 'ternary-rotating-cipher' | 'Fountain' | 'dna-fountain' | 'Hedges' | 'hedges'
 ProfileLiteral      ::= 'Illumina' | 'Nanopore' | 'oxfordnanopore' | 'oxford-nanopore' | 'Twist' | 'twistbioscience' | 'twist-bioscience' | 'IDT' | 'idtopools' | 'idt-opools'
@@ -322,10 +322,11 @@ let attempt: Result<DnaFile, Str> = store "records.csv" into shelf { retain: 100
 ```
 
 `storage: <medium> at <temperature>C` records where a pool's DNA is kept.
-`encapsulated` (dry, anoxic capsules; Coudy et al. 2021) and `bone` (DNA in
-buried bone; Allentoft et al. 2012) are the media with published decay
-kinetics. `retain: <years>y` on a `store` requires the file to stay
-recoverable that long: after the write, `nucle run` takes the strands actually
+`encapsulated` (dry, anoxic capsules; Coudy et al. 2021), `bone` (DNA in
+buried bone; Allentoft et al. 2012) and `silica` (silica particles; Grass et
+al. 2015) are the media with published decay kinetics. `retain: <years>y` on
+a `store` requires the file to stay recoverable that long: after the write,
+`nucle run` takes the strands actually
 written (data count, per-stripe Reed-Solomon parity, strand length), assumes
 ten physical copies per sequence, and computes how long whole-file recovery
 stays at or above 99.9% under Arrhenius strand breakage (see

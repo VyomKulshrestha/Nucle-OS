@@ -899,6 +899,7 @@ molecule. `nucle_synth::decay` models this with the Arrhenius law
 |---|---:|---|---|
 | `encapsulated` (dry, anoxic capsule) | 197 kJ/mol | 3.82 × 10⁻¹⁵ breaks/nt/s at 25 °C | Coudy et al., PLoS ONE 2021 |
 | `bone` (buried fossil bone) | 127 kJ/mol | 5.50 × 10⁻⁶ breaks/nt/year at 13.1 °C | Allentoft et al., Proc. R. Soc. B 2012 |
+| `silica` (silica particles, 50% humidity) | 155 kJ/mol | 2.9 × 10⁻⁸ breaks/nt/s at 70 °C | Grass et al., Angew. Chem. 2015; Heckel et al., Sci. Rep. 2019 |
 
 A molecule of `L` nucleotides survives `t` years with probability
 `exp(−k·L·t)`. A sequence is lost when every one of its physical copies has
@@ -911,11 +912,22 @@ each coverage copy is dropped before sequencing with the broken-molecule
 probability; non-decay simulations draw no extra random numbers, so their
 results are unchanged.
 
-Both data sets are extrapolations: Coudy measured at 100–140 °C, and
-Allentoft's activation energy comes from in vitro depurination between 45 and
-80 °C. Silica encapsulation (Grass et al. 2015, Ea ≈ 155 kJ/mol) is left out
-until a published rate constant can be cited alongside its activation energy;
-`StorageMedium::Custom` accepts any measured kinetics.
+All three are extrapolations: Coudy measured at 100–140 °C, Allentoft's
+activation energy comes from in vitro depurination between 45 and 80 °C, and
+Grass aged silica at 70 °C. No paper states silica's rate per nucleotide, so
+it is derived: Grass et al. stored 158 nt strands in silica for a week at
+70 °C and 50% relative humidity, and Heckel, Mikutis and Grass (Sci. Rep.
+2019) describe that treatment as four half-lives, which gives a strand
+half-life of 1.75 days and 2.9 × 10⁻⁸ breaks per nucleotide per second. W. D.
+Chen's 2019 ETH Zurich thesis tabulates the same data as 4.37 × 10⁻⁶ s⁻¹ for a
+150 nt strand, the same per-nucleotide rate, and with Ea = 155 kJ/mol the
+week equals about 2,000 years at 9.4 °C, the figure Grass et al. give. Two
+independent readings of Grass's data put a 150 nt strand's half-life at 8
+years at 25 °C (Coudy et al. 2021, Fig. 6) and 540 years at 10 °C (Doricchi et
+al., ACS Nano 2022, Table 1); this model gives 18 and 500, so treat the rate
+as good to about a factor of 3. All of these measure the PCR-amplifiable
+fraction, which is what the survival model counts. `StorageMedium::Custom`
+accepts any other measured kinetics.
 
 ## Codec Strategies
 

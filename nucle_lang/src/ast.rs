@@ -656,6 +656,8 @@ pub enum StorageMediumKind {
     Encapsulated,
     /// Buried bone (Allentoft et al. 2012).
     Bone,
+    /// Silica particles (Grass et al. 2015).
+    Silica,
 }
 
 impl StorageMediumKind {
@@ -663,6 +665,7 @@ impl StorageMediumKind {
         match name.to_ascii_lowercase().as_str() {
             "encapsulated" | "capsule" | "dnashell" => Some(Self::Encapsulated),
             "bone" | "fossil" => Some(Self::Bone),
+            "silica" | "sio2" => Some(Self::Silica),
             _ => None,
         }
     }
@@ -671,6 +674,7 @@ impl StorageMediumKind {
         match self {
             Self::Encapsulated => "encapsulated",
             Self::Bone => "bone",
+            Self::Silica => "silica",
         }
     }
 
@@ -678,6 +682,7 @@ impl StorageMediumKind {
         match self {
             Self::Encapsulated => nucle_synth::decay::StorageMedium::Encapsulated,
             Self::Bone => nucle_synth::decay::StorageMedium::Bone,
+            Self::Silica => nucle_synth::decay::StorageMedium::Silica,
         }
     }
 }

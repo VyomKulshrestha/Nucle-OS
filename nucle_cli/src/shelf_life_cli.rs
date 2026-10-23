@@ -23,7 +23,7 @@ pub struct ShelfLifeArgs {
 
 pub fn cmd_shelf_life(args: ShelfLifeArgs, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
     let Some(medium) = StorageMedium::parse(&args.medium) else {
-        eprintln!("Unknown storage medium '{}'. Use: encapsulated, bone", args.medium);
+        eprintln!("Unknown storage medium '{}'. Use: encapsulated, bone, silica", args.medium);
         std::process::exit(1);
     };
     if !(0.0..100.0).contains(&args.target_percent) || args.target_percent <= 0.0 {

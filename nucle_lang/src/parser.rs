@@ -363,7 +363,7 @@ impl Parser {
                 "storage" => {
                     let ident = self.expect_ident_any("storage medium")?;
                     let medium = StorageMediumKind::parse(&ident).ok_or_else(|| {
-                        self.error_previous(format!("unknown storage medium '{}' (expected encapsulated or bone)", ident))
+                        self.error_previous(format!("unknown storage medium '{}' (expected encapsulated, bone or silica)", ident))
                     })?;
                     self.expect_ident_text("at")?;
                     let celsius = self.expect_suffixed_number("storage temperature, e.g. 4C", &['C', 'c'])?;

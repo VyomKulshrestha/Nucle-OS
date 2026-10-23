@@ -32,6 +32,14 @@ fn encapsulated_half_life_matches_the_published_figure() {
 }
 
 #[test]
+fn silica_reproduces_grass_four_half_lives_in_a_week_at_70c() {
+    let v = json(nucle().args(["--json", "shelf-life", "--medium", "silica", "--celsius", "70", "--length", "158"]));
+    let half_life_days = v["strand_half_life_years"].as_f64().unwrap() * 365.25;
+    assert!((half_life_days - 1.75).abs() < 0.05, "{half_life_days}");
+    assert!(v["kinetics_source"].as_str().unwrap().starts_with("Grass et al."));
+}
+
+#[test]
 fn colder_storage_and_more_parity_extend_shelf_life() {
     let at = |celsius: &str, parity: &str| {
         json(nucle().args(["--json", "shelf-life", "--medium", "bone", "--celsius", celsius, "--parity", parity]))["shelf_life_years"]

@@ -114,7 +114,7 @@
       "patterns": [
         {
           "name": "support.constant.storage.nuclescript",
-          "match": "\\b(encapsulated|capsule|dnashell|bone|fossil)\\b"
+          "match": "\\b(encapsulated|capsule|dnashell|bone|fossil|silica|sio2)\\b"
         }
       ]
     },

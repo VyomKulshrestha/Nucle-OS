@@ -122,3 +122,19 @@ fn formatter_and_docs_keep_storage_and_retention() {
     let docs = generate_docs(&Parser::new(tokens).parse_program().unwrap());
     assert!(docs.contains("storage: encapsulated at -20C"), "{docs}");
 }
+
+#[test]
+fn silica_pools_parse_and_check_retention_against_grass_kinetics() {
+    let src = "pool beads: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist, storage: silica at 4C }";
+    let tokens = Lexer::new(src).tokenize().unwrap();
+    let program = Parser::new(tokens).parse_program().unwrap();
+    let Declaration::Pool(pool) = &program.declarations[0] else { panic!("expected a pool") };
+    assert_eq!(pool.storage, Some(StorageSpec { medium: StorageMediumKind::Silica, celsius: 4.0 }));
+    // Silica at 4 °C keeps a 150 nt strand for a few thousand years, so a
+    // century passes and a million years does not.
+    let steps = run(&format!("{src}\nstore \"records.csv\" into beads {{ retain: 100y }}\n"));
+    assert!(steps.iter().any(|s| s.starts_with("✓ retain 100y") && s.contains("silica at 4C")), "{steps:?}");
+    let dir = scratch();
+    let mut plan = compile(&format!("{src}\nstore \"records.csv\" into beads {{ retain: 1000000y }}\n")).unwrap();
+    assert!(execute_program(&mut NucleOS::new(16), &mut plan, &dir).is_err());
+}
