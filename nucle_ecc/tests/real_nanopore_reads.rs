@@ -75,7 +75,12 @@ fn blind_decoding_without_cluster_labels_recovers_nearly_every_strand() {
     // decode from the reads alone: cluster, then length-aware consensus.
     let data = fixture();
     let labelled = evaluate_with(&data, |reads, len| build_consensus_with_length(reads, len).map(|r| r.sequence));
-    let blind = nucle_ecc::realdata::evaluate_blind(&data, &nucle_ecc::cluster::ClusterConfig::default(), 2021);
+    // Fitted to MinION noise, the threshold lands at or near the 0.15 the
+    // default was tuned to on this dataset.
+    let pooled: Vec<_> = data.iter().flat_map(|c| c.reads.iter().cloned()).collect();
+    let config = nucle_ecc::cluster::ClusterConfig::fitted(&pooled);
+    assert!(config.max_distance_fraction > 0.12, "{}", config.max_distance_fraction);
+    let blind = nucle_ecc::realdata::evaluate_blind(&data, &config, 2021);
     assert!(blind.purity > 0.99, "purity {}", blind.purity);
     assert!(
         blind.recovered_exact + 2 >= labelled.exact,

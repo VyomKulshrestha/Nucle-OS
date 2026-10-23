@@ -26,9 +26,9 @@ use std::collections::HashMap;
 /// Tuning for [`cluster_reads`]. The defaults were chosen on real MinION
 /// reads (the Clustered Nanopore Reads dataset, about 6% per-read error,
 /// 110 nt strands): at a 0.15 distance fraction, clusters were 100% pure
-/// and blind decoding recovered 94.4% of strands, against 94.65% with the
+/// and blind decoding recovered 94.70% of strands, against 94.65% with the
 /// true labels. At 0.25, chains of near-threshold pairs merged distinct
-/// strands (92.4% purity, 82.9% recovered). Raise it for noisier reads.
+/// strands (92.6% purity, 83.3% recovered). Raise it for noisier reads.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClusterConfig {
     /// k-mer length for sketching (at most 16).
@@ -50,6 +50,35 @@ impl Default for ClusterConfig {
     }
 }
 
+impl ClusterConfig {
+    /// The default configuration with its merge threshold set from the
+    /// reads themselves: 1.6 times the 90th percentile of
+    /// [`mate_distances`], kept between 0.03 and 0.15. Clean reads get a
+    /// tight threshold that keeps near-identical strands apart; noisy reads
+    /// get room for their errors. On the three real datasets measured
+    /// (Illumina at 0.16% and 1.7% raw error, MinION at 5.8%) this lands on
+    /// the best of the fixed thresholds tried; see `docs/architecture.md`.
+    pub fn fitted(reads: &[DnaStrand]) -> Self {
+        let mut config = Self::default();
+        let d = mate_distances(reads, &config, FITTED_SAMPLE);
+        if !d.is_empty() {
+            let q90 = d[((d.len() - 1) as f64 * 0.9).round() as usize];
+            config.max_distance_fraction = (FITTED_SCALE * q90).clamp(FITTED_MIN, FITTED_MAX);
+        }
+        config
+    }
+}
+
+/// Reads sampled, and the scale and bounds applied, by [`ClusterConfig::fitted`].
+const FITTED_SAMPLE: usize = 2000;
+const FITTED_SCALE: f64 = 1.6;
+const FITTED_MIN: f64 = 0.03;
+const FITTED_MAX: f64 = 0.15;
+
+/// Distinct clusters tracked per LSH bucket; bounds the work a huge bucket
+/// (a motif shared by most strands) can cause.
+const MAX_BUCKET_REPRESENTATIVES: usize = 32;
+
 /// Group reads that come from the same strand. Returns clusters as lists of
 /// indices into `reads`, largest first; every read is in exactly one
 /// cluster (an unmatched read is a cluster of one).
@@ -70,14 +99,27 @@ pub fn cluster_reads(reads: &[DnaStrand], config: &ClusterConfig) -> Vec<Vec<usi
             buckets.entry(key).or_default().push(i);
         }
         for members in buckets.values().filter(|m| m.len() > 1) {
-            // Confirm each member against the bucket's first read and its
-            // neighbour: linear in the bucket, and enough for connectivity.
-            let anchor = members[0];
-            for w in members.windows(2) {
-                for (a, b) in [(anchor, w[1]), (w[0], w[1])] {
-                    if a != b && find(&mut parent, a) != find(&mut parent, b) && same_strand(&reads[a], &reads[b], config) {
-                        union(&mut parent, a, b);
+            // A bucket can mix several strands (pools whose strands share
+            // an index or motif put them in the same bucket). Check each
+            // member against one representative of every cluster seen in
+            // this bucket so far, so reads of one strand join even when
+            // they are not adjacent in the bucket.
+            let mut reps: Vec<usize> = Vec::new();
+            for &m in members {
+                let mut placed = false;
+                for &r in &reps {
+                    if find(&mut parent, r) == find(&mut parent, m) {
+                        placed = true;
+                        break;
                     }
+                    if same_strand(&reads[r], &reads[m], config) {
+                        union(&mut parent, r, m);
+                        placed = true;
+                        break;
+                    }
+                }
+                if !placed && reps.len() < MAX_BUCKET_REPRESENTATIVES {
+                    reps.push(m);
                 }
             }
         }
@@ -91,6 +133,66 @@ pub fn cluster_reads(reads: &[DnaStrand], config: &ClusterConfig) -> Vec<Vec<usi
     let mut clusters: Vec<Vec<usize>> = groups.into_values().collect();
     clusters.sort_by(|a, b| b.len().cmp(&a.len()).then(a[0].cmp(&b[0])));
     clusters
+}
+
+/// Candidate mates checked per sampled read in [`mate_distances`], most
+/// shared LSH bands first.
+const MAX_MATES: usize = 64;
+
+/// Buckets larger than this (a motif many strands share) say nothing about
+/// which reads are mates, so [`mate_distances`] ignores them.
+const MAX_MATE_BUCKET: usize = 1024;
+
+/// For up to `sample` reads spread evenly through `reads`, the edit
+/// distance to the closest other read sharing an LSH bucket with it, as a
+/// fraction of the longer read, sorted ascending. A read's closest mate is
+/// almost always another read of the same strand, so this measures read
+/// noise without labels. Reads with no candidate within 30% are skipped.
+pub fn mate_distances(reads: &[DnaStrand], config: &ClusterConfig, sample: usize) -> Vec<f64> {
+    let k = config.k.clamp(1, 16);
+    let rows = config.rows.max(1);
+    let bands = config.bands.max(1);
+    let sketches: Vec<Vec<u64>> = reads.iter().map(|r| sketch(r.bases(), k, bands * rows, config.seed)).collect();
+    let step = (reads.len() / sample.max(1)).max(1);
+    let picked: Vec<usize> = (0..reads.len()).step_by(step).take(sample).collect();
+    // Bands each candidate shares with each sampled read.
+    let mut shared: Vec<HashMap<usize, u32>> = vec![HashMap::new(); picked.len()];
+    for band in 0..bands {
+        let key = |sk: &[u64]| sk[band * rows..(band + 1) * rows].iter().fold(band as u64, |acc, &v| mix(acc ^ v));
+        let mut buckets: HashMap<u64, Vec<usize>> = HashMap::new();
+        for (i, sk) in sketches.iter().enumerate().filter(|(_, sk)| !sk.is_empty()) {
+            buckets.entry(key(sk)).or_default().push(i);
+        }
+        for (slot, &i) in picked.iter().enumerate().filter(|&(_, &i)| !sketches[i].is_empty()) {
+            if let Some(members) = buckets.get(&key(&sketches[i])).filter(|m| m.len() <= MAX_MATE_BUCKET) {
+                for &m in members.iter().filter(|&&m| m != i) {
+                    *shared[slot].entry(m).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::with_capacity(picked.len());
+    for (slot, &i) in picked.iter().enumerate() {
+        let mut mates: Vec<(usize, u32)> = shared[slot].iter().map(|(&m, &n)| (m, n)).collect();
+        mates.sort_unstable_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+        let a = reads[i].bases();
+        let mut limit = (0.3 * a.len() as f64) as usize;
+        let mut best = None;
+        for &(m, _) in mates.iter().take(MAX_MATES) {
+            let b = reads[m].bases();
+            if let Some(d) = bounded_edit_distance(a, b, limit) {
+                best = Some(d as f64 / a.len().max(b.len()).max(1) as f64);
+                if d == 0 {
+                    break;
+                }
+                limit = d - 1;
+            }
+        }
+        out.extend(best);
+    }
+    out.sort_by(f64::total_cmp);
+    out
 }
 
 fn same_strand(a: &DnaStrand, b: &DnaStrand, config: &ClusterConfig) -> bool {
@@ -271,5 +373,52 @@ mod tests {
         seen.sort_unstable();
         assert_eq!(seen, (0..30).collect::<Vec<_>>());
         assert!(clusters[0].len() >= 28, "largest cluster {}", clusters[0].len());
+    }
+
+    /// `pairs` pairs of strands, the two in a pair 6 substitutions apart
+    /// (5% of 120 nt), with `copies` reads of each at `rate` per error type.
+    fn near_identical_pairs(rng: &mut StdRng, pairs: usize, copies: usize, rate: f64) -> (Vec<DnaStrand>, Vec<usize>) {
+        let (mut reads, mut truth) = (Vec::new(), Vec::new());
+        for p in 0..pairs {
+            let a = random_strand(rng, 120);
+            let mut b = a.clone();
+            for k in 0..6 {
+                let i = 10 + 18 * k;
+                b[i] = Nucleotide::ALL[(Nucleotide::ALL.iter().position(|&n| n == b[i]).unwrap() + 1) % 4];
+            }
+            for (id, s) in [(2 * p, &a), (2 * p + 1, &b)] {
+                for _ in 0..copies {
+                    reads.push(noisy(rng, s, rate));
+                    truth.push(id);
+                }
+            }
+        }
+        (reads, truth)
+    }
+
+    #[test]
+    fn the_fitted_threshold_follows_read_noise() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let (clean, _) = near_identical_pairs(&mut rng, 20, 10, 0.0005);
+        assert_eq!(ClusterConfig::fitted(&clean).max_distance_fraction, FITTED_MIN);
+        // About 6% combined error per read, MinION-like.
+        let (noisy_reads, _) = near_identical_pairs(&mut rng, 20, 10, 0.02);
+        let t = ClusterConfig::fitted(&noisy_reads).max_distance_fraction;
+        assert!(t > 0.08 && t <= FITTED_MAX, "{t}");
+        let d = mate_distances(&noisy_reads, &ClusterConfig::default(), 100);
+        assert_eq!(d.len(), 100);
+        assert!(d.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    #[test]
+    fn a_fitted_threshold_keeps_near_identical_clean_strands_apart() {
+        let mut rng = StdRng::seed_from_u64(9);
+        let (reads, truth) = near_identical_pairs(&mut rng, 25, 10, 0.0005);
+        let pure = |clusters: &[Vec<usize>]| clusters.iter().all(|c| c.iter().all(|&i| truth[i] == truth[c[0]]));
+        // The nanopore default merges each pair.
+        assert!(!pure(&cluster_reads(&reads, &ClusterConfig::default())));
+        let fitted = cluster_reads(&reads, &ClusterConfig::fitted(&reads));
+        assert!(pure(&fitted));
+        assert_eq!(fitted.len(), 50, "sizes: {:?}", fitted.iter().map(Vec::len).collect::<Vec<_>>());
     }
 }

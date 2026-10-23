@@ -59,10 +59,12 @@ fn main() {
     println!("elapsed: {:.2}s", start.elapsed().as_secs_f64());
 
     let start = Instant::now();
-    let mut config = nucle_ecc::cluster::ClusterConfig::default();
+    let pooled: Vec<_> = dataset.iter().flat_map(|c| c.reads.iter().cloned()).collect();
+    let mut config = nucle_ecc::cluster::ClusterConfig::fitted(&pooled);
     if let Some(frac) = std::env::var("NUCLE_CLUSTER_FRAC").ok().and_then(|v| v.parse().ok()) {
         config.max_distance_fraction = frac;
     }
+    println!("merge threshold: {:.3}", config.max_distance_fraction);
     let blind = nucle_ecc::realdata::evaluate_blind(&dataset, &config, 2021);
     println!();
     println!("== labels discarded: cluster, then length-aware consensus");

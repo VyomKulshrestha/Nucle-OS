@@ -25,6 +25,7 @@ fn scores_real_reads_with_and_without_labels() {
     assert!(raw > 0.03 && raw < 0.10, "raw error {raw}");
     assert!(v["exact_rate"].as_f64().unwrap() >= 0.9);
     assert!(v["blind"]["purity"].as_f64().unwrap() > 0.99);
+    assert!(v["blind"]["merge_threshold"].as_f64().unwrap() > 0.12);
     assert!(v["blind"]["recovered_exact"].as_u64().unwrap() >= 43);
 }
 

@@ -27,7 +27,13 @@ pub fn cmd_reads(centers: &str, clusters: &str, limit: Option<usize>, blind: boo
     }
 
     let report = evaluate_with(&data, |reads, len| build_consensus_with_length(reads, len).map(|r| r.sequence));
-    let blind_report = blind.then(|| evaluate_blind(&data, &ClusterConfig::default(), 2021));
+    // The merge threshold comes from the reads alone, like everything else
+    // in the blind run.
+    let config = blind.then(|| {
+        let pooled: Vec<_> = data.iter().flat_map(|c| c.reads.iter().cloned()).collect();
+        ClusterConfig::fitted(&pooled)
+    });
+    let blind_report = config.as_ref().map(|config| evaluate_blind(&data, config, 2021));
 
     if json {
         let mut out = serde_json::json!({
@@ -39,8 +45,9 @@ pub fn cmd_reads(centers: &str, clusters: &str, limit: Option<usize>, blind: boo
             "exact": report.exact,
             "exact_rate": report.exact_rate(),
         });
-        if let Some(b) = &blind_report {
+        if let (Some(b), Some(config)) = (&blind_report, &config) {
             out["blind"] = serde_json::json!({
+                "merge_threshold": config.max_distance_fraction,
                 "reads": b.reads,
                 "references": b.references,
                 "clusters_found": b.clusters,
@@ -56,9 +63,10 @@ pub fn cmd_reads(centers: &str, clusters: &str, limit: Option<usize>, blind: boo
 
     println!("== with the dataset's cluster labels (vote + length-aware polish)");
     print!("{report}");
-    if let Some(b) = blind_report {
+    if let (Some(b), Some(config)) = (blind_report, config) {
         println!();
         println!("== labels discarded: clustered from the reads alone");
+        println!("merge threshold:        {:.3} of strand length (fitted to the reads)", config.max_distance_fraction);
         print!("{b}");
     }
 }

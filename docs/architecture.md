@@ -1004,23 +1004,95 @@ Billions of Reads for DNA Data Storage" (NeurIPS 2017). Each read becomes a
 MinHash sketch of its 8-mers. Locality-sensitive hashing over 32 single-value
 bands proposes candidate pairs, and a banded edit distance confirms each one
 before union-find merges it, so a hash collision alone never joins two
-strands. `realdata::evaluate_blind` pools and shuffles every read, clusters,
-runs the length-aware consensus per cluster, and counts references recovered
+strands. A bucket can hold reads of several strands (strands that share an
+index or a motif land together), so each read in a bucket is checked against
+one representative of every cluster already in that bucket, up to 32, rather
+than against its neighbour in the bucket. `realdata::evaluate_blind` pools
+and shuffles every read, clusters, takes the length-aware consensus of each
+cluster (at most 64 reads, since agreement saturates long before that; a
+single read stands as its own guess), and counts references recovered
 exactly. On the same 2,000 clusters:
 
 | Merge threshold (edit distance / length) | Clusters | Purity | Recovered |
 |---:|---:|---:|---:|
-| 0.15 (default) | 2,426 | 100.00% | 94.40% |
-| 0.20 | 2,148 | 99.86% | 94.30% |
-| 0.25 | 1,967 | 92.40% | 82.85% |
+| 0.15 (default) | 2,096 | 100.00% | 94.70% |
+| 0.20 | 1,998 | 99.86% | 94.55% |
+| 0.25 | 1,832 | 92.57% | 83.25% |
 
-Over-splitting costs little, because each fragment of a strand's reads still
-votes to the right sequence. Over-merging is what hurts: at 0.25, chains of
+With the true labels the same consensus recovers 94.65%, so at the default
+threshold blind decoding loses nothing. (The first version of the
+clustering compared each read only with the bucket's first read and its
+neighbour; it split the same reads into 2,426 clusters and recovered
+94.40%.) Over-splitting costs little, because each fragment of a strand's
+reads still votes to the right sequence. Over-merging is what hurts: at 0.25, chains of
 near-threshold pairs join distinct references (the dataset notes its
 references are not uniformly random), and a merged cluster's vote matches
 neither. The default stays at the threshold that kept every cluster pure.
 `nucle reads <Centers> <Clusters> [--limit N] [--blind]` runs both
 evaluations from the CLI.
+
+### Measured on real Illumina reads
+
+The second dataset is Illumina: runs ERR15127739 (high fidelity) and
+ERR15127744 (low fidelity) of ENA study ERP173549, Gimpel et al. 2026. Read
+1 of every pair was assigned to its designed 129 nt reference by 12-mer
+voting and trimmed of adapter, and up to 30 inserts per reference were
+written in the CNR layout (`Centers.txt`, `Clusters.txt`); all 11,293
+references are kept, the repetitive ones included, and 11,210 and 11,218 of
+them have at least one read. The references come from
+[fml-ethz/dt4dds-benchmark_notebooks](https://github.com/fml-ethz/dt4dds-benchmark_notebooks)
+(`07_PoolExperiments/final/combined/padded_indexed.fasta`, GPL-3.0), which is
+why no sample of this set ships with the tests. Same example, same decoders:
+
+| Decoder | High fidelity, 306,408 reads, 0.16% raw error | Low fidelity, 292,119 reads, 1.70% raw error |
+|---|---:|---:|
+| Partial-order vote | 99.74% (0.005% residual) | 95.41% (0.152%) |
+| Vote + median polish, length unknown | 99.70% (0.007%) | 93.18% (0.204%) |
+| Vote + length-aware median polish | 99.76% (0.004%) | 96.81% (0.113%) |
+| Labels discarded: cluster with a fitted threshold, then length-aware polish | 99.71% (purity 100%) | 95.79% (purity 99.80%) |
+
+The length-aware polish matters most on the noisy pool, where it fixes 157
+strands the vote got wrong. What remains there is mostly coverage: the
+low-fidelity pool's wide spread (σ 1.14) left 629 references with five reads
+or fewer, and those were recovered 53% of the time against 99.9% for
+references with 21 or more.
+
+Blind decoding first ran at the nanopore threshold, 0.15, and fell five
+points short of the labels (93.93% and 92.16%).
+`nucle_ecc/examples/blind_breakdown.rs` sorted the 676 references it missed
+in the high-fidelity pool: 436 were tandem-repeat references from the
+Goldman part of the pool, many of them a few bases from one another; 172
+were outvoted inside a cluster another reference dominated; 27 fail even
+with the true labels; 41 had other causes. A 15% edit distance is the right
+merge test for MinION reads at 6% error, and far too loose for Illumina
+reads at 0.16%: it joins references that differ by a handful of bases.
+
+No fixed threshold serves both, so `ClusterConfig::fitted` measures the
+noise before clustering. `cluster::mate_distances` samples 2,000 reads and
+finds each one's closest LSH bucket-mate (candidates ranked by bands shared;
+buckets of more than 1,024 reads, a motif many strands share, are ignored),
+which is almost always another read of the same strand. The threshold is 1.6
+times the 90th percentile of those distances, kept between 0.03 and 0.15.
+The estimate takes 2 to 8 seconds against minutes of clustering:
+
+| Merge threshold | High fidelity | Low fidelity | CNR, first 2,000 (MinION) |
+|---:|---:|---:|---:|
+| 0.03 | 99.71% | 94.42% | |
+| 0.05 | 97.07% | 95.79% | |
+| 0.08 | 95.66% | 94.05% | |
+| 0.10 | | | 93.10% |
+| 0.13 | | | 94.25% |
+| 0.15 | 93.93% | 92.16% | 94.70% |
+| 90th percentile of mate distance | 0.000 | 0.031 | 0.097 |
+| **Fitted threshold** | **0.030 → 99.71%** | **0.050 → 95.79%** | **0.150 → 94.70%** |
+
+At the fitted threshold the breakdown of the high-fidelity pool finds 29
+misses instead of 676: 26 fail even with the true labels and 3 are
+tandem-repeat references. Too tight a threshold over-splits instead (64,099
+clusters for the low-fidelity pool's 11,218 references at 0.03), which costs
+less than over-merging but still loses strands whose reads end up in
+fragments too small to outvote their errors. `nucle reads --blind` uses the
+fitted threshold and prints it.
 
 ## Retrieval Architecture
 

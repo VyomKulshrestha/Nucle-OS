@@ -252,10 +252,13 @@ impl fmt::Display for BlindReport {
     }
 }
 
+/// Reads used for one cluster's consensus in [`evaluate_blind`].
+pub const MAX_CONSENSUS_READS: usize = 64;
+
 /// Pool every read, shuffle (seeded), cluster without labels, take a
-/// length-aware consensus of each cluster with two or more reads, and count
-/// how many references come back exactly: the whole decode path a real run
-/// needs, scored against ground truth.
+/// length-aware consensus of each cluster (a lone read stands for itself),
+/// and count how many references come back exactly: the whole decode path
+/// a real run needs, scored against ground truth.
 pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConfig, seed: u64) -> BlindReport {
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
@@ -285,10 +288,14 @@ pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConf
     let references: std::collections::HashSet<&DnaStrand> =
         data.iter().filter(|c| !c.reads.is_empty()).map(|c| &c.reference).collect();
     let mut recovered: std::collections::HashSet<DnaStrand> = std::collections::HashSet::new();
-    let multi: Vec<&Vec<usize>> = clusters.iter().filter(|c| c.len() >= 2).collect();
-    for c in &multi {
-        let group: Vec<DnaStrand> = c.iter().map(|&i| reads[i].clone()).collect();
-        let len = modal_reference_length(data);
+    let multi = clusters.iter().filter(|c| c.len() >= 2).count();
+    let len = modal_reference_length(data);
+    for c in &clusters {
+        // A single read is its own best guess (most clean short reads are
+        // error-free); larger clusters vote, on at most
+        // `MAX_CONSENSUS_READS` reads, since agreement saturates long
+        // before a merged cluster of thousands.
+        let group: Vec<DnaStrand> = c.iter().take(MAX_CONSENSUS_READS).map(|&i| reads[i].clone()).collect();
         if let Some(r) = crate::consensus::build_consensus_with_length(&group, len) {
             if references.contains(&r.sequence) {
                 recovered.insert(r.sequence);
@@ -300,7 +307,7 @@ pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConf
         reads: reads.len(),
         references: references.len(),
         clusters: clusters.len(),
-        multi_read_clusters: multi.len(),
+        multi_read_clusters: multi,
         purity: if reads.is_empty() { 0.0 } else { majority_hits as f64 / reads.len() as f64 },
         recovered_exact: recovered.len(),
     }
