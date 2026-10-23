@@ -1265,6 +1265,53 @@ impl NucleOS {
     // dna_stat — pool and file statistics
     // -----------------------------------------------------------------------
 
+    /// The pool's self-describing header (see `nucle_codec::bootstrap`):
+    /// every current file with its codec, size, version, strand counts and
+    /// hash prefix, so a reader holding only the strands can find out how
+    /// the rest were written.
+    pub fn archive_header(&self) -> nucle_codec::bootstrap::ArchiveHeader {
+        use nucle_codec::bootstrap::{codec_id, ArchiveHeader, FileEntry};
+        let mut files: Vec<&DnaFile> = self.catalog.list();
+        files.sort_by(|a, b| a.filename.cmp(&b.filename));
+        let entries: Vec<FileEntry> = files
+            .iter()
+            .map(|f| {
+                let mut hash_prefix = [0u8; 4];
+                for (slot, b) in hash_prefix.iter_mut().zip(&f.content_hash) {
+                    *slot = *b;
+                }
+                FileEntry {
+                    name: f.filename.clone(),
+                    codec: codec_id(&f.codec),
+                    size: u32::try_from(f.size).unwrap_or(u32::MAX),
+                    version: u16::try_from(f.version).unwrap_or(u16::MAX),
+                    data_strands: u16::try_from(f.data_strand_count).unwrap_or(u16::MAX),
+                    parity_strands: u16::try_from(f.parity_strand_count).unwrap_or(u16::MAX),
+                    hash_prefix,
+                }
+            })
+            .collect();
+        // The default codec is the one most files use.
+        let mut counts = [0usize; 4];
+        for e in &entries {
+            counts[(e.codec as usize).min(3)] += 1;
+        }
+        let codec = (1..4).max_by_key(|&c| counts[c]).unwrap_or(1) as u8;
+        ArchiveHeader {
+            codec,
+            strand_len: self.pool.avg_strand_length().round().clamp(0.0, u16::MAX as f64) as u16,
+            rs_parity: files.iter().map(|f| f.rs_parity_per_stripe).max().unwrap_or(0).min(u8::MAX as usize) as u8,
+            files: entries,
+        }
+    }
+
+    /// Every stored strand, header strands first, for export.
+    pub fn strands_with_header(&self) -> Result<Vec<DnaStrand>, String> {
+        let mut out = self.archive_header().to_strands().map_err(|e| e.to_string())?;
+        out.extend(self.pool.all_strands().into_iter().cloned());
+        Ok(out)
+    }
+
     /// Get comprehensive pool statistics.
     pub fn dna_stat(&self) -> PoolStatus {
         PoolStatus {
@@ -2492,5 +2539,38 @@ mod tests {
         let stored = os.dna_write("fits.txt", b"fits now", 0).unwrap();
         assert_eq!(stored.primer_id, "P0000");
         assert_eq!(os.primers_used, 1);
+    }
+
+    #[test]
+    fn archive_header_describes_the_current_catalog_and_survives_export() {
+        use nucle_codec::bootstrap::{ArchiveHeader, CODEC_FOUNTAIN, CODEC_TERNARY, CODEC_YINYANG};
+        let mut os = NucleOS::new(8);
+        let photo: Vec<u8> = (0..300u32).map(|i| (i * 7 % 251) as u8).collect();
+        os.dna_write_with_codec("b-photo.raw", &photo, 2, CodecKind::Fountain).unwrap();
+        os.dna_write("a-notes.txt", b"first draft", 1).unwrap();
+        os.dna_write("a-notes.txt", b"second draft, longer", 1).unwrap();
+        os.dna_write_with_codec("c-log.txt", b"line one\nline two\n", 1, CodecKind::YinYang).unwrap();
+        os.dna_write("d-todo.txt", b"buy primers", 1).unwrap();
+
+        let header = os.archive_header();
+        let names: Vec<&str> = header.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["a-notes.txt", "b-photo.raw", "c-log.txt", "d-todo.txt"]);
+        let codecs: Vec<u8> = header.files.iter().map(|f| f.codec).collect();
+        assert_eq!(codecs, vec![CODEC_TERNARY, CODEC_FOUNTAIN, CODEC_YINYANG, CODEC_TERNARY]);
+        assert_eq!(header.codec, CODEC_TERNARY, "two of four files are ternary");
+        let notes = &header.files[0];
+        assert_eq!((notes.size, notes.version), (20, 2));
+        let current = os.catalog.get_by_name("a-notes.txt").unwrap();
+        assert_eq!(notes.hash_prefix[..], current.content_hash[..4]);
+        assert_eq!(usize::from(notes.data_strands), current.data_strand_count);
+        assert!(header.rs_parity >= 2);
+        assert!(header.strand_len > 0);
+
+        // Header strands lead the export; a reader that sees them in any
+        // order, mixed with the data strands, recovers the same header.
+        let mut exported = os.strands_with_header().unwrap();
+        assert_eq!(exported.len(), header.to_strands().unwrap().len() + os.pool.total_strands());
+        exported.reverse();
+        assert_eq!(ArchiveHeader::from_strands(&exported).unwrap(), header);
     }
 }

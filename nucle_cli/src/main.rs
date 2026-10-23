@@ -2,6 +2,7 @@
 //!
 //! Unified command-line tool tying all layers together.
 
+mod bootstrap_cli;
 mod cost_cli;
 mod hardware_cli;
 mod reads_cli;
@@ -242,6 +243,12 @@ enum Commands {
     /// enumerate tenants, not operate inside one.
     #[command(name = "tenants")]
     Tenants,
+
+    /// Write or read a pool's self-describing header strands
+    Bootstrap {
+        #[command(subcommand)]
+        action: BootstrapAction,
+    },
 
     /// Create and operate persistent simulated molecular block devices
     Block {
@@ -555,6 +562,20 @@ enum HardwareSubcommand {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+enum BootstrapAction {
+    /// Write every pool strand, header strands first, as FASTA
+    Export {
+        /// Output FASTA path
+        out: String,
+    },
+    /// Recover the file table from a FASTA or one-sequence-per-line dump
+    Inspect {
+        /// Strand dump to read
+        file: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
 enum BlockAction {
     /// Create a new persistent block-device image
     Create {
@@ -631,6 +652,10 @@ fn main() {
         Commands::Serve { port, bind } => cmd_serve(&bind, port, &pool_dir, passphrase.as_deref()),
         Commands::Tenants => cmd_tenants(&resolve_base_pool_dir(cli.pool_dir.as_deref()), cli.json),
         Commands::Block { action } => cmd_block(action, cli.json),
+        Commands::Bootstrap { action } => match action {
+            BootstrapAction::Export { out } => bootstrap_cli::cmd_export(&out, &pool_dir, passphrase.as_deref(), cli.json),
+            BootstrapAction::Inspect { file } => bootstrap_cli::cmd_inspect(&file, cli.json),
+        },
         Commands::Simulate { file, profile, coverage, years, celsius, medium } => {
             cmd_simulate(&file, &profile, coverage, years.map(|y| (y, celsius, medium)), cli.json)
         }
@@ -3278,6 +3303,7 @@ fn cmd_help() {
     println!("  nucle shelf-life [--medium m] [--celsius]  How long an archive stays readable in storage");
     println!("  nucle reads <centers> <clusters> [--blind] Score decoding on real sequencing reads");
     println!("  nucle cost <file> [-c codec] [-r parity]   Cost, density and mass of storing a file");
+    println!("  nucle bootstrap export|inspect <fasta>     Self-describing header strands for a pool");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");
     println!("  nucle stress [-s size]                    Stress test all codecs");

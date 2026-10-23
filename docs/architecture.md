@@ -1260,6 +1260,38 @@ Migration and rename obey that same lifecycle. `migrate_object` reads the curren
 
 This broke four shipped `docs/examples/*.nsl` programs and their execution tests in a genuinely instructive way: each one demonstrated `Result<T, E>`/`?`/closures'/pattern-matching's error-handling paths by storing the *same filename twice* and relying on the second write failing. Fixed by parameterizing the affected functions to take their target filename as an argument, calling each once with a real, existing file (the `Ok` path) and once with a filename that genuinely doesn't exist under `docs/examples/` (a real, universally reliable `Err` — `std::fs::read` failing — independent of pool state, capacity, or versioning) rather than trying to engineer a still-failing "duplicate write" through some other mechanism. A pool-capacity-based trigger was tried first and abandoned once measured directly: two real fixtures of deliberately different byte sizes (30 vs. 39 bytes) still encoded to byte-identical nucleotide counts under this codec's fixed strand sizing, so a capacity cap couldn't discriminate between "retry the same write" and "a different, smaller write" either — nonexistent-file was both simpler and the only approach that didn't depend on codec-specific size arithmetic at all. `WriteResult`/`DeleteResult` gained `version`/`versions_removed` fields, which meant regenerating `nucle_lang`'s `execution_baseline.txt` golden fixture (every "Stored '...'" line gained a `, version=N` suffix) — an expected, intentional diff the fixture's own test explicitly told me to regenerate, not a regression.
 
+### Self-describing archive header
+
+A pool's persisted catalog lives in `state.json`, beside the DNA. A tube of
+strands read decades later arrives without it. `nucle_codec::bootstrap`
+writes the catalog into the pool as DNA, following the two-level layout the
+DNA Data Storage Alliance described in its 2024 specifications: a small
+sector zero in a code simple enough to re-implement from its description,
+pointing to a sector one that holds the file table. NucleOS follows that
+idea but not the Alliance's byte layout, so it is not a conforming
+implementation.
+
+| Strand | Bytes | Length | Contents |
+|---|---:|---:|---|
+| Sector zero | 10 | 60 nt | tag `NU`, format version, default codec, data strand length, Reed-Solomon parity per stripe, sector-one strand count, CRC-16 |
+| Sector one, each | 27 | 162 nt | tag `N1`, index, count, used length, 20 bytes of the file table, CRC-16 |
+
+The file table lists every current file: name, codec, size, version, data
+and parity strand counts and the first four bytes of its content hash. Both
+sectors use one code: bytes are XORed with a 32-bit linear congruential
+stream (keeping GC near 50%), split into six base-3 digits each, and every
+digit picks one of the three bases that differ from the previous base, so no
+header strand contains a homopolymer. The module doc spells out the
+constants. `ArchiveHeader::from_strands` scans every offset of every strand
+it is given, so header strands can be found among data strands, behind a
+primer, in any order and with damaged duplicates (the CRC rejects those).
+
+`NucleOS::archive_header()` builds the header from the catalog (default codec
+= the one most files use) and `strands_with_header()` returns it ahead of
+every stored strand. `nucle bootstrap export <out.fasta>` writes that FASTA;
+`nucle bootstrap inspect <reads>` recovers the file table from FASTA or one
+sequence per line, with no pool or `state.json`.
+
 ### Explicitly out of scope
 
 Beyond durable persistence, concurrency safety, encryption at rest, proactive integrity scanning, per-tenant pool isolation, and rewrite/versioning (above), the following remain deliberate non-goals for the current design:

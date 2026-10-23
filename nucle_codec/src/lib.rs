@@ -28,3 +28,4 @@ pub mod ternary;
 pub mod fountain;
 pub mod yinyang;
 pub mod benchmark;
+pub mod bootstrap;

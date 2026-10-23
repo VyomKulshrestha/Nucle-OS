@@ -1,4 +1,5 @@
-//! `nucle cost` through the compiled binary.
+//! `nucle cost` and `nucle bootstrap export|inspect` through the compiled
+//! binary.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -40,4 +41,37 @@ fn cost_reflects_the_real_encoding_and_the_stated_prices() {
 
     let bad = nucle().arg("cost").arg(&file).args(["-c", "morse"]).output().unwrap();
     assert!(!bad.status.success());
+}
+
+#[test]
+fn a_pool_exported_with_its_header_describes_itself() {
+    let dir = scratch("boot");
+    let pool = dir.join("pool");
+    for (name, body) in [("records.csv", &b"id,value\n1,42\n2,43\n"[..]), ("notes.txt", &b"remember the primers"[..])] {
+        let f = dir.join(name);
+        std::fs::write(&f, body).unwrap();
+        let out = nucle().arg("--pool-dir").arg(&pool).arg("store").arg(&f).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let fasta = dir.join("archive.fasta");
+    let exported = json(nucle().arg("--json").arg("--pool-dir").arg(&pool).args(["bootstrap", "export"]).arg(&fasta));
+    assert!(exported["header_strands"].as_u64().unwrap() >= 2);
+
+    // Shuffle the dump so the header is buried among data strands.
+    let text = std::fs::read_to_string(&fasta).unwrap();
+    let mut records: Vec<String> = text.split('>').filter(|r| !r.is_empty()).map(|r| format!(">{r}")).collect();
+    records.reverse();
+    let shuffled = dir.join("shuffled.fasta");
+    std::fs::write(&shuffled, records.concat()).unwrap();
+
+    let header = json(nucle().arg("--json").args(["bootstrap", "inspect"]).arg(&shuffled));
+    let names: Vec<&str> = header["files"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["notes.txt", "records.csv"]);
+    assert_eq!((header["files"][0]["size"].as_u64(), header["files"][1]["size"].as_u64()), (Some(20), Some(19)));
+
+    let junk = dir.join("junk.fasta");
+    std::fs::write(&junk, ">a\nACGTACGTACGT\n").unwrap();
+    let out = nucle().args(["bootstrap", "inspect"]).arg(&junk).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("No usable archive header"));
 }
