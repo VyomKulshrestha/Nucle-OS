@@ -158,3 +158,5 @@ One 11,293-oligo pool holding twelve codec configurations (DNA-Aeon, DNA Fountai
 
 - Church, G. M., Gao, Y., & Kosuri, S. (2012). "Next-generation digital information storage in DNA." *Science*, 337(6102), 1628. — First demonstration of large-scale DNA storage (659 KB).
 - Organick, L., et al. (2018). "Random access in large-scale DNA data storage." *Nature Biotechnology*, 36(3), 242–248. — Random access via primer-based addressing (maps to `nucle_index::primer` and `nucle_index::crispr_sim`).
+- Nguyen, B. H., et al. (2020). "Architecting Datacenters for Sustainability: Greener Data Storage using Synthetic DNA." *Electronics Goes Green 2020+*. — Cradle-to-grave life-cycle assessment of DNA, tape and hard-disk archives; results are given as charts only, which is why `nucle cost` reports no carbon figure.
+- US Government Accountability Office (2022), DNA data storage spotlight ([PDF](https://www.gao.gov/assets/730/720590.pdf)), and Blocks & Files, "DNA data storage: when the physics work but the economics don't" (16 January 2026). — The $3,500/MB and ~$100/MB write-cost estimates quoted by `nucle cost`.

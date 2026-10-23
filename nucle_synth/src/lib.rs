@@ -25,3 +25,4 @@ pub mod errors;
 pub mod profiles;
 pub mod noise;
 pub mod decay;
+pub mod cost;

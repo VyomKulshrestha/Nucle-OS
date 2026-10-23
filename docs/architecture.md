@@ -1325,6 +1325,44 @@ Where write-time and read-time noise get applied differs between the two backend
 
 **Verified:** 25 `nucle_blockdev` tests cover the device contract, write-once and rewritable behavior, corruption recovery, relative batch-latency savings, blob layout, versioned save/load, persistent Nanopore counters/generations, dimension validation, and malformed-image rejection. On 30 August 2026 the workspace inventory was 764 tests: 763 runnable and one intentionally expensive Nanopore test ignored. All runnable tests, including three doctests, passed in 161.5 seconds; `cargo audit` reported no known vulnerabilities across 279 locked dependencies.
 
+## Cost, Density and Mass
+
+`nucle_synth::cost::estimate` prices an archive from its real strand counts:
+synthesis is nucleotides × price per nucleotide, reading is nucleotides ×
+read coverage × price per sequenced base, density is payload bits over
+stored nucleotides, and mass is every kept copy at 330 g/mol per nucleotide.
+`nucle cost <file>` encodes the file for real in a throwaway in-memory pool
+with the chosen codec and Reed-Solomon parity, so primers, padding and parity
+count toward the price. On this repository's `LICENSE` with the defaults:
+
+```
+$ nucle cost LICENSE
+DNA storage cost for 'LICENSE'
+  encoding:     1073 bytes, ternary-rotating-cipher (44 data + 2 parity strands, 10264 nt)
+  density:      0.836 payload bits per synthesized nucleotide
+  write:        $1.54  ($1434.86/MB at $0.00015/nt)
+  read:         $0.0010  ($0.9566/MB at 10x coverage, $10/Gbase)
+  mass:         5.624e-17 g at 10 copies per strand (1.908e19 bytes per gram)
+```
+
+The codec changes the bill as much as the price does. The same file costs
+$1.06 with `-c yin-yang` (1.21 bits/nt) and $2.21 with `-c fountain`
+(0.58 bits/nt, 102 droplets for 1 KB).
+
+Published prices disagree by more than an order of magnitude (the US GAO put
+DNA storage at about $3,500 per MB in 2022; a 2026 Blocks & Files analysis
+cites about $100 per MB), so the defaults, $0.00015 per synthesized
+nucleotide, $10 per sequenced gigabase, 10× read coverage and 10 kept copies
+per strand, are assumptions printed in every report and overridable with
+`--synthesis-usd-per-nt`, `--sequencing-usd-per-gbase`, `--coverage` and
+`--copies`. There is no carbon figure. The cradle-to-grave life-cycle
+assessment of DNA storage by Nguyen et al. ("Architecting Datacenters for
+Sustainability: Greener Data Storage using Synthetic DNA", Electronics Goes
+Green 2020) compares DNA, tape and hard disks only in charts, and concludes
+that phosphoramidite synthesis can beat them near its best case but not its
+worst, while enzymatic synthesis beats both. It gives no per-megabyte number
+to build a default on.
+
 ## `nucle doctor`
 
 Environment sanity check, run from the workspace root, so a confusing bug

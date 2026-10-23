@@ -2,6 +2,7 @@
 //!
 //! Unified command-line tool tying all layers together.
 
+mod cost_cli;
 mod hardware_cli;
 mod reads_cli;
 mod shelf_life_cli;
@@ -268,6 +269,30 @@ enum Commands {
         /// Storage medium for --years: encapsulated, bone
         #[arg(long, default_value = "encapsulated")]
         medium: String,
+    },
+
+    /// Estimate what storing a file in DNA costs, its density and its mass
+    Cost {
+        /// File to encode
+        file: String,
+        /// Codec: ternary, fountain, yin-yang
+        #[arg(short, long, default_value = "ternary")]
+        codec: String,
+        /// Reed-Solomon parity strands
+        #[arg(short, long, default_value = "2")]
+        redundancy: usize,
+        /// USD per synthesized nucleotide (assumption)
+        #[arg(long, default_value = "0.00015")]
+        synthesis_usd_per_nt: f64,
+        /// USD per billion sequenced bases (assumption)
+        #[arg(long, default_value = "10")]
+        sequencing_usd_per_gbase: f64,
+        /// Sequencing reads per strand when reading back
+        #[arg(long, default_value = "10")]
+        coverage: f64,
+        /// Physical copies kept per strand
+        #[arg(long, default_value = "10")]
+        copies: f64,
     },
 
     /// Score consensus decoding on real clustered sequencing reads
@@ -609,6 +634,10 @@ fn main() {
         Commands::Simulate { file, profile, coverage, years, celsius, medium } => {
             cmd_simulate(&file, &profile, coverage, years.map(|y| (y, celsius, medium)), cli.json)
         }
+        Commands::Cost { file, codec, redundancy, synthesis_usd_per_nt, sequencing_usd_per_gbase, coverage, copies } => cost_cli::cmd_cost(
+            cost_cli::CostArgs { file, codec, redundancy, synthesis_usd_per_nt, sequencing_usd_per_gbase, read_coverage: coverage, copies },
+            cli.json,
+        ),
         Commands::Reads { centers, clusters, limit, blind } => reads_cli::cmd_reads(&centers, &clusters, limit, blind, cli.json),
         Commands::ShelfLife { medium, celsius, length, data, parity, copies, target, stored } => shelf_life_cli::cmd_shelf_life(
             shelf_life_cli::ShelfLifeArgs { medium, celsius, length, data, parity, copies, target_percent: target, stored },
@@ -3248,6 +3277,7 @@ fn cmd_help() {
     println!("  nucle simulate <file> -p <profile>        Simulate synthesis noise (--years/--celsius ages it)");
     println!("  nucle shelf-life [--medium m] [--celsius]  How long an archive stays readable in storage");
     println!("  nucle reads <centers> <clusters> [--blind] Score decoding on real sequencing reads");
+    println!("  nucle cost <file> [-c codec] [-r parity]   Cost, density and mass of storing a file");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");
     println!("  nucle stress [-s size]                    Stress test all codecs");
