@@ -621,6 +621,21 @@ enum BlockAction {
 }
 
 fn main() {
+    // A debug build's clap command tree needs more stack than the 1 MB
+    // Windows gives the main thread (every subcommand overflowed there once
+    // `cost` grew its carbon options), so the CLI runs on a thread with room
+    // to spare. A panic still exits with Rust's usual 101.
+    let worker = std::thread::Builder::new()
+        .name("nucle-cli".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(run)
+        .expect("failed to start the nucle-cli thread");
+    if worker.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
+fn run() {
     let cli = Cli::parse();
     let tenant = resolve_tenant(cli.tenant.as_deref());
     if let Some(t) = &tenant {
