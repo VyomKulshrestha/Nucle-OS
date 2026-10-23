@@ -1495,9 +1495,29 @@ per strand, are assumptions printed in every report and overridable with
 `--synthesis-usd-per-nt`, `--sequencing-usd-per-gbase`, `--coverage` and
 `--copies`.
 
-Carbon comes in two figures with different scopes, because no source covers
-synthesis on its own:
+Carbon comes in three figures with different scopes:
 
+- **Writing** (`carbon, write`): no source reports CO2e per synthesized
+  nucleotide, so it is built bottom-up. Antkowiak et al. ("Low cost DNA
+  data storage using photolithographic synthesis and advanced information
+  reconstruction and error correction", Nat. Commun. 11, 5345, 2020)
+  list every reagent of one light-directed array synthesis run in
+  Supplementary Table 2. Three have published emission factors (Amelio et
+  al., Green Chem. 16, 3045, 2014, Table 4): 175 mL of acetonitrile and
+  21 mL of activator, counted as acetonitrile, at 2.96 kg CO2e/kg (range
+  2.27–3.70), and 90 mL of ethanol at 1.19. Together that is about 0.54 kg
+  CO2e per run. The run made 16,383 sequences of 60 nt; the same chip
+  held 196,596 for the authors' largest file, at a cost per megabyte that
+  implies the same reagents per run. Spread over those designed
+  nucleotides, writing costs 0.046 to 0.55 mg CO2e per nucleotide, and
+  `nucle cost` reports that range (`--synthesis-kg-co2e-per-nt` replaces
+  it). It is a floor: the 80 g of DMSO exposure solvent, the
+  phosphoramidites, the oxidizer and the electricity have no public
+  emission factors. Twist Bioscience's own figure, 0.036 kg CO2e per gene
+  (2023 ESG report), works out to about 0.35 g per oligo at the 1,000,000
+  oligos to 9,600 genes per chip its FY2024 10-K gives, a few mg per
+  nucleotide for oligos of a hundred-odd bases, the same order as the
+  small-run end.
 - **Reading** (`carbon, read`): bases sequenced × Illumina's kg CO2e per
   gigabase from its streamlined reagent-kit life-cycle assessments (2025
   Corporate Responsibility Report, p. 36): MiSeq 3.81, MiSeq i100 2.46,
@@ -1512,9 +1532,27 @@ synthesis on its own:
   readings of it: 7.1 kg with phosphoramidite synthesis and fossil
   acetonitrile (error bar about 3.1 to 11.2, the default; `--chemistry`),
   6.2 with bio-acetonitrile, 1.6 with enzymatic synthesis, against about 42
-  for hard disks and 5.0 for tape. No later life-cycle assessment of DNA
-  storage was found; a 2026 workshop abstract (Robineau and Estevez-Torres)
-  says the same.
+  for hard disks and 5.0 for tape.
+
+The first and last figures are far apart. On this repository's `LICENSE`
+(about 10,000 nt), writing comes to 0.47 to 5.6 g CO2e while a year kept is
+7.6 × 10⁻⁹ kg: per byte, today's lab-scale synthesis uses five to six orders
+of magnitude more than the industrial-scale synthesis Nguyen et al. model.
+Both are reported because they answer different questions: what writing
+costs with today's research chips, and what a mature DNA archive would.
+
+No later life-cycle assessment of DNA storage exists to check the chart
+readings against (a 2026 workshop abstract, Robineau and Estevez-Torres,
+says the same), so the check is on its baselines. Among later papers citing
+Nguyen et al., only Lannelongue et al. (PLoS Comput. Biol. 2021) quote a
+number, "of the order of" 10 kg CO2e per TB-year for hard drives. Johns'
+2020 tape-versus-disk study (10 PB growing 35% a year for ten years,
+operational energy, natural-gas power) finds 3,013 against 383 tons of
+CO2, a ratio of 7.9; the chart's hard-disk-to-tape ratio is 8.4. Absolute
+figures depend on scope: drive-only and media-only vendor assessments come
+out 10 to 70 times lower per TB-year (Seagate's Exos 32TB report: 1.72 kg
+on conventional power; LTO-9 media about 0.07), because they leave out the
+servers, cooling, network and yearly reads the chart includes.
 
 ## `nucle doctor`
 

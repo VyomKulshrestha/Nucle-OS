@@ -51,6 +51,15 @@ fn cost_reflects_the_real_encoding_and_the_stated_prices() {
     let enzymatic = json(nucle().arg("--json").arg("cost").arg(&file).args(["--chemistry", "enzymatic"]));
     assert!(enzymatic["lifecycle_kg_co2e_per_year"].as_f64().unwrap() < v["lifecycle_kg_co2e_per_year"].as_f64().unwrap());
     assert!(!nucle().arg("cost").arg(&file).args(["--sequencer", "hiseq"]).output().unwrap().status.success());
+
+    // Write-side carbon spans the full-chip and first-run ends of the
+    // bottom-up estimate, or is exact when a per-nucleotide figure is given.
+    let (low, high) = (v["synthesis_kg_co2e_low"].as_f64().unwrap(), v["synthesis_kg_co2e_high"].as_f64().unwrap());
+    assert!(low > 0.0 && high / low > 11.0 && high / low < 13.0, "{low} {high}");
+    let given = json(nucle().arg("--json").arg("cost").arg(&file).args(["--synthesis-kg-co2e-per-nt", "1e-7"]));
+    assert!((given["synthesis_kg_co2e_low"].as_f64().unwrap() - nt * 1e-7).abs() < 1e-12);
+    assert_eq!(given["synthesis_kg_co2e_low"], given["synthesis_kg_co2e_high"]);
+    assert!(!nucle().arg("cost").arg(&file).args(["--synthesis-kg-co2e-per-nt", "-1"]).output().unwrap().status.success());
 }
 
 #[test]

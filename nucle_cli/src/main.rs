@@ -306,6 +306,9 @@ enum Commands {
         /// Synthesis chemistry for life-cycle carbon: phosphoramidite, bio-acetonitrile, enzymatic
         #[arg(long, default_value = "phosphoramidite")]
         chemistry: String,
+        /// kg CO2e per synthesized nucleotide, replacing the bottom-up range
+        #[arg(long)]
+        synthesis_kg_co2e_per_nt: Option<f64>,
     },
 
     /// Score consensus decoding on real clustered sequencing reads
@@ -680,7 +683,18 @@ fn run() {
         Commands::Simulate { file, profile, coverage, years, celsius, medium } => {
             cmd_simulate(&file, &profile, coverage, years.map(|y| (y, celsius, medium)), cli.json)
         }
-        Commands::Cost { file, codec, redundancy, synthesis_usd_per_nt, sequencing_usd_per_gbase, coverage, copies, sequencer, chemistry } => cost_cli::cmd_cost(
+        Commands::Cost {
+            file,
+            codec,
+            redundancy,
+            synthesis_usd_per_nt,
+            sequencing_usd_per_gbase,
+            coverage,
+            copies,
+            sequencer,
+            chemistry,
+            synthesis_kg_co2e_per_nt,
+        } => cost_cli::cmd_cost(
             cost_cli::CostArgs {
                 file,
                 codec,
@@ -691,6 +705,7 @@ fn run() {
                 copies,
                 sequencer,
                 chemistry,
+                synthesis_kg_co2e_per_nt,
             },
             cli.json,
         ),

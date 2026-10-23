@@ -12,7 +12,8 @@
 //! every physical copy kept, which is what bounds how small an archive can
 //! physically be.
 //!
-//! Carbon comes from the only published figures, each with its own scope:
+//! Carbon has three parts, each built from published figures and each with
+//! its own scope:
 //!
 //! - Reading: Illumina's streamlined life-cycle assessments of its reagent
 //!   kits give kg CO2e per gigabase sequenced (2025 Corporate Responsibility
@@ -26,8 +27,20 @@
 //!   in units of 0.1 kg CO2e per TB). The values here are readings of that
 //!   chart. See [`Chemistry`].
 //!
-//! No source gives CO2e per synthesized nucleotide for array oligo pools,
-//! so synthesis on its own has no carbon figure.
+//! - Writing: no source reports CO2e per synthesized nucleotide, so it is
+//!   built bottom-up from one lab-scale run of light-directed array
+//!   synthesis. Antkowiak et al., "Low cost DNA data storage using
+//!   photolithographic synthesis and advanced information reconstruction
+//!   and error correction", Nat. Commun. 11, 5345 (2020), Supplementary
+//!   Table 2, lists the reagents of one run; the acetonitrile, the
+//!   activator (counted as acetonitrile) and the ethanol have published
+//!   emission factors (Amelio et al., Green Chem. 16, 3045 (2014), Table 4),
+//!   about 0.54 kg CO2e per run. Spread over that run's 16,383 sequences of
+//!   60 nt, or over the 196,596 the same chip held for their largest file,
+//!   that is 0.55 down to 0.046 mg CO2e per designed nucleotide. The DMSO
+//!   exposure solvent, the phosphoramidites, the oxidizer and the
+//!   electricity have no public factors, so this is a floor. See
+//!   [`synthesis_kg_co2e_per_nt_range`].
 
 use serde::{Deserialize, Serialize};
 
@@ -108,6 +121,37 @@ impl Chemistry {
     }
 }
 
+/// The reagents of one light-directed array synthesis run that have a
+/// published emission factor: grams used (Antkowiak et al. 2020,
+/// Supplementary Table 2, at 0.786 g/mL for acetonitrile and 0.789 g/mL for
+/// ethanol) and kg CO2e per kg (Amelio et al. 2014, Table 4, means; ranges
+/// 2.27-3.70 and 1.03-1.39).
+const ARRAY_RUN_REAGENTS: [(&str, f64, f64); 3] = [
+    ("acetonitrile", 175.0 * 0.786, 2.96),
+    ("activator, counted as acetonitrile", 21.0 * 0.786, 2.96),
+    ("ethanol", 90.0 * 0.789, 1.19),
+];
+
+/// Designed nucleotides on that run (16,383 sequences of 60 nt) and on the
+/// same chip at the 196,596 sequences of the authors' largest file, whose
+/// reported cost per megabyte implies the same reagents per run.
+const ARRAY_RUN_NT_FIRST: f64 = 16_383.0 * 60.0;
+const ARRAY_RUN_NT_FULL: f64 = 196_596.0 * 60.0;
+
+/// kg CO2e of one light-directed array synthesis run's acetonitrile,
+/// activator and ethanol (Antkowiak et al. 2020 amounts, Amelio et al.
+/// 2014 emission factors).
+pub fn array_run_kg_co2e() -> f64 {
+    ARRAY_RUN_REAGENTS.iter().map(|(_, grams, factor)| grams / 1000.0 * factor).sum()
+}
+
+/// kg CO2e per designed nucleotide, (full chip, first run): the low and
+/// high end of write-side carbon.
+pub fn synthesis_kg_co2e_per_nt_range() -> (f64, f64) {
+    let run = array_run_kg_co2e();
+    (run / ARRAY_RUN_NT_FULL, run / ARRAY_RUN_NT_FIRST)
+}
+
 /// The same chart's figures for the media DNA was compared against, kg
 /// CO2e per terabyte-year (Nguyen et al. 2020, Figure 5b).
 pub const HDD_KG_CO2E_PER_TB_YEAR: f64 = 42.0;
@@ -128,6 +172,9 @@ pub struct CostAssumptions {
     pub sequencer: Sequencer,
     /// Synthesis chemistry, for life-cycle carbon.
     pub chemistry: Chemistry,
+    /// kg CO2e per synthesized nucleotide, replacing the bottom-up range.
+    #[serde(default)]
+    pub synthesis_kg_co2e_per_nt: Option<f64>,
 }
 
 impl Default for CostAssumptions {
@@ -143,6 +190,7 @@ impl Default for CostAssumptions {
             copies_per_strand: 10.0,
             sequencer: Sequencer::NovaSeqX,
             chemistry: Chemistry::Phosphoramidite,
+            synthesis_kg_co2e_per_nt: None,
         }
     }
 }
@@ -171,6 +219,11 @@ pub struct CostReport {
     pub mass_grams: f64,
     /// Payload bytes per gram of DNA at the stated copy number.
     pub bytes_per_gram: f64,
+    /// kg CO2e of synthesis solvents for one copy of every strand, low and
+    /// high end ([`synthesis_kg_co2e_per_nt_range`]); equal when the caller
+    /// supplied a per-nucleotide figure.
+    pub synthesis_kg_co2e_low: f64,
+    pub synthesis_kg_co2e_high: f64,
     /// kg CO2e of the sequencing kits for one read-back.
     pub sequencing_kg_co2e: f64,
     /// kg CO2e per year kept, whole life cycle, scaled from Nguyen et al.'s
@@ -185,6 +238,10 @@ pub fn estimate(shape: ArchiveShape, assumptions: CostAssumptions) -> CostReport
     let nt = shape.nucleotides as f64;
     let synthesis_usd = nt * assumptions.synthesis_usd_per_nt;
     let gbases_read = nt * assumptions.read_coverage / 1e9;
+    let (synthesis_low, synthesis_high) = match assumptions.synthesis_kg_co2e_per_nt {
+        Some(per_nt) => (per_nt, per_nt),
+        None => synthesis_kg_co2e_per_nt_range(),
+    };
     let sequencing_usd = gbases_read * assumptions.sequencing_usd_per_gbase;
     let mass_grams = nt * assumptions.copies_per_strand * GRAMS_PER_MOL_PER_NT / AVOGADRO;
     let per_mb = |usd: f64| if mb > 0.0 { usd / mb } else { 0.0 };
@@ -196,6 +253,8 @@ pub fn estimate(shape: ArchiveShape, assumptions: CostAssumptions) -> CostReport
         bits_per_nt: if nt > 0.0 { shape.payload_bytes as f64 * 8.0 / nt } else { 0.0 },
         mass_grams,
         bytes_per_gram: if mass_grams > 0.0 { shape.payload_bytes as f64 / mass_grams } else { 0.0 },
+        synthesis_kg_co2e_low: nt * synthesis_low,
+        synthesis_kg_co2e_high: nt * synthesis_high,
         sequencing_kg_co2e: gbases_read * assumptions.sequencer.kg_co2e_per_gbase(),
         lifecycle_kg_co2e_per_year: shape.payload_bytes as f64 / 1e12 * assumptions.chemistry.kg_co2e_per_tb_year(),
         assumptions,
@@ -249,6 +308,22 @@ mod tests {
         assert_eq!(Sequencer::parse("NovaSeq-X"), Some(Sequencer::NovaSeqX));
         assert_eq!(Chemistry::parse("enzymatic"), Some(Chemistry::Enzymatic));
         assert_eq!(Sequencer::parse("hiseq"), None);
+    }
+
+    #[test]
+    fn write_side_carbon_is_the_array_run_spread_over_its_nucleotides() {
+        // 137.55 g + 16.51 g of acetonitrile at 2.96, 71.01 g of ethanol at 1.19.
+        let run = array_run_kg_co2e();
+        assert!((run - (0.137_55 * 2.96 + 0.016_506 * 2.96 + 0.071_01 * 1.19)).abs() < 1e-9, "{run}");
+        let (low, high) = synthesis_kg_co2e_per_nt_range();
+        assert!((low - 4.58e-8).abs() < 0.01e-8, "{low:e}");
+        assert!((high - 5.49e-7).abs() < 0.01e-7, "{high:e}");
+        let r = estimate(shape(), CostAssumptions::default());
+        assert!((r.synthesis_kg_co2e_low - 5.5e6 * low).abs() < 1e-12);
+        assert!((r.synthesis_kg_co2e_high - 5.5e6 * high).abs() < 1e-12);
+        let given = estimate(shape(), CostAssumptions { synthesis_kg_co2e_per_nt: Some(1e-7), ..CostAssumptions::default() });
+        assert!((given.synthesis_kg_co2e_low - 0.55).abs() < 1e-12);
+        assert_eq!(given.synthesis_kg_co2e_low, given.synthesis_kg_co2e_high);
     }
 
     #[test]

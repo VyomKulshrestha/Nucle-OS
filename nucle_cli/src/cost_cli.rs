@@ -15,6 +15,7 @@ pub struct CostArgs {
     pub copies: f64,
     pub sequencer: String,
     pub chemistry: String,
+    pub synthesis_kg_co2e_per_nt: Option<f64>,
 }
 
 pub fn cmd_cost(args: CostArgs, json: bool) {
@@ -41,6 +42,7 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
         ("--sequencing-usd-per-gbase", args.sequencing_usd_per_gbase),
         ("--coverage", args.read_coverage),
         ("--copies", args.copies),
+        ("--synthesis-kg-co2e-per-nt", args.synthesis_kg_co2e_per_nt.unwrap_or(0.0)),
     ] {
         if !(value.is_finite() && value >= 0.0) {
             eprintln!("{name} must be a non-negative number, got {value}");
@@ -68,6 +70,7 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
         copies_per_strand: args.copies,
         sequencer,
         chemistry,
+        synthesis_kg_co2e_per_nt: args.synthesis_kg_co2e_per_nt,
     };
     let r = estimate(shape, assumptions);
 
@@ -86,6 +89,8 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
             "read_usd_per_mb": r.read_usd_per_mb,
             "mass_grams": r.mass_grams,
             "bytes_per_gram": r.bytes_per_gram,
+            "synthesis_kg_co2e_low": r.synthesis_kg_co2e_low,
+            "synthesis_kg_co2e_high": r.synthesis_kg_co2e_high,
             "sequencing_kg_co2e": r.sequencing_kg_co2e,
             "lifecycle_kg_co2e_per_year": r.lifecycle_kg_co2e_per_year,
             "assumptions": r.assumptions,
@@ -100,6 +105,14 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
     println!("  write:        ${:.2}  (${:.2}/MB at ${}/nt)", r.synthesis_usd, r.write_usd_per_mb, args.synthesis_usd_per_nt);
     println!("  read:         ${:.4}  (${:.4}/MB at {}x coverage, ${}/Gbase)", r.sequencing_usd, r.read_usd_per_mb, args.read_coverage, args.sequencing_usd_per_gbase);
     println!("  mass:         {:.3e} g at {} copies per strand ({:.3e} bytes per gram)", r.mass_grams, args.copies, r.bytes_per_gram);
+    if args.synthesis_kg_co2e_per_nt.is_some() {
+        println!("  carbon, write: {:.3e} kg CO2e (at the given kg CO2e per nucleotide)", r.synthesis_kg_co2e_low);
+    } else {
+        println!(
+            "  carbon, write: {:.3e} to {:.3e} kg CO2e (synthesis solvents only, light-directed array run: full chip to 16,383 sequences)",
+            r.synthesis_kg_co2e_low, r.synthesis_kg_co2e_high
+        );
+    }
     println!("  carbon, read: {:.3e} kg CO2e for one read-back ({}, {} kg CO2e per Gbase)", r.sequencing_kg_co2e, sequencer.name(), sequencer.kg_co2e_per_gbase());
     println!(
         "  carbon, kept: {:.3e} kg CO2e per year, whole life cycle ({}: {} kg per TB-year; hard disk {}, tape {})",
@@ -117,5 +130,7 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
     println!("Read-side carbon is Illumina's own reagent-kit life-cycle assessment per gigabase");
     println!("(2025 Corporate Responsibility Report); a small archive on its own run uses a whole kit.");
     println!("Life-cycle carbon is read from the chart in Nguyen et al. 2020 (1 TB kept a year,");
-    println!("10% read). No published figure covers synthesis on its own.");
+    println!("10% read). Write-side carbon counts only the acetonitrile and ethanol of one lab-scale");
+    println!("light-directed synthesis run (Antkowiak et al. 2020) at published emission factors; the");
+    println!("amidites, DMSO and electricity have none, so it is a floor.");
 }
