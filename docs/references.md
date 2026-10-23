@@ -154,6 +154,30 @@ One 11,293-oligo pool holding twelve codec configurations (DNA-Aeon, DNA Fountai
 
 ---
 
+## 5. Press et al. (2020) — HEDGES
+
+> Press, W. H., Hawkins, J. A., Jones, S. K., Schaub, J. M., & Finkelstein, I. J. (2020). "HEDGES error-correcting code for DNA storage corrects indels and allows sequence constraints." *PNAS*, 117(31), 18489–18496.
+
+### Key idea
+
+Each base encodes a bit through a hash of the bit position and the bits before it, so a single insertion or deletion makes every following base stop matching. A decoder can then search for the bit sequence whose encoding best explains one noisy read, treating insertions and deletions as ordinary edits instead of needing many reads to vote them out.
+
+### Mapping to NucleOS
+
+| Paper | NucleOS |
+|---|---|
+| Hash of salt, bit position and previous bits picks the base | `HedgesCodec::choose` — 12 previous bits, one of 6 orderings of the 3 bases that differ from the previous base |
+| Variable code rates, GC-window constraint | Rate 1/2 only; the homopolymer constraint is built into the base choice |
+| A* tree search with edit penalties | `decode_bits_where` — A* with costs `-10 ln p` per edit (`EditCosts::for_channel`) and an admissible length-difference bound |
+| Outer Reed-Solomon over many strands | 2-byte index + CRC-8 per strand; list decoding retries the next-cheapest path when the CRC fails; `decode` votes per index |
+
+### Source files
+
+- [`nucle_codec/src/hedges.rs`](../nucle_codec/src/hedges.rs) — Encoder, A* decoder, `DnaCodec` implementation
+- [`nucle_codec/examples/hedges_channel.rs`](../nucle_codec/examples/hedges_channel.rs) — Single-read benchmark on a configurable indel channel
+
+---
+
 ## Further reading
 
 - Church, G. M., Gao, Y., & Kosuri, S. (2012). "Next-generation digital information storage in DNA." *Science*, 337(6102), 1628. — First demonstration of large-scale DNA storage (659 KB).

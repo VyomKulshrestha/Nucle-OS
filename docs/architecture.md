@@ -943,6 +943,43 @@ until a published rate constant can be cited alongside its activation energy;
 - Highest density: 2.0 bits/nucleotide theoretical, ~1.85 effective
 - Best suited for real-world data with natural bit entropy
 
+### HEDGES (Press et al., 2020)
+- `nucle_codec::hedges::HedgesCodec`, a rate-1/2 variant of the PNAS 2020
+  code: each base carries one bit, chosen among the three bases that differ
+  from the previous one in an order set by a hash of the bit position and the
+  previous 12 bits, so it never writes a homopolymer
+- Decodes from a single read. The three codecs above shift every base after
+  an insertion or deletion and need a consensus of many reads first; HEDGES
+  searches for the cheapest bit sequence that explains the read with
+  substitutions, insertions and deletions (A* over bit position, read
+  position, recent bits and previous base)
+- Edit costs are `-10 ln p` for the channel's per-base rate of each edit
+  (`EditCosts::for_channel`), defaulting to the measured `array-lofi`
+  channel, so the cheapest path is the most likely one
+- Each 152 nt strand holds a 2-byte index, 16 data bytes and a CRC-8. When
+  the cheapest path fails the CRC, the search continues to the next-cheapest
+  complete path, up to 16 of them, before giving up (list decoding). Reads
+  that still fail are erasures for an outer code
+- Density: 1 bit/nucleotide raw, 0.84 bits/nucleotide of data after index
+  and CRC
+
+Single reads, no consensus, `cargo run --release -p nucle_codec --example hedges_channel`:
+
+| Channel (sub / ins / del per base) | Mean edits per read | Decoded from one read |
+|---|---:|---:|
+| Measured `array-lofi`: 0.98% / 0.10% / 0.43% | 2.3 | 99.2% of 500 |
+| 1% / 1% / 1% | 4.5 | 83.6% of 500 |
+
+The example checks every decode against the original data, and none of the
+1,000 reads decoded to wrong data. At 1% / 1% / 1%, 77 of the 82 failures
+hit the 400,000-state search limit and 5 ran out of candidates. A CRC-8
+still passes about one wrong candidate in 256, so a read that reaches list
+decoding has up to a 16-in-256 chance of a wrong answer; when several reads
+cover a strand, `decode` takes the most common payload per index. The codec
+implements `DnaCodec` (`name() == "hedges"`) and is not yet a VFS `--codec`
+option: the VFS reads through consensus first, which removes the advantage
+HEDGES has on single reads.
+
 ## Error Correction Architecture
 
 Two-layer coding scheme (industry standard):
