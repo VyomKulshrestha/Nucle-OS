@@ -1467,13 +1467,28 @@ cites about $100 per MB), so the defaults, $0.00015 per synthesized
 nucleotide, $10 per sequenced gigabase, 10× read coverage and 10 kept copies
 per strand, are assumptions printed in every report and overridable with
 `--synthesis-usd-per-nt`, `--sequencing-usd-per-gbase`, `--coverage` and
-`--copies`. There is no carbon figure. The cradle-to-grave life-cycle
-assessment of DNA storage by Nguyen et al. ("Architecting Datacenters for
-Sustainability: Greener Data Storage using Synthetic DNA", Electronics Goes
-Green 2020) compares DNA, tape and hard disks only in charts, and concludes
-that phosphoramidite synthesis can beat them near its best case but not its
-worst, while enzymatic synthesis beats both. It gives no per-megabyte number
-to build a default on.
+`--copies`.
+
+Carbon comes in two figures with different scopes, because no source covers
+synthesis on its own:
+
+- **Reading** (`carbon, read`): bases sequenced × Illumina's kg CO2e per
+  gigabase from its streamlined reagent-kit life-cycle assessments (2025
+  Corporate Responsibility Report, p. 36): MiSeq 3.81, MiSeq i100 2.46,
+  NovaSeq 6000 0.09, NovaSeq X 0.04 (the default; `--sequencer`). These are
+  the vendor's own numbers, not third-party reviewed, and assume a full kit;
+  a small archive alone on a run still uses the whole kit.
+- **Keeping** (`carbon, kept`): payload size × the cradle-to-grave figure
+  for one terabyte kept a year with 10% read, from Nguyen et al.
+  ("Architecting Datacenters for Sustainability: Greener Data Storage using
+  Synthetic DNA", Electronics Goes Green 2020). The paper gives its results
+  only as a chart (Figure 5, in units of 0.1 kg CO2e/TB), so these are
+  readings of it: 7.1 kg with phosphoramidite synthesis and fossil
+  acetonitrile (error bar about 3.1 to 11.2, the default; `--chemistry`),
+  6.2 with bio-acetonitrile, 1.6 with enzymatic synthesis, against about 42
+  for hard disks and 5.0 for tape. No later life-cycle assessment of DNA
+  storage was found; a 2026 workshop abstract (Robineau and Estevez-Torres)
+  says the same.
 
 ## `nucle doctor`
 

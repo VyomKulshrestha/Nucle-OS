@@ -300,6 +300,12 @@ enum Commands {
         /// Physical copies kept per strand
         #[arg(long, default_value = "10")]
         copies: f64,
+        /// Sequencer for read-side carbon: novaseq-x, novaseq-6000, miseq-i100, miseq
+        #[arg(long, default_value = "novaseq-x")]
+        sequencer: String,
+        /// Synthesis chemistry for life-cycle carbon: phosphoramidite, bio-acetonitrile, enzymatic
+        #[arg(long, default_value = "phosphoramidite")]
+        chemistry: String,
     },
 
     /// Score consensus decoding on real clustered sequencing reads
@@ -659,8 +665,18 @@ fn main() {
         Commands::Simulate { file, profile, coverage, years, celsius, medium } => {
             cmd_simulate(&file, &profile, coverage, years.map(|y| (y, celsius, medium)), cli.json)
         }
-        Commands::Cost { file, codec, redundancy, synthesis_usd_per_nt, sequencing_usd_per_gbase, coverage, copies } => cost_cli::cmd_cost(
-            cost_cli::CostArgs { file, codec, redundancy, synthesis_usd_per_nt, sequencing_usd_per_gbase, read_coverage: coverage, copies },
+        Commands::Cost { file, codec, redundancy, synthesis_usd_per_nt, sequencing_usd_per_gbase, coverage, copies, sequencer, chemistry } => cost_cli::cmd_cost(
+            cost_cli::CostArgs {
+                file,
+                codec,
+                redundancy,
+                synthesis_usd_per_nt,
+                sequencing_usd_per_gbase,
+                read_coverage: coverage,
+                copies,
+                sequencer,
+                chemistry,
+            },
             cli.json,
         ),
         Commands::Reads { centers, clusters, limit, blind } => reads_cli::cmd_reads(&centers, &clusters, limit, blind, cli.json),

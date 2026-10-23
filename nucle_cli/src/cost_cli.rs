@@ -2,7 +2,7 @@
 //! and how much it weighs, computed from the strands Nucle-OS actually
 //! writes for it (codec, Reed-Solomon parity and primers included).
 
-use nucle_synth::cost::{estimate, ArchiveShape, CostAssumptions};
+use nucle_synth::cost::{estimate, ArchiveShape, Chemistry, CostAssumptions, Sequencer, HDD_KG_CO2E_PER_TB_YEAR, TAPE_KG_CO2E_PER_TB_YEAR};
 use nucle_vfs::syscall::{CodecKind, NucleOS};
 
 pub struct CostArgs {
@@ -13,6 +13,8 @@ pub struct CostArgs {
     pub sequencing_usd_per_gbase: f64,
     pub read_coverage: f64,
     pub copies: f64,
+    pub sequencer: String,
+    pub chemistry: String,
 }
 
 pub fn cmd_cost(args: CostArgs, json: bool) {
@@ -22,6 +24,16 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
     });
     let Some(codec) = CodecKind::from_codec_name(&args.codec) else {
         eprintln!("Unknown codec '{}'; expected ternary, fountain, yin-yang, or hedges", args.codec);
+        std::process::exit(1);
+    };
+    let Some(sequencer) = Sequencer::parse(&args.sequencer) else {
+        let known: Vec<&str> = Sequencer::ALL.iter().map(|s| s.name()).collect();
+        eprintln!("Unknown sequencer '{}'; expected one of {}", args.sequencer, known.join(", "));
+        std::process::exit(1);
+    };
+    let Some(chemistry) = Chemistry::parse(&args.chemistry) else {
+        let known: Vec<&str> = Chemistry::ALL.iter().map(|c| c.name()).collect();
+        eprintln!("Unknown synthesis chemistry '{}'; expected one of {}", args.chemistry, known.join(", "));
         std::process::exit(1);
     };
     for (name, value) in [
@@ -54,6 +66,8 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
         sequencing_usd_per_gbase: args.sequencing_usd_per_gbase,
         read_coverage: args.read_coverage,
         copies_per_strand: args.copies,
+        sequencer,
+        chemistry,
     };
     let r = estimate(shape, assumptions);
 
@@ -72,6 +86,8 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
             "read_usd_per_mb": r.read_usd_per_mb,
             "mass_grams": r.mass_grams,
             "bytes_per_gram": r.bytes_per_gram,
+            "sequencing_kg_co2e": r.sequencing_kg_co2e,
+            "lifecycle_kg_co2e_per_year": r.lifecycle_kg_co2e_per_year,
             "assumptions": r.assumptions,
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
@@ -84,8 +100,22 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
     println!("  write:        ${:.2}  (${:.2}/MB at ${}/nt)", r.synthesis_usd, r.write_usd_per_mb, args.synthesis_usd_per_nt);
     println!("  read:         ${:.4}  (${:.4}/MB at {}x coverage, ${}/Gbase)", r.sequencing_usd, r.read_usd_per_mb, args.read_coverage, args.sequencing_usd_per_gbase);
     println!("  mass:         {:.3e} g at {} copies per strand ({:.3e} bytes per gram)", r.mass_grams, args.copies, r.bytes_per_gram);
+    println!("  carbon, read: {:.3e} kg CO2e for one read-back ({}, {} kg CO2e per Gbase)", r.sequencing_kg_co2e, sequencer.name(), sequencer.kg_co2e_per_gbase());
+    println!(
+        "  carbon, kept: {:.3e} kg CO2e per year, whole life cycle ({}: {} kg per TB-year; hard disk {}, tape {})",
+        r.lifecycle_kg_co2e_per_year,
+        chemistry.name(),
+        chemistry.kg_co2e_per_tb_year(),
+        HDD_KG_CO2E_PER_TB_YEAR,
+        TAPE_KG_CO2E_PER_TB_YEAR
+    );
     println!();
     println!("Prices are assumptions, not quotes; published estimates range from about $100/MB");
     println!("(Blocks & Files, 2026) to $3,500/MB (US GAO, 2022) to write. Override them with");
     println!("--synthesis-usd-per-nt and --sequencing-usd-per-gbase.");
+    println!();
+    println!("Read-side carbon is Illumina's own reagent-kit life-cycle assessment per gigabase");
+    println!("(2025 Corporate Responsibility Report); a small archive on its own run uses a whole kit.");
+    println!("Life-cycle carbon is read from the chart in Nguyen et al. 2020 (1 TB kept a year,");
+    println!("10% read). No published figure covers synthesis on its own.");
 }

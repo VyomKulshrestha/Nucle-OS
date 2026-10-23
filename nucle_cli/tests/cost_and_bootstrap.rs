@@ -41,6 +41,16 @@ fn cost_reflects_the_real_encoding_and_the_stated_prices() {
 
     let bad = nucle().arg("cost").arg(&file).args(["-c", "morse"]).output().unwrap();
     assert!(!bad.status.success());
+
+    // Read-side carbon follows the sequencer's published kg CO2e per Gbase;
+    // life-cycle carbon follows the synthesis chemistry.
+    let gbase = nt * 10.0 / 1e9;
+    assert!((v["sequencing_kg_co2e"].as_f64().unwrap() - gbase * 0.04).abs() < 1e-15);
+    let miseq = json(nucle().arg("--json").arg("cost").arg(&file).args(["--sequencer", "miseq"]));
+    assert!((miseq["sequencing_kg_co2e"].as_f64().unwrap() - gbase * 3.81).abs() < 1e-12);
+    let enzymatic = json(nucle().arg("--json").arg("cost").arg(&file).args(["--chemistry", "enzymatic"]));
+    assert!(enzymatic["lifecycle_kg_co2e_per_year"].as_f64().unwrap() < v["lifecycle_kg_co2e_per_year"].as_f64().unwrap());
+    assert!(!nucle().arg("cost").arg(&file).args(["--sequencer", "hiseq"]).output().unwrap().status.success());
 }
 
 #[test]
