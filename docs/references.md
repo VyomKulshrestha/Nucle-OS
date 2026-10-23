@@ -169,7 +169,7 @@ Each base encodes a bit through a hash of the bit position and the bits before i
 | Hash of salt, bit position and previous bits picks the base | `HedgesCodec::choose` — 12 previous bits, one of 6 orderings of the 3 bases that differ from the previous base |
 | Variable code rates, GC-window constraint | Rate 1/2 only; the homopolymer constraint is built into the base choice |
 | A* tree search with edit penalties | `decode_bits_where` — A* with costs `-10 ln p` per edit (`EditCosts::for_channel`) and an admissible length-difference bound |
-| Outer Reed-Solomon over many strands | 2-byte index + CRC-8 per strand; list decoding retries the next-cheapest path when the CRC fails; `decode` votes per index |
+| Outer Reed-Solomon over many strands | 2-byte index + CRC-8 per strand; list decoding retries the next-cheapest path when the CRC fails. In the VFS, Reed-Solomon over each strand's 16 data bytes with the parity written as HEDGES strands too, and each strand rebuilt from the reads that decode on their own (`HedgesCodec::repair`) |
 
 ### Source files
 

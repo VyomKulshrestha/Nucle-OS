@@ -614,3 +614,35 @@ fn test_nanopore_recovery_is_reliable_at_the_original_diagnostic_scale_thorough(
          regressed in consensus/ECC recovery at scale"
     );
 }
+
+/// HEDGES is a full storage codec: written, read back, and migrated to.
+#[test]
+fn test_hedges_store_read_and_migrate() {
+    let mut os = NucleOS::new(10);
+    let original = b"HEDGES decodes one noisy read at a time, indels included.";
+    os.dna_write_with_codec("hedges.txt", original, 2, CodecKind::Hedges).unwrap();
+    assert_eq!(os.catalog.get_by_name("hedges.txt").unwrap().codec, "hedges");
+    assert_eq!(os.dna_read("hedges.txt").unwrap(), original);
+    let manifest = os.catalog.get_by_name("hedges.txt").unwrap().manifest.clone().unwrap();
+    assert_eq!(manifest.recovery_manifest.unwrap().consensus_method, "hedges-per-read-vote");
+
+    os.dna_write("plain.txt", b"ternary first", 1).unwrap();
+    nucle_vfs::migrate::migrate_object(&mut os, "plain.txt", None, Some("hedges")).unwrap();
+    assert_eq!(os.catalog.get_by_name("plain.txt").unwrap().codec, "hedges");
+    assert_eq!(os.dna_read("plain.txt").unwrap(), b"ternary first");
+    assert_eq!(os.dna_read_version("plain.txt", 1).unwrap(), b"ternary first");
+}
+
+/// Through the measured low-fidelity array channel (1.5% errors per base,
+/// a third of them indels, reads spread unevenly over strands), HEDGES
+/// strands are rebuilt read by read and the file comes back exactly.
+#[test]
+fn test_hedges_recovers_through_the_measured_low_fidelity_channel() {
+    for seed in 0..3 {
+        let noise = SimulationConfig::realistic(HardwareProfile::ArrayLowFidelity, 6, seed);
+        let mut os = NucleOS::new(10).with_noise(noise);
+        let original: Vec<u8> = (0..120u8).map(|i| i.wrapping_mul(37)).collect();
+        os.dna_write_with_codec("lofi.bin", &original, 4, CodecKind::Hedges).unwrap();
+        assert_eq!(os.dna_read("lofi.bin").unwrap(), original, "seed {seed}");
+    }
+}

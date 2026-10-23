@@ -22,10 +22,11 @@ use crate::catalog::Catalog;
 use nucle_codec::base::{DnaCodec, DnaStrand, StrandCollection};
 use nucle_codec::constraints::ConstraintValidator;
 use nucle_codec::fountain::{FountainCodec, FountainConfig};
+use nucle_codec::hedges::{HedgesCodec, HedgesConfig, RepairStats};
 use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
-use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, RecoveryManifest};
+use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, vote_groups, RecoveryManifest};
 use nucle_index::primer::PrimerLibrary;
 use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
@@ -50,6 +51,10 @@ pub enum CodecKind {
     Ternary,
     Fountain,
     YinYang,
+    /// HEDGES (Press et al. 2020): decodes each read on its own, indels
+    /// included, so `dna_read` repairs HEDGES strands read by read before
+    /// falling back to consensus.
+    Hedges,
 }
 
 impl CodecKind {
@@ -63,6 +68,7 @@ impl CodecKind {
                 fountain_config.unwrap_or_default(),
             )),
             Self::YinYang => Box::new(YinYangCodec::new(YinYangConfig::default())),
+            Self::Hedges => Box::new(HedgesCodec::new(HedgesConfig::default())),
         }
     }
 
@@ -73,6 +79,7 @@ impl CodecKind {
             "ternary" | "ternary-rotating-cipher" => Some(Self::Ternary),
             "fountain" | "dna-fountain" => Some(Self::Fountain),
             "yin-yang" | "yinyang" => Some(Self::YinYang),
+            "hedges" => Some(Self::Hedges),
             _ => None,
         }
     }
@@ -109,6 +116,95 @@ fn simulate_with_provenance(
         .filter(|s| s.is_intact && !s.is_truncated)
         .map(|s| (s.sequence.clone(), (s.strand_id / coverage) as usize))
         .unzip()
+}
+
+/// Reed-Solomon parity for a HEDGES file, written as HEDGES strands too.
+///
+/// The other codecs' parity is computed over strand bases and stored as
+/// packed bytes, which a single insertion or deletion scrambles. Here the
+/// parity is computed over each strand's data bytes and encoded with
+/// HEDGES under the indices after the data strands, so parity survives
+/// indels exactly as data does: the inner HEDGES / outer Reed-Solomon
+/// arrangement of Press et al. 2020.
+fn hedges_parity_strands(data: &[u8], data_strand_count: usize, redundancy: usize) -> Result<Vec<DnaStrand>, String> {
+    let hedges = HedgesCodec::new(HedgesConfig::default());
+    let p = HedgesConfig::default().payload_bytes;
+    let rows: Vec<Vec<u8>> = (0..data_strand_count)
+        .map(|k| {
+            let mut row = data[(k * p).min(data.len())..((k + 1) * p).min(data.len())].to_vec();
+            row.resize(p, 0);
+            row
+        })
+        .collect();
+    let parity = ReedSolomon::new(RsConfig::new(redundancy))
+        .encode_block(&rows)
+        .map_err(|e| format!("ECC encoding failed: {}", e))?;
+    parity
+        .iter()
+        .enumerate()
+        .map(|(j, row)| {
+            let index = u16::try_from(data_strand_count + j)
+                .map_err(|_| "encoding failed: more strands than the HEDGES 16-bit index holds".to_string())?;
+            Ok(hedges.strand_for(index, row))
+        })
+        .collect()
+}
+
+/// Search states per read in the first, read-by-read pass over a HEDGES
+/// file. On the measured low-fidelity array channel this decodes 94.8% of
+/// single reads in a quarter of the time the full budget takes.
+const HEDGES_PER_READ_EXPANSIONS: usize = 50_000;
+
+/// Reads tried before [`hedges_rebuild_data_strands`] judges whether
+/// per-read decoding is working, and the share that must decode for it to
+/// carry on.
+const HEDGES_PER_READ_TRIAL: usize = 24;
+const HEDGES_PER_READ_MIN_SHARE: f64 = 0.25;
+
+/// The exact data strands of a HEDGES file, from its reads. Every strand,
+/// parity included, is rebuilt read by read ([`HedgesCodec::repair`]) or,
+/// when no read decodes on its own, from the consensus of its reads; then
+/// Reed-Solomon over the data bytes restores whatever is still missing or
+/// wrong. Positions nothing could restore are left out, so the codec
+/// reports them.
+///
+/// Reads noisier than HEDGES can follow (Nanopore-grade, about 7% error)
+/// make every per-read search run to its limit, so once fewer than a
+/// quarter of the reads tried decode, the remaining strands go straight to
+/// consensus.
+fn hedges_rebuild_data_strands(
+    data_groups: &[Vec<DnaStrand>],
+    parity_groups: &[Vec<DnaStrand>],
+    parity_per_stripe: usize,
+) -> Vec<DnaStrand> {
+    let hedges = HedgesCodec::new(HedgesConfig::default());
+    let per_read = HedgesCodec::new(HedgesConfig { max_expansions: HEDGES_PER_READ_EXPANSIONS, ..HedgesConfig::default() });
+    let mut stats = RepairStats::default();
+    let mut payload = |group: &[DnaStrand], index: usize| -> Option<Vec<u8>> {
+        let index = u16::try_from(index).ok()?;
+        let worth_it = stats.tried < HEDGES_PER_READ_TRIAL
+            || stats.decoded as f64 >= HEDGES_PER_READ_MIN_SHARE * stats.tried as f64;
+        let strand = worth_it
+            .then(|| per_read.repair_counting(group, index, &mut stats))
+            .flatten()
+            .or_else(|| vote_groups(&[group.to_vec()]).pop().flatten().map(|r| r.sequence))?;
+        hedges.decode_read(&strand).filter(|(i, _)| *i == index).map(|(_, p)| p)
+    };
+    let data_rows: Vec<Option<Vec<u8>>> = data_groups.iter().enumerate().map(|(i, g)| payload(g, i)).collect();
+    let parity_rows: Vec<Option<Vec<u8>>> =
+        parity_groups.iter().enumerate().map(|(j, g)| payload(g, data_groups.len() + j)).collect();
+    let rows = if parity_rows.is_empty() {
+        data_rows
+    } else {
+        match ReedSolomon::new(RsConfig::new(parity_per_stripe)).decode_block(&data_rows, &parity_rows) {
+            Ok(rows) => rows.into_iter().map(Some).collect(),
+            Err(_) => data_rows,
+        }
+    };
+    rows.iter()
+        .enumerate()
+        .filter_map(|(i, row)| row.as_ref().map(|r| hedges.strand_for(i as u16, r)))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -743,7 +839,9 @@ impl NucleOS {
 
         // ── Layer 3: ECC ── compute RS parity strands
         let mut parity_strands: Vec<DnaStrand> = Vec::new();
-        if redundancy > 0 {
+        if redundancy > 0 && codec_kind == CodecKind::Hedges {
+            parity_strands = hedges_parity_strands(data, data_strand_count, redundancy)?;
+        } else if redundancy > 0 {
             let rs = ReedSolomon::new(RsConfig::new(redundancy));
 
             // Convert DNA strands to byte vectors for RS
@@ -1188,7 +1286,10 @@ impl NucleOS {
             hasher.finalize()[..8].to_vec() == dna_file.content_hash
         };
 
-        let decoded_strands: Vec<DnaStrand> = if dna_file.parity_strand_count > 0 {
+        let consensus_method = if codec_kind == CodecKind::Hedges { "hedges-per-read-vote" } else { "majority-vote" };
+        let decoded_strands: Vec<DnaStrand> = if codec_kind == CodecKind::Hedges {
+            hedges_rebuild_data_strands(&dense_data_groups, &dense_parity_groups, dna_file.rs_parity_per_stripe)
+        } else if dna_file.parity_strand_count > 0 {
             consensus_then_rs_decode_with_retry(
                 &dense_data_groups,
                 &dense_parity_groups,
@@ -1233,7 +1334,7 @@ impl NucleOS {
 
         let recovery_manifest = RecoveryManifest {
             observed_error_rate: observed_error,
-            consensus_method: "majority-vote".to_string(),
+            consensus_method: consensus_method.to_string(),
             sequencing_profile: seq_profile,
             recovered_strands: recovered_strands_count,
             ecc_success,
@@ -1292,11 +1393,11 @@ impl NucleOS {
             })
             .collect();
         // The default codec is the one most files use.
-        let mut counts = [0usize; 4];
+        let mut counts = [0usize; 5];
         for e in &entries {
-            counts[(e.codec as usize).min(3)] += 1;
+            counts[(e.codec as usize).min(4)] += 1;
         }
-        let codec = (1..4).max_by_key(|&c| counts[c]).unwrap_or(1) as u8;
+        let codec = (1..5).max_by_key(|&c| counts[c]).unwrap_or(1) as u8;
         ArchiveHeader {
             codec,
             strand_len: self.pool.avg_strand_length().round().clamp(0.0, u16::MAX as f64) as u16,

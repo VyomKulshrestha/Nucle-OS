@@ -248,7 +248,41 @@ fn unknown_storage_codec_is_rejected_without_creating_a_pool() {
     assert!(!pool.exists());
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(stderr.contains("unknown codec 'imaginary'"));
-    assert!(stderr.contains("ternary, fountain, or yin-yang"));
+    assert!(stderr.contains("ternary, fountain, yin-yang, or hedges"));
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn hedges_store_round_trips_across_processes_and_shows_in_the_header() {
+    let root = scratch_dir("hedges");
+    let pool = root.join("pool");
+    let input = root.join("hedges-data.bin");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let original: Vec<u8> = (0..=255).rev().collect();
+    std::fs::write(&input, &original).unwrap();
+
+    let stored = run(&pool, &["--json", "store", input.to_str().unwrap(), "--codec", "hedges", "--redundancy", "3"]);
+    assert!(stored.status.success(), "stderr: {}", String::from_utf8_lossy(&stored.stderr));
+    let result: serde_json::Value = serde_json::from_slice(&stored.stdout).unwrap();
+    assert_eq!(result["codec"], "hedges");
+    // 256 bytes are 16 HEDGES strands of 16 bytes, plus 3 parity strands.
+    assert_eq!(result["data_strand_count"], 16);
+    assert_eq!(result["parity_strand_count"], 3);
+
+    let retrieved = run(&pool, &["--json", "retrieve", "hedges-data.bin"]);
+    assert!(retrieved.status.success(), "stderr: {}", String::from_utf8_lossy(&retrieved.stderr));
+    let result: serde_json::Value = serde_json::from_slice(&retrieved.stdout).unwrap();
+    assert_eq!(result["content"], expected_hex(&original));
+
+    let fasta = root.join("archive.fasta");
+    let exported = run(&pool, &["bootstrap", "export", fasta.to_str().unwrap()]);
+    assert!(exported.status.success(), "stderr: {}", String::from_utf8_lossy(&exported.stderr));
+    let header = run(&pool, &["--json", "bootstrap", "inspect", fasta.to_str().unwrap()]);
+    let header: serde_json::Value = serde_json::from_slice(&header.stdout).unwrap();
+    // Codec id 4 is HEDGES in the header's file table.
+    assert_eq!(header["files"][0]["codec"], 4);
 
     let _ = std::fs::remove_dir_all(&root);
 }

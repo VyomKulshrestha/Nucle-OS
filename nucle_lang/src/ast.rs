@@ -747,6 +747,9 @@ pub enum Codec {
     YinYang,
     Ternary,
     Fountain,
+    /// HEDGES (Press et al. 2020), which decodes single reads through
+    /// insertions and deletions.
+    Hedges,
 }
 
 impl Codec {
@@ -755,6 +758,7 @@ impl Codec {
             "yinyang" | "yin-yang" => Some(Self::YinYang),
             "ternary" | "ternary-rotating" | "ternary-rotating-cipher" => Some(Self::Ternary),
             "fountain" | "dna-fountain" => Some(Self::Fountain),
+            "hedges" => Some(Self::Hedges),
             _ => None,
         }
     }
@@ -766,6 +770,7 @@ impl std::fmt::Display for Codec {
             Self::YinYang => "YinYang",
             Self::Ternary => "Ternary",
             Self::Fountain => "Fountain",
+            Self::Hedges => "Hedges",
         };
         write!(f, "{}", name)
     }

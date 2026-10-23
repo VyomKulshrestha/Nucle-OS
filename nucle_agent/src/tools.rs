@@ -117,7 +117,7 @@ impl ToolName {
             ToolName::MigrateFile => vec![
                 ToolParam::required("filename", "Name of the file to migrate"),
                 ToolParam::optional("redundancy", "New number of RS parity strands (keeps current if omitted)"),
-                ToolParam::optional("codec", "New codec, e.g. ternary-rotating-cipher, dna-fountain, yin-yang (keeps current if omitted)"),
+                ToolParam::optional("codec", "New codec, e.g. ternary-rotating-cipher, dna-fountain, yin-yang, hedges (keeps current if omitted)"),
             ],
             ToolName::Help => vec![],
         }

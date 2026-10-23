@@ -35,7 +35,7 @@ PoolProperty        ::= 'codec' ':' CodecLiteral
 
 MediumLiteral       ::= 'encapsulated' | 'capsule' | 'dnashell' | 'bone' | 'fossil'
 
-CodecLiteral        ::= 'YinYang' | 'yin-yang' | 'Ternary' | 'ternary-rotating' | 'ternary-rotating-cipher' | 'Fountain' | 'dna-fountain'
+CodecLiteral        ::= 'YinYang' | 'yin-yang' | 'Ternary' | 'ternary-rotating' | 'ternary-rotating-cipher' | 'Fountain' | 'dna-fountain' | 'Hedges' | 'hedges'
 ProfileLiteral      ::= 'Illumina' | 'Nanopore' | 'oxfordnanopore' | 'oxford-nanopore' | 'Twist' | 'twistbioscience' | 'twist-bioscience' | 'IDT' | 'idtopools' | 'idt-opools'
 
 // A user-defined sum type -- at most one payload per variant
@@ -273,7 +273,9 @@ YearsLiteral        ::= [0-9]+ ( '.' [0-9]+ )? 'y'
 
 ## Storage codecs and pipeline execution
 
-`Ternary`, `Fountain`, and `YinYang` are all executable VFS codecs. A direct
+`Ternary`, `Fountain`, `YinYang`, and `Hedges` are all executable VFS codecs.
+`Hedges` decodes each sequencing read on its own, insertions and deletions
+included, and keeps its parity as HEDGES strands too. A direct
 `store` uses its target pool's `codec`; a pipeline uses the codec in its
 `encode` step. For example:
 

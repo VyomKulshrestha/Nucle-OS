@@ -975,10 +975,41 @@ The example checks every decode against the original data, and none of the
 hit the 400,000-state search limit and 5 ran out of candidates. A CRC-8
 still passes about one wrong candidate in 256, so a read that reaches list
 decoding has up to a 16-in-256 chance of a wrong answer; when several reads
-cover a strand, `decode` takes the most common payload per index. The codec
-implements `DnaCodec` (`name() == "hedges"`) and is not yet a VFS `--codec`
-option: the VFS reads through consensus first, which removes the advantage
-HEDGES has on single reads.
+cover a strand, `decode` takes the most common payload per index.
+
+In the VFS (`--codec hedges`, `CodecKind::Hedges`, `codec: Hedges` in
+NucleScript) two things differ from the other codecs. Reads are not voted
+first: `HedgesCodec::repair` decodes each read of a strand on its own and
+re-encodes the first payload two reads agree on, so the strand comes back
+exact; only strands where no read decodes fall back to consensus. And the
+Reed-Solomon parity is computed over the 16 data bytes of each strand and
+written as HEDGES strands with the indices after the data strands, the
+inner-HEDGES, outer-Reed-Solomon layout Press et al. describe. The other
+codecs' parity strands are packed bytes, about 600 nt each, which an
+insertion scrambles; at 1.5% error with indels they came out of a two- or
+three-read consensus wrong and could not rebuild anything. The first pass
+gives each read 50,000 search states, enough for 94.8% of single reads on
+the measured low-fidelity channel. Once 24 reads have been tried, it keeps
+going only while a quarter or more of them decode; reads too noisy for
+HEDGES then go straight to consensus.
+
+A 1 KB file with 16 parity strands per stripe, written and read 10 times per
+row through the realistic channels (synthesis, sequencing, dropout and, for
+the measured pools, coverage spread):
+
+| Channel | Reads per strand | Ternary | HEDGES | Strands (ternary / HEDGES) |
+|---|---:|---:|---:|---:|
+| `array-lofi` (measured, 1.5% error) | 6 | 0 / 10 | **10 / 10** | 58 / 80 |
+| `array-lofi` | 3 | 0 / 10 | 3 / 10 | 58 / 80 |
+| `array-hifi` (measured, 0.11%) | 3 | 10 / 10 | 10 / 10, 35× faster | 58 / 80 |
+| Illumina | 3 | 10 / 10 | 10 / 10, 40× faster | 58 / 80 |
+| Nanopore (about 7%) | 3 | 0 / 10 | 5 / 10 | 58 / 80 |
+
+HEDGES spends more DNA (80 strands where ternary uses 58) and wins where
+insertions and deletions decide the outcome. On clean reads both recover
+everything, and HEDGES reads faster because it skips consensus. At
+Nanopore-grade noise single-read decoding fails, so the gain comes from the
+indel-proof parity; a 1 KB file then takes about 8 seconds to read.
 
 ## Error Correction Architecture
 

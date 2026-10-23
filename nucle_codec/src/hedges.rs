@@ -258,6 +258,69 @@ impl HedgesCodec {
         let body = bytes.len() - 1;
         Some((u16::from_be_bytes([bytes[0], bytes[1]]), bytes[2..body].to_vec()))
     }
+
+    /// The strand that carries `payload` (padded to `payload_bytes`) at
+    /// position `index`.
+    pub fn strand_for(&self, index: u16, payload: &[u8]) -> DnaStrand {
+        let p = self.config.payload_bytes;
+        let mut bytes = index.to_be_bytes().to_vec();
+        bytes.extend_from_slice(&payload[..payload.len().min(p)]);
+        bytes.resize(2 + p, 0);
+        bytes.push(crc8(&bytes));
+        DnaStrand::new(self.encode_bits(&bytes_to_bits(&bytes)))
+    }
+
+    /// The written strand at position `index`, rebuilt exactly from noisy
+    /// reads of it. Each read is decoded on its own and the first payload
+    /// two reads agree on is re-encoded (a lone decode stands if nothing
+    /// else decodes); decodes that name another index are ignored. After
+    /// [`MAX_REPAIR_MISSES`] reads in a row fail with nothing decoded yet,
+    /// the reads are taken to be too noisy and `None` comes back, so the
+    /// caller can fall back to consensus without paying for every read.
+    pub fn repair(&self, reads: &[DnaStrand], index: u16) -> Option<DnaStrand> {
+        self.repair_counting(reads, index, &mut RepairStats::default())
+    }
+
+    /// [`Self::repair`], adding the reads it tried and decoded to `stats`,
+    /// so a caller can tell when per-read decoding stops paying off.
+    pub fn repair_counting(&self, reads: &[DnaStrand], index: u16, stats: &mut RepairStats) -> Option<DnaStrand> {
+        let mut votes: HashMap<Vec<u8>, usize> = HashMap::new();
+        let mut misses = 0;
+        for read in reads {
+            stats.tried += 1;
+            match self.decode_read(read).filter(|(i, _)| *i == index) {
+                Some((_, payload)) => {
+                    stats.decoded += 1;
+                    let n = votes.entry(payload.clone()).or_insert(0);
+                    *n += 1;
+                    if *n >= 2 {
+                        return Some(self.strand_for(index, &payload));
+                    }
+                }
+                None => {
+                    misses += 1;
+                    if votes.is_empty() && misses >= MAX_REPAIR_MISSES {
+                        return None;
+                    }
+                }
+            }
+        }
+        votes
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+            .map(|(payload, _)| self.strand_for(index, &payload))
+    }
+}
+
+/// Consecutive undecodable reads after which [`HedgesCodec::repair`] gives
+/// up on a strand.
+pub const MAX_REPAIR_MISSES: usize = 3;
+
+/// Reads tried and decoded by [`HedgesCodec::repair_counting`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RepairStats {
+    pub tried: usize,
+    pub decoded: usize,
 }
 
 impl DnaCodec for HedgesCodec {
@@ -272,14 +335,7 @@ impl DnaCodec for HedgesCodec {
             return Err(DnaError::EncodingError(format!("{} strands exceed the 16-bit strand index", chunks)));
         }
         let strands = (0..chunks)
-            .map(|k| {
-                let mut bytes = (k as u16).to_be_bytes().to_vec();
-                let chunk = &data[(k * p).min(data.len())..((k + 1) * p).min(data.len())];
-                bytes.extend_from_slice(chunk);
-                bytes.resize(2 + p, 0);
-                bytes.push(crc8(&bytes));
-                DnaStrand::new(self.encode_bits(&bytes_to_bits(&bytes)))
-            })
+            .map(|k| self.strand_for(k as u16, &data[(k * p).min(data.len())..((k + 1) * p).min(data.len())]))
             .collect();
         Ok(StrandCollection::from_strands(strands, data.len()))
     }
@@ -428,6 +484,28 @@ mod tests {
         let mut reads = truth.clone();
         reads.strands = vec![impostor, truth.strands[0].clone(), truth.strands[0].clone()];
         assert_eq!(codec.decode(&reads).unwrap(), vec![7u8; 16]);
+    }
+
+    #[test]
+    fn repair_rebuilds_the_exact_strand_from_noisy_reads() {
+        let codec = HedgesCodec::new(HedgesConfig { costs: EditCosts::for_channel(0.01, 0.01, 0.01), ..HedgesConfig::default() });
+        let written = codec.encode(&(0..48u8).collect::<Vec<_>>()).unwrap();
+        for (k, strand) in written.strands.iter().enumerate() {
+            let reads: Vec<DnaStrand> =
+                (0..5).map(|r| DnaStrand::new(corrupt(strand.bases(), 0.01, 100 * k as u64 + r))).collect();
+            assert!(reads.iter().any(|r| r != strand), "the reads should carry errors");
+            assert_eq!(codec.repair(&reads, k as u16).as_ref(), Some(strand), "strand {k}");
+        }
+        // A strand's reads never repair to another position.
+        assert_eq!(codec.repair(&written.strands[..1], 1), None);
+    }
+
+    #[test]
+    fn repair_gives_up_on_reads_it_cannot_decode() {
+        let codec = HedgesCodec::new(HedgesConfig { max_expansions: 20_000, ..HedgesConfig::default() });
+        let junk: Vec<DnaStrand> =
+            (0..10).map(|r| DnaStrand::new((0..codec.strand_len()).map(|k| ORDER[(k * 7 + r) % 4]).collect())).collect();
+        assert_eq!(codec.repair(&junk, 0), None);
     }
 
     #[test]

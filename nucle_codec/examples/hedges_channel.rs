@@ -21,7 +21,9 @@ fn main() {
     };
     let strands = args.get(3).copied().unwrap_or(500.0) as usize;
     // Search costs matched to the channel being simulated.
-    let codec = HedgesCodec::new(HedgesConfig { costs: EditCosts::for_channel(sub, ins, del), ..HedgesConfig::default() });
+    // NUCLE_HEDGES_EXPANSIONS caps the search per read (default 400,000).
+    let max_expansions = std::env::var("NUCLE_HEDGES_EXPANSIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(HedgesConfig::default().max_expansions);
+    let codec = HedgesCodec::new(HedgesConfig { costs: EditCosts::for_channel(sub, ins, del), max_expansions, ..HedgesConfig::default() });
     let data: Vec<u8> = (0..strands * 16).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
     let encoded = codec.encode(&data).unwrap();
 

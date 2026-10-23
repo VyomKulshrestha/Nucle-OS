@@ -95,7 +95,7 @@ enum Commands {
         /// Number of RS parity strands for error correction
         #[arg(short, long, default_value = "2")]
         redundancy: usize,
-        /// Storage codec: ternary, fountain, or yin-yang
+        /// Storage codec: ternary, fountain, yin-yang, or hedges
         #[arg(short, long, default_value = "ternary")]
         codec: String,
     },
@@ -139,7 +139,7 @@ enum Commands {
         /// New number of RS parity strands
         #[arg(short, long)]
         redundancy: Option<usize>,
-        /// New codec name: ternary, fountain, or yin-yang
+        /// New codec name: ternary, fountain, yin-yang, or hedges
         #[arg(short, long)]
         codec: Option<String>,
     },
@@ -282,7 +282,7 @@ enum Commands {
     Cost {
         /// File to encode
         file: String,
-        /// Codec: ternary, fountain, yin-yang
+        /// Codec: ternary, fountain, yin-yang, hedges
         #[arg(short, long, default_value = "ternary")]
         codec: String,
         /// Reed-Solomon parity strands
@@ -925,7 +925,7 @@ fn cmd_store(
         Some(kind) => kind,
         None => {
             eprintln!(
-                "Store failed: unknown codec '{}'; expected ternary, fountain, or yin-yang",
+                "Store failed: unknown codec '{}'; expected ternary, fountain, yin-yang, or hedges",
                 codec
             );
             std::process::exit(1);

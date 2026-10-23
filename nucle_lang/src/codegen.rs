@@ -943,6 +943,7 @@ fn codec_to_vfs_kind(codec: Codec) -> CodecKind {
         Codec::Ternary => CodecKind::Ternary,
         Codec::YinYang => CodecKind::YinYang,
         Codec::Fountain => CodecKind::Fountain,
+        Codec::Hedges => CodecKind::Hedges,
     }
 }
 

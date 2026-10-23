@@ -43,6 +43,7 @@ const FORMAT_VERSION: u8 = 1;
 pub const CODEC_TERNARY: u8 = 1;
 pub const CODEC_FOUNTAIN: u8 = 2;
 pub const CODEC_YINYANG: u8 = 3;
+pub const CODEC_HEDGES: u8 = 4;
 
 /// The header id for a codec's persisted name, 0 if unknown.
 pub fn codec_id(name: &str) -> u8 {
@@ -50,6 +51,7 @@ pub fn codec_id(name: &str) -> u8 {
         "ternary" | "ternary-rotating-cipher" => CODEC_TERNARY,
         "fountain" | "dna-fountain" => CODEC_FOUNTAIN,
         "yin-yang" | "yinyang" => CODEC_YINYANG,
+        "hedges" => CODEC_HEDGES,
         _ => 0,
     }
 }
@@ -60,6 +62,7 @@ pub fn codec_name(id: u8) -> &'static str {
         CODEC_TERNARY => "ternary-rotating-cipher",
         CODEC_FOUNTAIN => "dna-fountain",
         CODEC_YINYANG => "yin-yang",
+        CODEC_HEDGES => "hedges",
         _ => "unknown",
     }
 }
@@ -93,7 +96,7 @@ pub struct FileEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArchiveHeader {
     /// Default codec of the data strands: 1 ternary, 2 fountain,
-    /// 3 yin-yang. Each file entry also records its own.
+    /// 3 yin-yang, 4 HEDGES. Each file entry also records its own.
     pub codec: u8,
     /// Nucleotides per data strand.
     pub strand_len: u16,

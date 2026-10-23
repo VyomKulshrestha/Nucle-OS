@@ -21,7 +21,7 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
         std::process::exit(1);
     });
     let Some(codec) = CodecKind::from_codec_name(&args.codec) else {
-        eprintln!("Unknown codec '{}'; expected ternary, fountain, or yin-yang", args.codec);
+        eprintln!("Unknown codec '{}'; expected ternary, fountain, yin-yang, or hedges", args.codec);
         std::process::exit(1);
     };
     for (name, value) in [

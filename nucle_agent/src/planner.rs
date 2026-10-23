@@ -500,6 +500,14 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_migrate_to_hedges() {
+        let plan = Planner::plan("migrate scans.tar to codec hedges").unwrap();
+        assert_eq!(plan.steps[0].tool, ToolName::MigrateFile);
+        assert_eq!(plan.steps[0].get_arg("codec"), Some("hedges"));
+        assert!(nucle_vfs::migrate::SUPPORTED_CODECS.contains(&"hedges"));
+    }
+
+    #[test]
     fn test_plan_migrate_with_no_target_is_an_error() {
         assert!(Planner::plan("migrate readme.txt").is_err());
     }

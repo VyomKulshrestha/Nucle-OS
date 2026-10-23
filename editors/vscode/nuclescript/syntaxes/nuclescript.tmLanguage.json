@@ -123,7 +123,7 @@
       "patterns": [
         {
           "name": "support.constant.codec.nuclescript",
-          "match": "\\b(YinYang|yinyang|yin-yang|Ternary|ternary|ternary-rotating|ternary-rotating-cipher|Fountain|fountain|dna-fountain)\\b"
+          "match": "\\b(YinYang|yinyang|yin-yang|Ternary|ternary|ternary-rotating|ternary-rotating-cipher|Fountain|fountain|dna-fountain|Hedges|hedges)\\b"
         }
       ]
     },
