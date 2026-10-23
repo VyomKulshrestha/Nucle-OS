@@ -7,12 +7,25 @@
 //! | Illumina | Substitutions | ~0.1% |
 //! | Oxford Nanopore | Indels (homopolymers) | ~3-5% |
 //! | Twist Bioscience | Deletions | ~0.03% |
+//! | Array pool, high fidelity (measured) | Substitutions (G>T) | ~0.11% |
+//! | Array pool, low fidelity (measured) | Transitions | ~1.5% |
 //! | Custom | User-defined | Variable |
 //!
 //! Each profile is a pre-configured `StandardErrorModel` with rates
 //! calibrated from published error characterization studies.
+//!
+//! The two array-pool profiles are measured end to end (synthesis, PCR and
+//! Illumina iSeq 100 sequencing together) on study ERP173549 / PRJEB90546
+//! (Gimpel et al. 2026, dt4dds benchmark pool): runs ERR15127739 (high
+//! fidelity, 692,992 read pairs) and ERR15127744 (low fidelity, 1,041,806
+//! pairs), read 1, the 10,833 non-repetitive 129 nt references. Besides
+//! their per-base rates they carry the measured substitution spectrum,
+//! position ramps, first-base spike, homopolymer indel factors and
+//! log-normal coverage spread ([`HardwareProfile::coverage_log_sigma`]).
+//! The same runs put Illumina's sequencing-attributed indels at
+//! 2.8e-6 to 1.9e-5 per base, which is what the Illumina profile uses.
 
-use crate::errors::{ErrorRates, StandardErrorModel};
+use crate::errors::{ErrorRates, MeasuredFeatures, StandardErrorModel};
 use serde::{Serialize, Deserialize};
 
 /// Enumeration of known hardware platforms.
@@ -40,6 +53,15 @@ pub enum HardwareProfile {
 
     /// No errors — pristine channel for baseline testing.
     Pristine,
+
+    /// A high-fidelity array oligo pool, measured end to end on real reads
+    /// (ERR15127739). Already includes sequencing.
+    ArrayHighFidelity,
+
+    /// A low-fidelity array oligo pool, measured end to end on real reads
+    /// (ERR15127744): about 14x the high-fidelity error, transition-dominated
+    /// and almost entirely in the molecules. Already includes sequencing.
+    ArrayLowFidelity,
 }
 
 impl HardwareProfile {
@@ -47,9 +69,9 @@ impl HardwareProfile {
     pub fn error_rates(&self) -> ErrorRates {
         match self {
             HardwareProfile::Illumina => ErrorRates {
-                substitution: 0.001,    // ~0.1% (Q30)
-                insertion: 0.0001,      // ~0.01%
-                deletion: 0.0001,       // ~0.01%
+                substitution: 0.001,    // ~0.1% (Q30); measured 2.8e-4 (R1) to 7.1e-4 (R2)
+                insertion: 0.00002,     // measured sequencing-attributed 2.8e-6 to 1.9e-5
+                deletion: 0.00002,      // measured sequencing-attributed 4.8e-6 to 1.9e-5
                 strand_dropout: 0.02,   // ~2% strand loss
                 truncation: 0.0,        // Not applicable (sequencing, not synthesis)
             },
@@ -87,6 +109,77 @@ impl HardwareProfile {
             },
 
             HardwareProfile::Pristine => ErrorRates::zero(),
+
+            // Run-of-1 indel rates; homopolymer factors raise longer runs.
+            // Dropout = references with no reads at all.
+            HardwareProfile::ArrayHighFidelity => ErrorRates {
+                substitution: 7.47e-4,
+                insertion: 5.52e-5,
+                deletion: 2.63e-4,
+                strand_dropout: 81.0 / 10_833.0,
+                truncation: 0.0,
+            },
+
+            HardwareProfile::ArrayLowFidelity => ErrorRates {
+                substitution: 9.82e-3,
+                insertion: 7.28e-4,
+                deletion: 4.23e-3,
+                strand_dropout: 58.0 / 10_833.0,
+                truncation: 0.0,
+            },
+        }
+    }
+
+    /// Standard deviation of ln(reads per strand / mean) this platform
+    /// produces; 0 means every strand gets the same coverage. Measured
+    /// 0.77 and 1.14 for the two array pools.
+    pub fn coverage_log_sigma(&self) -> f64 {
+        match self {
+            HardwareProfile::ArrayHighFidelity => 0.77,
+            HardwareProfile::ArrayLowFidelity => 1.14,
+            _ => 0.0,
+        }
+    }
+
+    /// Whether this profile was measured end to end, sequencing included,
+    /// so no separate sequencing stage should be added on top.
+    pub fn includes_sequencing(&self) -> bool {
+        matches!(self, HardwareProfile::ArrayHighFidelity | HardwareProfile::ArrayLowFidelity)
+    }
+
+    /// The measured channel structure of the array-pool profiles.
+    fn measured_features(&self) -> Option<MeasuredFeatures> {
+        // Substitution rates per reference base, rows/columns A, T, G, C.
+        match self {
+            HardwareProfile::ArrayHighFidelity => Some(MeasuredFeatures {
+                substitution: [
+                    [0.0, 2.669e-4, 3.517e-4, 2.86e-5],
+                    [1.405e-4, 0.0, 5.18e-5, 1.650e-4],
+                    [2.563e-4, 6.942e-4, 0.0, 5.49e-5],
+                    [4.136e-4, 4.785e-4, 7.86e-5, 0.0],
+                ],
+                first_base_sub_factor: 6.5,
+                sub_ramp: (0.7, 1.3),
+                ins_ramp: (1.0, 1.0),
+                del_ramp: (1.0, 1.0),
+                homopolymer_del: [1.0, 1.14, 1.10, 1.19, 1.11, 2.42],
+                homopolymer_ins: [1.0, 1.03, 0.99, 1.02, 1.11, 3.11],
+            }),
+            HardwareProfile::ArrayLowFidelity => Some(MeasuredFeatures {
+                substitution: [
+                    [0.0, 5.075e-3, 7.048e-3, 8.698e-4],
+                    [1.825e-3, 0.0, 5.759e-4, 7.713e-3],
+                    [5.565e-3, 1.887e-3, 0.0, 6.505e-4],
+                    [6.645e-4, 7.360e-3, 4.806e-4, 0.0],
+                ],
+                first_base_sub_factor: 1.33,
+                sub_ramp: (0.85, 1.12),
+                ins_ramp: (1.35, 0.62),
+                del_ramp: (1.1, 0.95),
+                homopolymer_del: [1.0, 1.04, 1.07, 1.10, 1.21, 1.75],
+                homopolymer_ins: [1.0, 1.80, 2.06, 2.29, 2.35, 3.03],
+            }),
+            _ => None,
         }
     }
 
@@ -97,6 +190,8 @@ impl HardwareProfile {
         // Illumina has position-dependent quality degradation
         if *self == HardwareProfile::Illumina {
             model.with_position_dependence(2.0)
+        } else if let Some(features) = self.measured_features() {
+            model.with_measured(features)
         } else {
             model
         }
@@ -111,6 +206,8 @@ impl HardwareProfile {
             HardwareProfile::Idt => "IDT oPools",
             HardwareProfile::ColumnSynthesis => "Column Synthesis",
             HardwareProfile::Pristine => "Pristine (no errors)",
+            HardwareProfile::ArrayHighFidelity => "Array pool, high fidelity (measured)",
+            HardwareProfile::ArrayLowFidelity => "Array pool, low fidelity (measured)",
         }
     }
 
@@ -123,6 +220,8 @@ impl HardwareProfile {
             HardwareProfile::Idt,
             HardwareProfile::ColumnSynthesis,
             HardwareProfile::Pristine,
+            HardwareProfile::ArrayHighFidelity,
+            HardwareProfile::ArrayLowFidelity,
         ]
     }
 }

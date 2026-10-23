@@ -53,6 +53,14 @@ pub struct SimulationConfig {
     /// `exp(-decay_rate * length * storage_time)`; a broken one cannot be
     /// amplified and drops out before sequencing.
     pub storage_time: f64,
+
+    /// Spread of reads across strands: each strand draws a weight
+    /// `w = exp(sigma * z - sigma^2 / 2)` (mean 1) and keeps each of its
+    /// `coverage_depth` copies with probability `min(1, w)`, so
+    /// under-represented strands lose reads the way real pools do. 0 gives
+    /// every strand full coverage and draws no extra random numbers.
+    #[serde(default)]
+    pub coverage_log_sigma: f64,
 }
 
 impl Default for SimulationConfig {
@@ -65,6 +73,7 @@ impl Default for SimulationConfig {
             simulate_decay: false,
             decay_rate: 1e-9,
             storage_time: 1.0,
+            coverage_log_sigma: 0.0,
         }
     }
 }
@@ -110,6 +119,7 @@ impl SimulationConfig {
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
+            coverage_log_sigma: profile.coverage_log_sigma(),
         }
     }
 
@@ -135,6 +145,13 @@ impl SimulationConfig {
     }
 }
 
+/// One draw from a standard normal distribution (Box-Muller).
+fn standard_normal(rng: &mut StdRng) -> f64 {
+    let u1: f64 = rng.gen::<f64>().max(f64::MIN_POSITIVE);
+    let u2: f64 = rng.gen();
+    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+}
+
 /// The (synthesis, sequencing) profiles a real run uses for a pool whose
 /// declared profile is `profile`.
 ///
@@ -148,6 +165,8 @@ impl SimulationConfig {
 pub fn realistic_stage_pair(profile: HardwareProfile) -> (HardwareProfile, HardwareProfile) {
     match profile {
         HardwareProfile::Illumina | HardwareProfile::OxfordNanopore => (HardwareProfile::TwistBioscience, profile),
+        // Measured end to end: sequencing is already in the profile.
+        p if p.includes_sequencing() => (p, HardwareProfile::Pristine),
         other => (other, other),
     }
 }
@@ -248,10 +267,22 @@ impl NoiseEngine {
         let mut decayed = 0usize;
 
         for strand in &collection.strands {
+            let keep = if self.config.coverage_log_sigma > 0.0 {
+                let sigma = self.config.coverage_log_sigma;
+                (sigma * standard_normal(&mut rng) - sigma * sigma / 2.0).exp().min(1.0)
+            } else {
+                1.0
+            };
             // Generate `coverage_depth` copies of each strand
             for _copy in 0..self.config.coverage_depth {
                 let mut synth = SynthStrand::pristine(strand.clone(), strand_id);
                 strand_id += 1;
+
+                if keep < 1.0 && rng.gen::<f64>() >= keep {
+                    synth.is_intact = false;
+                    all_strands.push(synth);
+                    continue;
+                }
 
                 // Step 1: Apply synthesis errors
                 synth_model.apply(&mut synth, &mut rng);
@@ -317,6 +348,7 @@ impl NoiseEngine {
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
+            coverage_log_sigma: 0.0,
         };
         NoiseEngine::new(config).simulate(collection)
     }

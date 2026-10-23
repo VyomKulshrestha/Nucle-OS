@@ -143,6 +143,7 @@ mod tests {
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
+            coverage_log_sigma: 0.0,
         };
         let engine = NoiseEngine::new(config);
         let result = engine.simulate(&encoded);

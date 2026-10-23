@@ -146,6 +146,14 @@ The extreme-case failures are a fundamental limitation of the Yang rule: when *a
 
 ---
 
+## 4. Gimpel et al. (2026) — a measured channel
+
+> Gimpel, A. L., Remschak, A., Stark, W. J., Heckel, R., & Grass, R. N. (2026). "Comparison of state-of-the-art error-correction coding for sequence-based DNA data storage." *Nature Communications*. doi:10.1038/s41467-026-70548-3. Reads: ENA study ERP173549 / BioProject PRJEB90546.
+
+One 11,293-oligo pool holding twelve codec configurations (DNA-Aeon, DNA Fountain, Reed-Solomon, HEDGES, Goldman, Yin-Yang), synthesized under a high- and a low-fidelity scenario and read on an Illumina iSeq 100. NucleOS uses runs ERR15127739 and ERR15127744 twice: their error counts became the `array-hifi` and `array-lofi` profiles, and their reads test the consensus and clustering decoders (see [architecture.md](architecture.md#measured-array-pool-channels)). The designed references come from [fml-ethz/dt4dds-benchmark_notebooks](https://github.com/fml-ethz/dt4dds-benchmark_notebooks), which is GPL-3.0, so they are not redistributed here.
+
+---
+
 ## Further reading
 
 - Church, G. M., Gao, Y., & Kosuri, S. (2012). "Next-generation digital information storage in DNA." *Science*, 337(6102), 1628. — First demonstration of large-scale DNA storage (659 KB).

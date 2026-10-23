@@ -436,6 +436,7 @@ fn test_roundtrip_survives_illumina_noise_via_consensus() {
         simulate_decay: false,
         decay_rate: 0.0,
         storage_time: 0.0,
+        coverage_log_sigma: 0.0,
     };
     let mut os = NucleOS::new(10).with_noise(noise_cfg);
 

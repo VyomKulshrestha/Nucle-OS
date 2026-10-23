@@ -252,7 +252,8 @@ enum Commands {
     Simulate {
         /// Input file to simulate
         file: String,
-        /// Hardware profile: illumina, nanopore, twist
+        /// Hardware profile: illumina, nanopore, twist, idt, column-synthesis,
+        /// pristine, array-hifi, array-lofi (array-* are measured on real reads)
         #[arg(short, long, default_value = "illumina")]
         profile: String,
         /// Coverage depth
@@ -1574,16 +1575,7 @@ fn cmd_simulate(file: &str, profile: &str, coverage: usize, storage: Option<(f64
         }
     };
 
-    let hw_profile = match profile.to_lowercase().as_str() {
-        "illumina" => HardwareProfile::Illumina,
-        "nanopore" => HardwareProfile::OxfordNanopore,
-        "twist" => HardwareProfile::TwistBioscience,
-        "pristine" => HardwareProfile::Pristine,
-        _ => {
-            eprintln!("Unknown profile: {}. Use: illumina, nanopore, twist, pristine", profile);
-            std::process::exit(1);
-        }
-    };
+    let hw_profile = parse_hw_profile(profile);
 
     let mut config = SimulationConfig::realistic(hw_profile, coverage as u32, 42);
     if let Some((years, celsius, medium_name)) = &storage {
@@ -1640,8 +1632,10 @@ fn parse_hw_profile(profile: &str) -> HardwareProfile {
         "idt" => HardwareProfile::Idt,
         "column-synthesis" => HardwareProfile::ColumnSynthesis,
         "pristine" => HardwareProfile::Pristine,
+        "array-hifi" => HardwareProfile::ArrayHighFidelity,
+        "array-lofi" => HardwareProfile::ArrayLowFidelity,
         _ => {
-            eprintln!("Unknown profile: {}. Use: illumina, nanopore, twist, idt, column-synthesis, pristine", profile);
+            eprintln!("Unknown profile: {}. Use: illumina, nanopore, twist, idt, column-synthesis, pristine, array-hifi, array-lofi", profile);
             std::process::exit(1);
         }
     }
@@ -1658,6 +1652,8 @@ fn profile_cost_per_base(profile: HardwareProfile) -> f64 {
         HardwareProfile::Idt => 0.00012,
         HardwareProfile::ColumnSynthesis => 0.00008,
         HardwareProfile::Pristine => 0.00001,
+        // Array oligo pools: chip synthesis, priced like Twist.
+        HardwareProfile::ArrayHighFidelity | HardwareProfile::ArrayLowFidelity => 0.00015,
     }
 }
 
@@ -1682,6 +1678,7 @@ fn estimate_recovery_probability(codec: &dyn DnaCodec, data: &[u8], profile: Har
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
+            coverage_log_sigma: 0.0,
         };
         let engine = NoiseEngine::new(config);
         let sim_result = engine.simulate(&encoded);
@@ -1790,6 +1787,7 @@ fn cmd_benchmark(file: Option<&str>, profile: &str, redundancy: usize, json: boo
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
+            coverage_log_sigma: 0.0,
         };
 
         let mut os = NucleOS::new(10);
@@ -3446,16 +3444,7 @@ fn cmd_stress(size: usize, json: bool) {
 }
 
 fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redundancy: usize, json: bool) {
-    let hw_profile = match profile.to_lowercase().as_str() {
-        "illumina" => HardwareProfile::Illumina,
-        "nanopore" => HardwareProfile::OxfordNanopore,
-        "twist" => HardwareProfile::TwistBioscience,
-        "pristine" => HardwareProfile::Pristine,
-        _ => {
-            eprintln!("Unknown profile: {}. Use: illumina, nanopore, twist, pristine", profile);
-            std::process::exit(1);
-        }
-    };
+    let hw_profile = parse_hw_profile(profile);
 
     if !json {
         println!("╔══════════════════════════════════════════════════════════════╗");
@@ -3495,6 +3484,7 @@ fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redun
             simulate_decay: false,
             decay_rate: 0.0,
             storage_time: 0.0,
+            coverage_log_sigma: 0.0,
         };
         let mut os = NucleOS::new(10).with_noise(noise_cfg);
 

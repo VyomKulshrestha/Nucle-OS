@@ -56,6 +56,8 @@ pub fn parse_hw_profile(profile: &str) -> Result<HardwareProfile, String> {
         "idt" => Ok(HardwareProfile::Idt),
         "column-synthesis" => Ok(HardwareProfile::ColumnSynthesis),
         "pristine" => Ok(HardwareProfile::Pristine),
+        "array-hifi" => Ok(HardwareProfile::ArrayHighFidelity),
+        "array-lofi" => Ok(HardwareProfile::ArrayLowFidelity),
         other => Err(format!("unknown profile '{}'", other)),
     }
 }
@@ -70,6 +72,8 @@ pub fn profile_cost_per_base(profile: HardwareProfile) -> f64 {
         HardwareProfile::Idt => 0.00012,
         HardwareProfile::ColumnSynthesis => 0.00008,
         HardwareProfile::Pristine => 0.00001,
+        // Array oligo pools: chip synthesis, priced like Twist.
+        HardwareProfile::ArrayHighFidelity | HardwareProfile::ArrayLowFidelity => 0.00015,
     }
 }
 

@@ -814,9 +814,78 @@ DNA storage has a unique error profile unlike any digital channel:
 | Error Type | Synthesis (Twist) | Illumina Seq | Nanopore Seq |
 |-----------|-------------------|-------------|-------------|
 | Substitution | ~0.01% | ~0.1% | ~3-5% |
-| Insertion | ~0.005% | ~0.01% | ~2-5% |
-| Deletion | ~0.02% | ~0.01% | ~2-5% |
+| Insertion | ~0.005% | ~0.002% | ~2-5% |
+| Deletion | ~0.02% | ~0.002% | ~2-5% |
 | Strand dropout | 0.5-5% | — | — |
+
+### Measured array-pool channels
+
+The rates above come from the literature. Two profiles, `array-hifi` and
+`array-lofi`, come from raw reads instead. Gimpel, Remschak, Stark, Heckel and
+Grass ("Comparison of state-of-the-art error-correction coding for
+sequence-based DNA data storage", Nature Communications 2026; ENA study
+ERP173549 / PRJEB90546) synthesized one benchmark pool of 11,293 129 nt
+oligos, twelve codec configurations including Fountain, Goldman, Yin-Yang and
+HEDGES, under a high-fidelity and a low-fidelity scenario and sequenced both
+on an Illumina iSeq 100 (2×150). Every read pair of runs ERR15127739 (high
+fidelity, 692,992 assigned pairs) and ERR15127744 (low fidelity, 1,041,806)
+was assigned to its reference by 12-mer voting and aligned with a banded edit
+distance, with indels left-normalised so that both mates of a pair can be
+compared. An error both mates share is in the molecule (synthesis or PCR);
+the single-read rate minus the shared rate is what the sequencer added. The
+460 Goldman-pool references built from near-identical tandem repeats cannot
+be placed unambiguously and are excluded, leaving 10,833.
+
+![Per-base error along the oligo, by sequencing cycle, against the old defaults, by homopolymer length, and coverage spread for the two ERP173549 pools](images/erp173549_error_profiles.png)
+
+*(a, b) Read-1 error per position, single read (solid) and both mates
+agreeing (dashed). (c) Substitutions per sequencing cycle. (d) Molecule-level
+rates and the read-1 sequencing-attributed rates (squares) against the
+Twist and Illumina defaults before this change. (e) Indels by homopolymer run
+length. (f) Reads per oligo over the mean.*
+
+| Read 1, per base | `array-hifi` | `array-lofi` |
+|---|---:|---:|
+| Substitution | 0.075% | 0.98% |
+| Insertion | 0.0056% | 0.10% |
+| Deletion | 0.028% | 0.43% |
+| Error-free reads | 91.0% | 19.3% |
+| Share of errors both mates show | 74% | 95% |
+| Dominant substitutions | G>T, about a quarter | transitions, about 70% |
+| First-base substitution factor | 6.5× | 1.33× |
+| σ of ln(reads per oligo) | 0.77 | 1.14 |
+| Oligos with no reads | 81 | 58 |
+
+`HardwareProfile::ArrayHighFidelity` and `ArrayLowFidelity` carry these
+numbers, and `StandardErrorModel::measured` (`MeasuredFeatures`) carries the
+structure behind them: a 4×4 substitution matrix in place of a uniform choice
+of wrong base, linear 5′→3′ ramps for each error type, the first-base spike,
+and deletion and insertion factors for homopolymer runs of 1 to 6+ (the
+high-fidelity pool deletes 2.4× more often inside runs of 6 or more). Models
+without measured features draw exactly the same random numbers as before.
+Coverage is the other half of the measurement: real pools do not give every
+oligo the same number of reads. `SimulationConfig::coverage_log_sigma` gives
+each strand a log-normal weight `w` with mean 1 and the measured σ, and keeps
+each of its copies with probability `min(1, w)`. The engine can only thin
+copies, so `-c` becomes a ceiling: on average a strand keeps 2Φ(−σ/2) of it,
+70% for `array-hifi` and 57% for `array-lofi`, and some strands lose every
+copy, as 81 and 58 oligos did in the real runs. Both profiles were measured through the sequencer, so
+`realistic_stage_pair` pairs them with a pristine sequencing stage instead of
+adding Illumina noise a second time. `nucle_synth/tests/measured_channel.rs`
+checks the simulated rates, spectrum, homopolymer ratio and coverage spread
+against the measurements.
+
+The same runs corrected the Illumina profile. On the high-fidelity run,
+where the molecules are clean enough to separate the two sources, the
+sequencer added 2.8 × 10⁻⁴ (R1) to 7.1 × 10⁻⁴ (R2) substitutions per base
+but only 2.8 × 10⁻⁶ to 1.9 × 10⁻⁵ insertions and deletions, 5 to 40 times
+below the 10⁻⁴ the profile had used. Illumina indels are now 2 × 10⁻⁵. (On the
+low-fidelity run the subtraction leaves up to 1.3 × 10⁻⁴ for R1 deletions,
+but there 95% of all errors are shared and the remainder is small against
+them.)
+
+The reads of both runs, up to 30 read-1 inserts per reference, also test the
+decoder directly; see [Measured on real Illumina reads](#measured-on-real-illumina-reads).
 
 ### Storage decay
 

@@ -94,6 +94,7 @@ pub fn noisy_copies(strands: &[DnaStrand], profile: HardwareProfile, coverage_de
         simulate_decay: false,
         decay_rate: 0.0,
         storage_time: 0.0,
+        coverage_log_sigma: 0.0,
     };
     let result = NoiseEngine::new(config).simulate(&collection);
 
