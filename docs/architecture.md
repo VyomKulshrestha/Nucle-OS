@@ -982,8 +982,11 @@ accepts any other measured kinetics.
   `StdRng`, its PCG32 `seed_from_u64` and its `f64`, `u8` and `usize`-range
   samplers), checked against rand 0.8 draw for draw and pinned by digests
   of its streams and of Fountain encodings. A pool's primer library, also
-  rebuilt from a seed on open, uses it too. rand itself no longer touches
-  anything stored
+  rebuilt from a seed on open, uses it too. So do the noise simulator
+  (`nucle_synth`), the blind evaluation of real reads and the clustering
+  tests' simulated reads, so every seeded run and measurement in this
+  document replays the same draws. rand itself no longer touches anything
+  stored or measured
 
 ### Yin-Yang Codec (Ping et al., 2022)
 - Two complementary mapping rules achieve GC balance by construction

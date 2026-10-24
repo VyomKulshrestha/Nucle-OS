@@ -260,17 +260,18 @@ pub const MAX_CONSENSUS_READS: usize = 64;
 /// and count how many references come back exactly: the whole decode path
 /// a real run needs, scored against ground truth.
 pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConfig, seed: u64) -> BlindReport {
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    // A stream that never changes, so the scores published for a seed
+    // stay reproducible (see `nucle_codec::stable_rng`).
+    use nucle_codec::stable_rng::StableRng;
 
     let mut pooled: Vec<(usize, DnaStrand)> = data
         .iter()
         .enumerate()
         .flat_map(|(label, c)| c.reads.iter().cloned().map(move |r| (label, r)))
         .collect();
-    let mut rng = StdRng::seed_from_u64(seed);
+    let mut rng = StableRng::seed_from_u64(seed);
     for i in (1..pooled.len()).rev() {
-        let j = rng.gen_range(0..=i);
+        let j = rng.gen_range(0..i + 1);
         pooled.swap(i, j);
     }
     let reads: Vec<DnaStrand> = pooled.iter().map(|(_, r)| r.clone()).collect();

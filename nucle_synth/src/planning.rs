@@ -23,8 +23,7 @@
 use crate::decay::binomial_cdf;
 use crate::noise::{NoiseEngine, SimulationConfig};
 use nucle_codec::base::{DnaStrand, Nucleotide, StrandCollection};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use nucle_codec::stable_rng::StableRng;
 
 /// Symbols per Reed-Solomon codeword over GF(256), data and parity together;
 /// mirrors the striping of `nucle_ecc::reed_solomon::ReedSolomon`.
@@ -58,7 +57,7 @@ pub fn unread_share(config: &SimulationConfig, strands: &[DnaStrand], usable: im
 /// The chance that a random strand of `strand_len` nucleotides gets no
 /// intact read through `config`, from `samples` strands.
 pub fn strand_loss_probability(config: &SimulationConfig, strand_len: usize, samples: usize) -> f64 {
-    let mut rng = StdRng::seed_from_u64(0x0D15_EA5E ^ strand_len as u64);
+    let mut rng = StableRng::seed_from_u64(0x0D15_EA5E ^ strand_len as u64);
     let strands: Vec<DnaStrand> = (0..samples)
         .map(|_| DnaStrand::new((0..strand_len).map(|_| Nucleotide::ALL[rng.gen_range(0..4)]).collect()))
         .collect();

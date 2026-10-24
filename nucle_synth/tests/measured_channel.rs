@@ -6,17 +6,16 @@ use nucle_synth::errors::ErrorModel;
 use nucle_synth::noise::{realistic_stage_pair, NoiseEngine, SimulationConfig};
 use nucle_synth::profiles::HardwareProfile;
 use nucle_synth::strand::SynthStrand;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use nucle_codec::stable_rng::StableRng;
 
-fn random_strand(rng: &mut StdRng, len: usize) -> DnaStrand {
+fn random_strand(rng: &mut StableRng, len: usize) -> DnaStrand {
     DnaStrand::new((0..len).map(|_| Nucleotide::ALL[rng.gen_range(0..4)]).collect())
 }
 
 /// Per-base (substitution, insertion, deletion) rates over many strands.
 fn measured_rates(profile: HardwareProfile, strands: usize) -> (f64, f64, f64) {
     let model = profile.to_error_model();
-    let mut rng = StdRng::seed_from_u64(7);
+    let mut rng = StableRng::seed_from_u64(7);
     let (mut s, mut i, mut d, mut bases) = (0usize, 0usize, 0usize, 0usize);
     for id in 0..strands {
         let mut strand = SynthStrand::pristine(random_strand(&mut rng, 129), id as u64);
@@ -62,7 +61,7 @@ fn spectrum(profile: HardwareProfile) -> (f64, f64) {
     features.homopolymer_del = [0.0; 6];
     features.homopolymer_ins = [0.0; 6];
     model.measured = Some(features);
-    let mut rng = StdRng::seed_from_u64(11);
+    let mut rng = StableRng::seed_from_u64(11);
     let (mut total, mut transitions, mut g_to_t) = (0usize, 0usize, 0usize);
     for id in 0..40_000 {
         let original = random_strand(&mut rng, 129);
@@ -102,8 +101,8 @@ fn substitution_spectra_match_the_measured_runs() {
 #[test]
 fn long_homopolymers_carry_more_deletions() {
     let model = HardwareProfile::ArrayHighFidelity.to_error_model();
-    let mut rng = StdRng::seed_from_u64(3);
-    let deletion_rate = |template: &str, rng: &mut StdRng| {
+    let mut rng = StableRng::seed_from_u64(3);
+    let deletion_rate = |template: &str, rng: &mut StableRng| {
         let strand = DnaStrand::from_str(template).unwrap();
         let mut dels = 0;
         for id in 0..40_000 {

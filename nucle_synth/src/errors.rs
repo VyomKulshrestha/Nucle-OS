@@ -10,8 +10,7 @@
 
 use nucle_codec::base::{DnaStrand, Nucleotide};
 use crate::strand::{SynthStrand, ErrorCounts};
-use rand::rngs::StdRng;
-use rand::Rng;
+use nucle_codec::stable_rng::StableRng;
 use serde::{Serialize, Deserialize};
 
 // ---------------------------------------------------------------------------
@@ -75,7 +74,7 @@ pub trait ErrorModel: Send + Sync {
     ///
     /// Takes a pristine `SynthStrand` and mutates it according to
     /// the error model's probability distributions.
-    fn apply(&self, strand: &mut SynthStrand, rng: &mut StdRng);
+    fn apply(&self, strand: &mut SynthStrand, rng: &mut StableRng);
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +190,7 @@ impl StandardErrorModel {
     }
 
     /// Substitute a nucleotide with a random different base.
-    fn random_substitute(original: Nucleotide, rng: &mut StdRng) -> Nucleotide {
+    fn random_substitute(original: Nucleotide, rng: &mut StableRng) -> Nucleotide {
         let others: Vec<Nucleotide> = Nucleotide::ALL
             .iter()
             .copied()
@@ -201,7 +200,7 @@ impl StandardErrorModel {
     }
 
     /// Generate a random nucleotide for insertions.
-    fn random_nucleotide(rng: &mut StdRng) -> Nucleotide {
+    fn random_nucleotide(rng: &mut StableRng) -> Nucleotide {
         Nucleotide::ALL[rng.gen_range(0..4)]
     }
 }
@@ -215,23 +214,23 @@ impl ErrorModel for StandardErrorModel {
         &self.rates
     }
 
-    fn apply(&self, strand: &mut SynthStrand, rng: &mut StdRng) {
+    fn apply(&self, strand: &mut SynthStrand, rng: &mut StableRng) {
         if let Some(features) = &self.measured {
             self.apply_measured(features, strand, rng);
             return;
         }
         // Check for strand dropout first
-        if rng.gen::<f64>() < self.rates.strand_dropout {
+        if rng.gen_f64() < self.rates.strand_dropout {
             strand.is_intact = false;
             return;
         }
 
         // Check for truncation
-        if rng.gen::<f64>() < self.rates.truncation {
+        if rng.gen_f64() < self.rates.truncation {
             let bases = strand.sequence.bases_mut();
             if bases.len() > 10 {
                 // Remove a random suffix (10-50% of the strand)
-                let cut_fraction = rng.gen_range(0.1..0.5);
+                let cut_fraction = rng.gen_f64_range(0.1..0.5);
                 let cut_point = (bases.len() as f64 * (1.0 - cut_fraction)) as usize;
                 bases.truncate(cut_point.max(1));
                 strand.is_truncated = true;
@@ -250,13 +249,13 @@ impl ErrorModel for StandardErrorModel {
             let factor = self.position_factor(pos, total_len);
 
             // Deletion: skip this base
-            if rng.gen::<f64>() < self.rates.deletion * factor {
+            if rng.gen_f64() < self.rates.deletion * factor {
                 errors.deletions += 1;
                 continue;
             }
 
             // Substitution: replace with different base
-            if rng.gen::<f64>() < self.rates.substitution * factor {
+            if rng.gen_f64() < self.rates.substitution * factor {
                 let new_base = Self::random_substitute(base, rng);
                 new_bases.push(new_base);
                 // Lower quality score for substituted bases
@@ -278,7 +277,7 @@ impl ErrorModel for StandardErrorModel {
             }
 
             // Insertion: add an extra random base after this position
-            if rng.gen::<f64>() < self.rates.insertion * factor {
+            if rng.gen_f64() < self.rates.insertion * factor {
                 new_bases.push(Self::random_nucleotide(rng));
                 new_quality.push(5); // Very low quality for inserted bases
                 errors.insertions += 1;
@@ -296,15 +295,15 @@ impl StandardErrorModel {
     /// events as the uniform model, then per-base errors whose rates depend
     /// on the reference base, the position along the strand and the
     /// homopolymer run the base sits in.
-    fn apply_measured(&self, features: &MeasuredFeatures, strand: &mut SynthStrand, rng: &mut StdRng) {
-        if rng.gen::<f64>() < self.rates.strand_dropout {
+    fn apply_measured(&self, features: &MeasuredFeatures, strand: &mut SynthStrand, rng: &mut StableRng) {
+        if rng.gen_f64() < self.rates.strand_dropout {
             strand.is_intact = false;
             return;
         }
-        if rng.gen::<f64>() < self.rates.truncation {
+        if rng.gen_f64() < self.rates.truncation {
             let bases = strand.sequence.bases_mut();
             if bases.len() > 10 {
-                let cut_fraction = rng.gen_range(0.1..0.5);
+                let cut_fraction = rng.gen_f64_range(0.1..0.5);
                 let cut_point = (bases.len() as f64 * (1.0 - cut_fraction)) as usize;
                 bases.truncate(cut_point.max(1));
                 strand.is_truncated = true;
@@ -325,7 +324,7 @@ impl StandardErrorModel {
             let q = strand.quality_scores.get(pos).copied().unwrap_or(30);
 
             let del = self.rates.deletion * MeasuredFeatures::ramp(features.del_ramp, rel) * features.homopolymer_del[run];
-            if rng.gen::<f64>() < del {
+            if rng.gen_f64() < del {
                 errors.deletions += 1;
                 continue;
             }
@@ -336,7 +335,7 @@ impl StandardErrorModel {
                 sub_scale *= features.first_base_sub_factor;
             }
             let sub_total: f64 = row.iter().sum::<f64>() * sub_scale;
-            let draw = rng.gen::<f64>();
+            let draw = rng.gen_f64();
             if draw < sub_total {
                 // Pick the replacement in proportion to the measured spectrum.
                 let mut acc = 0.0;
@@ -360,7 +359,7 @@ impl StandardErrorModel {
             }
 
             let ins = self.rates.insertion * MeasuredFeatures::ramp(features.ins_ramp, rel) * features.homopolymer_ins[run];
-            if rng.gen::<f64>() < ins {
+            if rng.gen_f64() < ins {
                 new_bases.push(Self::random_nucleotide(rng));
                 new_quality.push(5);
                 errors.insertions += 1;
@@ -380,14 +379,13 @@ impl StandardErrorModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
 
     #[test]
     fn test_zero_error_model() {
         let model = StandardErrorModel::new("zero", ErrorRates::zero());
         let dna = DnaStrand::from_str("ATCGATCGATCGATCG").unwrap();
         let mut synth = SynthStrand::pristine(dna.clone(), 0);
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StableRng::seed_from_u64(42);
 
         model.apply(&mut synth, &mut rng);
 
@@ -408,7 +406,7 @@ mod tests {
 
         let dna = DnaStrand::from_str("ATCGATCGATCGATCGATCGATCG").unwrap();
         let mut synth = SynthStrand::pristine(dna.clone(), 0);
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StableRng::seed_from_u64(42);
 
         model.apply(&mut synth, &mut rng);
 
@@ -433,7 +431,7 @@ mod tests {
         let dna = DnaStrand::from_str("ATCGATCGATCGATCGATCGATCG").unwrap();
         let original_len = dna.len();
         let mut synth = SynthStrand::pristine(dna, 0);
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StableRng::seed_from_u64(42);
 
         model.apply(&mut synth, &mut rng);
 
@@ -454,7 +452,7 @@ mod tests {
         let dna = DnaStrand::from_str("ATCGATCGATCGATCGATCGATCG").unwrap();
         let original_len = dna.len();
         let mut synth = SynthStrand::pristine(dna, 0);
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StableRng::seed_from_u64(42);
 
         model.apply(&mut synth, &mut rng);
 
@@ -474,7 +472,7 @@ mod tests {
 
         let dna = DnaStrand::from_str("ATCGATCG").unwrap();
         let mut synth = SynthStrand::pristine(dna, 0);
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StableRng::seed_from_u64(42);
 
         model.apply(&mut synth, &mut rng);
 

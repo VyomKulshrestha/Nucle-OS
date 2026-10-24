@@ -13,8 +13,7 @@ use crate::errors::ErrorModel;
 use crate::profiles::HardwareProfile;
 use crate::strand::{SynthStrand, SynthPool};
 use nucle_codec::base::StrandCollection;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use nucle_codec::stable_rng::StableRng;
 use serde::{Serialize, Deserialize};
 use std::fmt;
 
@@ -146,9 +145,9 @@ impl SimulationConfig {
 }
 
 /// One draw from a standard normal distribution (Box-Muller).
-fn standard_normal(rng: &mut StdRng) -> f64 {
-    let u1: f64 = rng.gen::<f64>().max(f64::MIN_POSITIVE);
-    let u2: f64 = rng.gen();
+fn standard_normal(rng: &mut StableRng) -> f64 {
+    let u1: f64 = rng.gen_f64().max(f64::MIN_POSITIVE);
+    let u2: f64 = rng.gen_f64();
     (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
 }
 
@@ -256,7 +255,7 @@ impl NoiseEngine {
     ///
     /// Pipeline: [pristine strands] → [synthesis errors] → [sequencing errors] → [SynthPool]
     pub fn simulate(&self, collection: &StrandCollection) -> SimulationResult {
-        let mut rng = StdRng::seed_from_u64(self.config.seed);
+        let mut rng = StableRng::seed_from_u64(self.config.seed);
         let input_count = collection.strands.len();
 
         let synth_model = self.config.synthesis_profile.to_error_model();
@@ -278,7 +277,7 @@ impl NoiseEngine {
                 let mut synth = SynthStrand::pristine(strand.clone(), strand_id);
                 strand_id += 1;
 
-                if keep < 1.0 && rng.gen::<f64>() >= keep {
+                if keep < 1.0 && rng.gen_f64() >= keep {
                     synth.is_intact = false;
                     all_strands.push(synth);
                     continue;
@@ -301,7 +300,7 @@ impl NoiseEngine {
                         synth.len(),
                         self.config.storage_time,
                     );
-                    if rng.gen::<f64>() >= survival {
+                    if rng.gen_f64() >= survival {
                         synth.is_intact = false;
                         decayed += 1;
                         all_strands.push(synth);

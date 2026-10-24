@@ -5,16 +5,18 @@
 //! library a pool opens with. Rebuilding gives back the same data only if
 //! the seed produces the same numbers as when it was written, so these
 //! streams can't come from the `rand` crate, which changed what a seeded
-//! `gen_range` returns in 0.9.
+//! `gen_range` returns in 0.9. The noise simulator (`nucle_synth`) and the
+//! blind evaluation of real reads use it too, so a seed in a test or a
+//! published measurement gives the same result whatever rand does.
 //!
 //! [`StableRng`] is a fixed copy of what those streams were written with:
 //! rand 0.8's `StdRng` (ChaCha with 12 rounds, a 64-bit block counter and a
 //! zero stream, refilled four blocks at a time), seeded the way rand_core
 //! 0.6's `seed_from_u64` fills the key from PCG32, and sampled the way rand
-//! 0.8 samples an `f64`, a `u8` and a `usize` range. Its tests pin the
-//! streams with digests recorded while rand 0.8 was the workspace's
-//! generator and checked against it draw for draw, so archives written
-//! then still decode.
+//! 0.8 samples an `f64`, a `u8`, a `usize` range and an `f64` range. Its
+//! tests pin the streams with digests recorded while rand 0.8 was the
+//! workspace's generator and checked against it draw for draw, so archives
+//! written then still decode.
 
 use std::ops::Range;
 
@@ -99,6 +101,24 @@ impl StableRng {
         }
     }
 
+    /// A uniform `f64` in `range` (rand 0.8's `UniformFloat::sample_single`):
+    /// 52 random bits make a value in [1, 2), shifted and scaled into the
+    /// range; one that rounds up to its end is drawn again with the scale
+    /// one unit in the last place smaller.
+    pub fn gen_f64_range(&mut self, range: Range<f64>) -> f64 {
+        let (low, high) = (range.start, range.end);
+        assert!(low < high, "gen_f64_range called with an empty range");
+        let mut scale = high - low;
+        loop {
+            let one_to_two = f64::from_bits((self.next_u64() >> 12) | (1023u64 << 52));
+            let value = (one_to_two - 1.0) * scale + low;
+            if value < high {
+                return value;
+            }
+            scale = f64::from_bits(scale.to_bits() - 1);
+        }
+    }
+
     fn refill(&mut self) {
         for block in 0..4 {
             let words = chacha12_block(&self.key, self.counter);
@@ -180,6 +200,25 @@ mod tests {
                 h = fnv(h, &rng.gen_f64().to_bits().to_le_bytes());
                 h = fnv(h, &[rng.gen_u8()]);
                 h = fnv(h, &(rng.gen_range(i % 7..(i % 7) + 1 + i % 500) as u64).to_le_bytes());
+            }
+            assert_eq!(h, expected, "seed {seed}");
+        }
+    }
+
+    /// `gen_f64_range`, checked the same way: rand 0.8's `gen_range` over
+    /// the same ranges gave these digests.
+    #[test]
+    fn float_ranges_are_pinned() {
+        for (seed, expected) in [(0u64, 0xbe3e_780b_b0a4_c8f5u64), (42, 0x5f77_7773_e4a9_13c8), (u64::MAX, 0x78ba_018f_8d85_e320)] {
+            let mut rng = StableRng::seed_from_u64(seed);
+            let mut h = FNV_OFFSET;
+            for i in 0..5000 {
+                let value = match i % 3 {
+                    0 => rng.gen_f64_range(0.1..0.5),
+                    1 => rng.gen_f64_range(-3.0..7.25),
+                    _ => rng.gen_f64_range(0.0..1e-300),
+                };
+                h = fnv(h, &value.to_bits().to_le_bytes());
             }
             assert_eq!(h, expected, "seed {seed}");
         }

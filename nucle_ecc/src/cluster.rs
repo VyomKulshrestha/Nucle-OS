@@ -292,18 +292,17 @@ fn union(parent: &mut [usize], a: usize, b: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use nucle_codec::stable_rng::StableRng;
 
-    fn random_strand(rng: &mut StdRng, len: usize) -> Vec<Nucleotide> {
+    fn random_strand(rng: &mut StableRng, len: usize) -> Vec<Nucleotide> {
         (0..len).map(|_| Nucleotide::ALL[rng.gen_range(0..4)]).collect()
     }
 
     /// A noisy copy with independent substitution/insertion/deletion at `rate` each.
-    fn noisy(rng: &mut StdRng, src: &[Nucleotide], rate: f64) -> DnaStrand {
+    fn noisy(rng: &mut StableRng, src: &[Nucleotide], rate: f64) -> DnaStrand {
         let mut out = Vec::new();
         for &b in src {
-            let r: f64 = rng.gen();
+            let r: f64 = rng.gen_f64();
             if r < rate {
                 continue; // deletion
             } else if r < 2.0 * rate {
@@ -311,7 +310,7 @@ mod tests {
             } else {
                 out.push(b);
             }
-            if rng.gen::<f64>() < rate {
+            if rng.gen_f64() < rate {
                 out.push(Nucleotide::ALL[rng.gen_range(0..4)]); // insertion
             }
         }
@@ -331,7 +330,7 @@ mod tests {
 
     #[test]
     fn recovers_shuffled_noisy_clusters_exactly() {
-        let mut rng = StdRng::seed_from_u64(7);
+        let mut rng = StableRng::seed_from_u64(7);
         let strands: Vec<Vec<Nucleotide>> = (0..60).map(|_| random_strand(&mut rng, 110)).collect();
         let mut reads = Vec::new();
         let mut truth = Vec::new();
@@ -343,7 +342,7 @@ mod tests {
         }
         // Shuffle reads and labels together.
         for i in (1..reads.len()).rev() {
-            let j = rng.gen_range(0..=i);
+            let j = rng.gen_range(0..i + 1);
             reads.swap(i, j);
             truth.swap(i, j);
         }
@@ -356,7 +355,7 @@ mod tests {
 
     #[test]
     fn unrelated_reads_stay_apart() {
-        let mut rng = StdRng::seed_from_u64(11);
+        let mut rng = StableRng::seed_from_u64(11);
         let reads: Vec<DnaStrand> = (0..200).map(|_| DnaStrand::new(random_strand(&mut rng, 110))).collect();
         let clusters = cluster_reads(&reads, &ClusterConfig::default());
         assert_eq!(clusters.len(), 200);
@@ -364,7 +363,7 @@ mod tests {
 
     #[test]
     fn every_read_lands_in_exactly_one_cluster() {
-        let mut rng = StdRng::seed_from_u64(3);
+        let mut rng = StableRng::seed_from_u64(3);
         let base = random_strand(&mut rng, 100);
         // About 7.5% combined error per read, MinION-like.
         let reads: Vec<DnaStrand> = (0..30).map(|_| noisy(&mut rng, &base, 0.025)).collect();
@@ -377,7 +376,7 @@ mod tests {
 
     /// `pairs` pairs of strands, the two in a pair 6 substitutions apart
     /// (5% of 120 nt), with `copies` reads of each at `rate` per error type.
-    fn near_identical_pairs(rng: &mut StdRng, pairs: usize, copies: usize, rate: f64) -> (Vec<DnaStrand>, Vec<usize>) {
+    fn near_identical_pairs(rng: &mut StableRng, pairs: usize, copies: usize, rate: f64) -> (Vec<DnaStrand>, Vec<usize>) {
         let (mut reads, mut truth) = (Vec::new(), Vec::new());
         for p in 0..pairs {
             let a = random_strand(rng, 120);
@@ -398,7 +397,7 @@ mod tests {
 
     #[test]
     fn the_fitted_threshold_follows_read_noise() {
-        let mut rng = StdRng::seed_from_u64(5);
+        let mut rng = StableRng::seed_from_u64(5);
         let (clean, _) = near_identical_pairs(&mut rng, 20, 10, 0.0005);
         assert_eq!(ClusterConfig::fitted(&clean).max_distance_fraction, FITTED_MIN);
         // About 6% combined error per read, MinION-like.
@@ -412,7 +411,7 @@ mod tests {
 
     #[test]
     fn a_fitted_threshold_keeps_near_identical_clean_strands_apart() {
-        let mut rng = StdRng::seed_from_u64(9);
+        let mut rng = StableRng::seed_from_u64(9);
         let (reads, truth) = near_identical_pairs(&mut rng, 25, 10, 0.0005);
         let pure = |clusters: &[Vec<usize>]| clusters.iter().all(|c| c.iter().all(|&i| truth[i] == truth[c[0]]));
         // The nanopore default merges each pair.
