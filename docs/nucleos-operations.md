@@ -38,11 +38,22 @@ older physical representation stays readable. The software checks demonstrate
 constraint compliance, not successful physical synthesis. Recovery from a
 rank-deficient subset is impossible; the hard arbitrary known-erasure bound is
 provided by `-r/--redundancy` Reed-Solomon parity:
-`2*errors + erasures <= parity_count` after consensus. To choose that parity
-for a channel, `nucle parity report.bin --codec hedges -p array-lofi --coverage 3`
-sends the file's strands through the simulated reads and decoder and prints
-the `--redundancy` that keeps the chance of losing the file under 0.1%
-(`--max-failure` changes the target).
+`2*errors + erasures <= parity_count` after consensus. The default, 2 parity
+strands per stripe, is sized for clean reads. To size it for the reads a file
+will actually get, give `store` or `migrate` the channel:
+
+```bash
+nucle store report.bin --codec hedges --channel array-lofi --coverage 3
+nucle migrate report.bin --channel nanopore --coverage 6
+```
+
+Both send the file's own strands through the simulated reads and decoder and
+write the parity that keeps the chance of losing it under 0.1% (`--max-failure`
+changes the target). An explicit `-r` still wins, with a warning when it falls
+short of the plan, and a codec that needs more parity than data on that channel
+gets a warning naming what HEDGES would need instead. `nucle parity
+report.bin --codec hedges -p array-lofi --coverage 3` prints the same plan
+without storing anything.
 
 ## Version lifecycle
 

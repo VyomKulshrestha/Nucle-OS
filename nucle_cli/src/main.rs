@@ -93,12 +93,22 @@ enum Commands {
     Store {
         /// File to store
         file: String,
-        /// Number of RS parity strands for error correction
-        #[arg(short, long, default_value = "2")]
-        redundancy: usize,
+        /// Reed-Solomon parity strands per stripe (default 2, or planned for --channel)
+        #[arg(short, long)]
+        redundancy: Option<usize>,
         /// Storage codec: ternary, fountain, yin-yang, or hedges
         #[arg(short, long, default_value = "ternary")]
         codec: String,
+        /// Plan parity for reads through this channel: illumina, nanopore,
+        /// twist, idt, column-synthesis, pristine, array-hifi, array-lofi
+        #[arg(long)]
+        channel: Option<String>,
+        /// Sequencing reads per strand on --channel
+        #[arg(long, default_value = "10", requires = "channel")]
+        coverage: u32,
+        /// Highest acceptable chance of losing the file on --channel
+        #[arg(long, default_value = "0.001", requires = "channel")]
+        max_failure: f64,
     },
 
     /// Retrieve a file from the DNA storage pool
@@ -143,6 +153,16 @@ enum Commands {
         /// New codec name: ternary, fountain, yin-yang, or hedges
         #[arg(short, long)]
         codec: Option<String>,
+        /// Plan parity for reads through this channel: illumina, nanopore,
+        /// twist, idt, column-synthesis, pristine, array-hifi, array-lofi
+        #[arg(long)]
+        channel: Option<String>,
+        /// Sequencing reads per strand on --channel
+        #[arg(long, default_value = "10", requires = "channel")]
+        coverage: u32,
+        /// Highest acceptable chance of losing the file on --channel
+        #[arg(long, default_value = "0.001", requires = "channel")]
+        max_failure: f64,
     },
 
     /// Re-encode a Fountain file with more droplets as a new version
@@ -673,8 +693,9 @@ fn run() {
     match cli.command {
         Commands::Encode { file, output } => cmd_encode(&file, output.as_deref()),
         Commands::Decode { file, output, size } => cmd_decode(&file, output.as_deref(), size),
-        Commands::Store { file, redundancy, codec } => {
-            cmd_store(&file, redundancy, &codec, &pool_dir, passphrase.as_deref(), cli.json)
+        Commands::Store { file, redundancy, codec, channel, coverage, max_failure } => {
+            let channel = channel.map(|profile| parity_cli::Channel { profile, coverage, max_failure });
+            cmd_store(&file, redundancy, &codec, channel.as_ref(), &pool_dir, passphrase.as_deref(), cli.json)
         }
         Commands::Retrieve { name, version } => cmd_retrieve(&name, version, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::History { name } => cmd_history(&name, &pool_dir, passphrase.as_deref(), cli.json),
@@ -682,7 +703,10 @@ fn run() {
             cmd_rename(&old_name, &new_name, &pool_dir, passphrase.as_deref(), cli.json)
         }
         Commands::Delete { name, confirm } => cmd_delete(&name, confirm, &pool_dir, passphrase.as_deref(), cli.json),
-        Commands::Migrate { name, redundancy, codec } => cmd_migrate(&name, redundancy, codec.as_deref(), &pool_dir, passphrase.as_deref(), cli.json),
+        Commands::Migrate { name, redundancy, codec, channel, coverage, max_failure } => {
+            let channel = channel.map(|profile| parity_cli::Channel { profile, coverage, max_failure });
+            cmd_migrate(&name, redundancy, codec.as_deref(), channel.as_ref(), &pool_dir, passphrase.as_deref(), cli.json)
+        }
         Commands::ExtendFountain { name, droplets } => cmd_extend_fountain(&name, droplets, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Search { query, top_k } => cmd_search(&query, top_k, &pool_dir, passphrase.as_deref(), cli.json),
         Commands::Pool => cmd_pool(&pool_dir, passphrase.as_deref(), cli.json),
@@ -963,8 +987,9 @@ fn persist_pool(os: &mut NucleOS, pool_dir: &std::path::Path) {
 
 fn cmd_store(
     file: &str,
-    redundancy: usize,
+    redundancy: Option<usize>,
     codec: &str,
+    channel: Option<&parity_cli::Channel>,
     pool_dir: &std::path::Path,
     passphrase: Option<&str>,
     json: bool,
@@ -1002,13 +1027,23 @@ fn cmd_store(
         }
     };
 
+    let plan = channel.map(|channel| channel.plan(&data, codec_kind, codec, redundancy));
+    let redundancy = redundancy.or(plan.map(|plan| plan.parity)).unwrap_or(2);
+
     let mut os = open_pool(pool_dir, passphrase);
     match os.dna_write_with_codec(filename, &data, redundancy, codec_kind) {
         Ok(result) => {
             persist_pool(&mut os, pool_dir);
             if json {
-                println!("{}", serde_json::to_string_pretty(&result).unwrap());
+                let mut value = serde_json::to_value(&result).unwrap();
+                if let Some(plan) = plan {
+                    value["parity_plan"] = serde_json::to_value(plan).unwrap();
+                }
+                println!("{}", serde_json::to_string_pretty(&value).unwrap());
             } else {
+                if let (Some(plan), Some(channel)) = (plan, channel) {
+                    println!("{}", channel.describe(&plan));
+                }
                 println!("✓ {}", result);
                 println!("\n{}", os.dna_stat());
             }
@@ -1161,14 +1196,48 @@ fn cmd_delete(name: &str, confirm: bool, pool_dir: &std::path::Path, passphrase:
     }
 }
 
-fn cmd_migrate(name: &str, redundancy: Option<usize>, codec: Option<&str>, pool_dir: &std::path::Path, passphrase: Option<&str>, json: bool) {
+fn cmd_migrate(
+    name: &str,
+    redundancy: Option<usize>,
+    codec: Option<&str>,
+    channel: Option<&parity_cli::Channel>,
+    pool_dir: &std::path::Path,
+    passphrase: Option<&str>,
+    json: bool,
+) {
     let mut os = open_pool(pool_dir, passphrase);
+    // Plan from the file's own bytes under the codec it will be written
+    // with: the new one if given, else the one it has now.
+    let plan = channel.map(|channel| {
+        let Some(current) = os.catalog.get_by_name(name).map(|file| file.codec.clone()) else {
+            eprintln!("Migration failed: file '{}' not found", name);
+            std::process::exit(1);
+        };
+        let codec_name = codec.unwrap_or(&current);
+        let Some(codec_kind) = nucle_vfs::syscall::CodecKind::from_codec_name(codec_name) else {
+            eprintln!("Migration failed: unknown codec '{}'; expected ternary, fountain, yin-yang, or hedges", codec_name);
+            std::process::exit(1);
+        };
+        let data = os.dna_read(name).unwrap_or_else(|e| {
+            eprintln!("Migration failed: {}", e);
+            std::process::exit(1);
+        });
+        channel.plan(&data, codec_kind, codec_name, redundancy)
+    });
+    let redundancy = redundancy.or(plan.map(|plan| plan.parity));
     match nucle_vfs::migrate::migrate_object(&mut os, name, redundancy, codec) {
         Ok(manifest) => {
             persist_pool(&mut os, pool_dir);
             if json {
-                println!("{}", serde_json::to_string_pretty(&manifest).unwrap());
+                let mut value = serde_json::to_value(&manifest).unwrap();
+                if let Some(plan) = plan {
+                    value["parity_plan"] = serde_json::to_value(plan).unwrap();
+                }
+                println!("{}", serde_json::to_string_pretty(&value).unwrap());
             } else {
+                if let (Some(plan), Some(channel)) = (plan, channel) {
+                    println!("{}", channel.describe(&plan));
+                }
                 println!("✓ Migrated file '{}' successfully.", name);
                 println!("New Archive ID: {}", manifest.archive_id);
                 println!("New Redundancy: {} parity strands", manifest.redundancy);
@@ -3354,9 +3423,9 @@ fn cmd_help() {
     println!("Commands:");
     println!("  nucle encode <file> [-o output]           Encode a file to DNA strands");
     println!("  nucle decode <file> [-o output] -s <size> Decode DNA strands to binary");
-    println!("  nucle store <file> [-r redundancy]        Store a file in DNA pool");
+    println!("  nucle store <file> [-r parity] [--channel p] Store a file in DNA pool");
     println!("  nucle retrieve <name>                     Retrieve a file from DNA pool");
-    println!("  nucle migrate <name> [-r redundancy]      Migrate a file to new storage params");
+    println!("  nucle migrate <name> [-r parity] [--channel p] Migrate a file to new storage params");
     println!("  nucle search <query> [-k top_k]           Search for files");
     println!("  nucle pool                                Show pool status");
     println!("  nucle list [prefix]                       List stored files, optionally by name prefix");

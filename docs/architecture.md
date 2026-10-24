@@ -1128,6 +1128,13 @@ trade-off: on the low-fidelity channel at 6 reads per strand about a quarter
 of its strands come out of consensus wrong, and the planner asks for 218
 parity strands per stripe where HEDGES needs 27.
 
+`nucle store` and `nucle migrate` take the same channel (`--channel
+array-lofi --coverage 3`) and write the planned parity unless `-r` overrides
+it; without a channel they keep 2 parity strands, enough only for clean
+reads. When the chosen codec needs more parity strands than data strands on
+that channel, or no parity meets the target, they say what HEDGES would need
+instead.
+
 **Fountain in the VFS.** `CodecKind::Fountain` is a real storage selection,
 not just a benchmark option. Writes and migrations store `dna-fountain` on the
 `DnaFile`, `StorageManifest`, `WriteResult`, and `VersionInfo` paths already
