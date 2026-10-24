@@ -975,6 +975,12 @@ accepts any other measured kinetics.
   arbitrary binary input; the VFS also screens the final primer-tagged strand
 - Near-optimal density: ~1.57 bits/nucleotide
 - Peeling falls back to GF(2) Gaussian elimination for every full-rank subset
+- Each droplet's segments are drawn from a `StdRng` seeded with its seed,
+  so decoding depends on rand 0.8's exact sampling. rand 0.9 changed what a
+  seeded `random_range` returns, and moving to it would leave every Fountain
+  archive written so far undecodable; the workspace stays on rand 0.8 until
+  Fountain samples with a generator of its own, with the old one kept for
+  existing archives
 
 ### Yin-Yang Codec (Ping et al., 2022)
 - Two complementary mapping rules achieve GC balance by construction

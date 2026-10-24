@@ -5,6 +5,13 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # rand 0.9 changed the values a seeded random_range draws. Fountain
+      # rebuilds each droplet's segments from its seed, so archives written
+      # under rand 0.8 would stop decoding (see the DNA Fountain section of
+      # docs/architecture.md). Moving needs a sampler of our own first.
+      - dependency-name: "rand"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/editors/vscode/nuclescript"
