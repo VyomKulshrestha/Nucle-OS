@@ -51,7 +51,10 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable,
         Expr::SimulatePool { .. } => Effect::Pure,
         Expr::SynthesizePool { .. } => Effect::Synthesis,
         Expr::SequencePool { .. } => Effect::Sequencing,
-        Expr::FunctionCall { name, .. } => function_call_effect(name, funcs, closures, fn_param_effects, resolving).0,
+        Expr::FunctionCall { name, args, .. } => join_effects(
+            function_call_effect(name, funcs, closures, fn_param_effects, resolving).0,
+            closure_args_effect(name, args, funcs, closures, fn_param_effects, resolving),
+        ),
         Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => Effect::Pure,
         // Defining a closure is always inert -- nothing runs until it's
         // called. The call site (`Expr::FunctionCall` above) is where its
@@ -91,6 +94,33 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable,
             .iter()
             .fold(expr_effect(scrutinee, funcs, closures, fn_param_effects, resolving), |acc, arm| join_effects(acc, expr_effect(&arm.body, funcs, closures, fn_param_effects, resolving))),
     }
+}
+
+/// What the closures a call passes to its callee's *unannotated*
+/// `Fn(...)` parameters do: inside the callee those parameters' calls
+/// resolve to `Pure` (their bodies aren't known there), so the call site,
+/// which knows each concrete closure, joins their real effects in. An
+/// inline literal's body is resolved directly; a name resolves the way a
+/// call to it would (a `let`-bound closure, or a parameter forwarded from
+/// an enclosing function). Annotated parameters need nothing here: the
+/// callee's body already counts their declared ceiling. Joined whether or
+/// not the callee calls the parameter on every path, the same
+/// over-approximation an untaken `if` branch gets.
+fn closure_args_effect(name: &str, args: &[Expr], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> Effect {
+    let Some(callee) = funcs.get(name).or_else(|| closures.get(name)) else {
+        return Effect::Pure;
+    };
+    callee.params.iter().zip(args).fold(Effect::Pure, |acc, (param, arg)| {
+        if !matches!(param.ty, TypeExpr::Fn(_, _, None)) {
+            return acc;
+        }
+        let effect = match arg {
+            Expr::Closure { params, body, .. } => body_effect(body, funcs, &scoped_fn_param_effects(params, fn_param_effects), resolving).0,
+            Expr::Variable(bound) => function_call_effect(bound, funcs, closures, fn_param_effects, resolving).0,
+            _ => Effect::Pure,
+        };
+        join_effects(acc, effect)
+    })
 }
 
 /// Does `actual` fall within what `declared` promises? `Pure` always

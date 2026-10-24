@@ -324,29 +324,72 @@ fn plan_narration_reaches_into_a_let_bound_closures_own_body() {
 }
 
 #[test]
-fn plan_narration_does_not_reach_into_a_fn_typed_parameters_real_closure_body() {
-    // The accepted limit this fix doesn't (and can't, without effect-
-    // annotated function types) close: a closure received as a
-    // `Fn(...)`-typed *parameter* -- here, `retry_once`'s own
-    // `attempt_fn` -- is still unnarratable, since its real body isn't
-    // known at this call site, only at runtime. Neither `retry_once`'s
-    // own internal `attempt_fn()` calls nor the inline closure literal
-    // passed as its argument are ever reachable from this walk.
+fn plan_narration_reaches_into_a_closure_passed_to_a_fn_typed_parameter() {
+    // Narration walks down from the top level, so at the call to
+    // `retry_once` it knows which closure `attempt_fn` receives -- an
+    // inline literal here, a `let`-bound one below -- and the store inside
+    // it is narrated wherever `retry_once` calls its parameter.
     let src = format!(
-        "{}fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>) returns Result<DnaFile, Str> {{\n    let attempt: Result<DnaFile, Str> = attempt_fn()\n    let saved: DnaFile = match attempt {{\n        Ok(file) => file,\n        Err(reason) => attempt_fn()?\n    }}\n}}\nfn archive_with_retry() returns Result<DnaFile, Str> {{\n    let result: Result<DnaFile, Str> = retry_once(fn() -> Result<DnaFile, Str> {{\n        let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive\n    }})\n}}\nlet first: Result<DnaFile, Str> = archive_with_retry()\n",
+        "{}fn retry_once(attempt_fn: Fn() -> Result<DnaFile, Str>) returns Result<DnaFile, Str> {{
+    let attempt: Result<DnaFile, Str> = attempt_fn()
+    let saved: DnaFile = match attempt {{
+        Ok(file) => file,
+        Err(reason) => attempt_fn()?
+    }}
+}}
+fn archive_with_retry() returns Result<DnaFile, Str> {{
+    let result: Result<DnaFile, Str> = retry_once(fn() -> Result<DnaFile, Str> {{
+        let attempt: Result<DnaFile, Str> = store \"a.txt\" into archive
+    }})
+}}
+fn archive_named() returns Result<DnaFile, Str> {{
+    let named: Fn() -> Result<DnaFile, Str> = fn() -> Result<DnaFile, Str> {{
+        let attempt: Result<DnaFile, Str> = store \"b.txt\" into archive
+    }}
+    let result: Result<DnaFile, Str> = retry_once(named)
+}}
+let first: Result<DnaFile, Str> = archive_with_retry()
+let second: Result<DnaFile, Str> = archive_named()
+",
         POOL
     );
     let plan = compile_for_simulation(&src).expect("must compile cleanly");
-    assert!(
-        !plan.steps.iter().any(|s| matches!(s, SimulationStep::Store { .. })),
-        "an inline closure literal passed as a Fn(...)-typed argument should not be narrated, got: {:?}",
-        plan.steps
-    );
+    for expected in ["a.txt", "b.txt"] {
+        assert!(
+            plan.steps.iter().any(|s| matches!(s, SimulationStep::Store { file, .. } if file == expected)),
+            "expected the store of {expected} reached through the parameter to be narrated, got: {:?}",
+            plan.steps
+        );
+    }
 }
 
-// ---------------------------------------------------------------------
-// Effects
-// ---------------------------------------------------------------------
+#[test]
+fn a_call_carries_the_effect_of_the_closure_it_passes_to_an_unannotated_parameter() {
+    use nucle_lang::effects::{function_call_effect, function_table, FunctionTable, ResolvingSet};
+    use std::collections::HashMap;
+    // `run`'s own body only calls its parameter, which resolves to Pure
+    // inside it; the call in `caller`, which knows the closure, is
+    // Destructive. The closure confirms its own delete, so nothing new is
+    // required of the caller.
+    let src = format!(
+        "{}fn run(op: Fn() -> Void) returns Void {{
+    let x: Void = op()
+}}
+fn caller() returns Void {{
+    let z: Void = run(fn() -> Void {{
+        delete \"a.txt\" from archive confirm physical_key
+    }})
+}}
+",
+        POOL
+    );
+    let program = parse(&src);
+    let funcs = function_table(&program);
+    let effect = |name: &str| function_call_effect(name, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new());
+    assert_eq!(effect("run"), (Effect::Pure, true));
+    assert_eq!(effect("caller"), (Effect::Destructive, true));
+    assert!(diagnostic_codes(&src).is_empty(), "{:?}", diagnostic_codes(&src));
+}
 
 #[test]
 fn calling_a_let_bound_closure_reflects_its_real_body_effect() {

@@ -853,15 +853,16 @@ fn archive_with_retry() returns Result<DnaFile, Str> {
   closure's own call** — the narrator now walks into a
   `let`-bound closure's real body the same way it already walks a named
   function's, checked with the same priority effect analysis
-  established (closures before named functions). **A real, honest
-  limitation remains**: a closure received as a `Fn(...)`-typed
-  *parameter*, or an inline closure literal passed directly as a call
-  argument, is still unnarratable for `nucle plan` purposes — neither's
-  real body is known at that call site, only at runtime, and a declared
-  effect ceiling (below) isn't a real body to synthesize a concrete VFS
-  step from. *Effect/confirmation analysis* for a `Fn(...)`-typed
-  parameter's call, unlike narration, can now be made accurate — see
-  "Effect-Annotated Function Types" below.
+  established (closures before named functions).
+- **Narration and effects through a `Fn(...)`-typed parameter** — a
+  closure passed to a function, `let`-bound or written inline as the
+  argument, is narrated wherever the function calls its parameter:
+  narration walks down from the top level, so at each call it knows which
+  closure the parameter receives. The same call carries that closure's
+  real effect, so `run(fn() -> Void { delete "a" from archive confirm
+  physical_key })` is Destructive where it's called, though `run` alone is
+  Pure. The closure's own operations are confirmed where it's written,
+  as everywhere else.
 
 See [docs/errors.md](errors.md) for `E-CLOSURE-RETURN-TYPE-MISMATCH`, and
 [`docs/examples/closure_retry.nsl`](examples/closure_retry.nsl) for a
@@ -926,9 +927,10 @@ fn run_cleanup() returns Void {
   either), and hardware-request collection (`nucle hardware export`)
   never walks into any function or closure body at all, indirect calls
   included, so this doesn't change what that pipeline sees either way.
-- **Narration is still a separate, unclosed gap** — see the note on
-  `nucle plan` above; a declared ceiling tells the compiler what
-  confirmation is needed, not what to narrate.
+- **Narration follows the real closure, not the ceiling** — see the
+  note on `nucle plan` above; a declared ceiling tells the compiler what
+  confirmation is needed, and the call site supplies the body to
+  narrate.
 
 See [docs/errors.md](errors.md) for `E-FN-EFFECT-ARG-MISMATCH`, and
 [`docs/examples/effect_annotated_closure.nsl`](examples/effect_annotated_closure.nsl)

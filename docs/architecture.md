@@ -277,7 +277,8 @@ Two related gaps stood open from earlier in the language's development,
 named explicitly at the time: a general pattern-matching/exhaustiveness
 engine (needing user-defined enums, which didn't exist at all) and
 accurate effect analysis through an arbitrary closure call (deferred
-separately, still open). This closes the first.
+separately, and closed later: see "Closures passed to `Fn(...)`
+parameters"). This closes the first.
 
 `ast::EnumDecl { name, variants: Vec<EnumVariant>, span, doc }` is a new
 top-level declaration, each variant at most one payload
@@ -473,11 +474,10 @@ own call**: `sim_backend.rs`'s `narrate_result_expr` now threads
 a `closures: &mut HashMap<String, Vec<Declaration>>` map (name → body),
 built incrementally by the same two declaration-walking loops that
 already existed, checked *before* the named-function lookup -- the exact
-priority `effects.rs`'s own earlier fix already established. A closure
-received as a `Fn(...)`-typed *parameter*, or an inline closure literal
-passed directly as a call argument, remains unnarratable, since neither's
-real body is known at that call site, only at runtime -- this closes only
-the `let`-bound case.
+priority `effects.rs`'s own earlier fix already established. This
+closed the `let`-bound case; a closure received as a `Fn(...)`-typed
+*parameter*, or an inline literal passed as an argument, followed later
+(see "Closures passed to `Fn(...)` parameters").
 
 This is also why no cycle-guard machinery was needed for *mutual*
 recursion between closures: capture only ever sees bindings from *before*
@@ -500,10 +500,38 @@ real, deliberately open gap at the time (its real body isn't knowable
 until runtime, so it was optimistically treated as `Pure`/confirmed, no
 worse than the pre-existing "can't resolve, assume Pure" fallback for
 any unresolvable name) -- closed by effect-annotated function types,
-below. `sim_backend.rs`'s narrator has the identical, symmetric gap for
-the same reason (it resolves callees by static name and has no runtime
-environment to consult) and remains genuinely open -- see the "Closures"
-section of [docs/grammar.md](grammar.md) for the full semantics.
+below. `sim_backend.rs`'s narrator had the identical, symmetric gap for
+the same reason (it resolves callees by static name), closed with the
+effect side in "Closures passed to `Fn(...)` parameters" below -- see the
+"Closures" section of [docs/grammar.md](grammar.md) for the full
+semantics.
+
+### Closures passed to `Fn(...)` parameters
+
+Inside a function, a call to an unannotated `Fn(...)` parameter can't be
+analyzed: which closure arrives is only known where the function is
+called. Both passes that needed it now look there instead.
+
+- **Effects.** `effects::expr_effect` joins into a call's effect the real
+  effect of each closure the call passes to an unannotated `Fn(...)`
+  parameter of its callee: an inline literal's body directly, a name the
+  way a call to it would resolve (a `let`-bound closure, or a parameter
+  forwarded from an enclosing function). `run(fn() -> Void { delete "a"
+  from archive confirm physical_key })` is Destructive where it is
+  called, though `run` on its own is Pure. Annotated parameters already
+  contribute their declared ceiling through the callee's body. The
+  closure is joined whether or not the callee calls it on every path, the
+  same over-approximation an untaken `if` branch gets. Confirmation is
+  unchanged: each closure's own operations are already checked where the
+  closure is written (`E-DELETE-UNCONFIRMED` and the rest), so a closure
+  passed through a parameter never runs anything unconfirmed.
+- **Narration.** `nucle plan` walks down from the top level, so at every
+  call to a named function it knows which closure each `Fn(...)`
+  parameter receives. `narrate_result_expr` binds the parameter's name to
+  that closure's body (a `let`-bound one or an inline literal) for the
+  length of the call and restores whatever the name meant before, so a
+  `store` inside the closure is narrated wherever the callee calls the
+  parameter.
 
 ### Effect-annotated function types
 

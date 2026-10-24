@@ -157,15 +157,10 @@ pub fn compile_simulation(program: Program, type_report: TypeReport) -> Simulati
 /// scope chain* narrates into its real body, mirroring the priority
 /// `effects.rs`'s own `closures` fix already established (checked
 /// before `funcs`). A closure received as a `Fn(...)`-typed *parameter*
-/// is still unnarratable: its real body isn't known at this call site
-/// either, only at runtime. Effect-annotated `Fn(...)` types
-/// (`confirm hardware`/`confirm physical_key`) close the *effect/
-/// confirmation-analysis* version of this gap (see `effects.rs`'s
-/// `fn_param_effects`) -- a declared ceiling is enough to know a call
-/// site's effect and whether it's properly confirmed -- but a ceiling
-/// isn't a real body, so this narrator still can't synthesize a
-/// concrete VFS step for it. Only whole-program flow analysis (the
-/// option not taken) could close this specific, narrower remaining gap.
+/// narrates too: narration walks down from the top level, so at every
+/// call to a named function it knows which closure each `Fn(...)`
+/// parameter receives (a `let`-bound one or an inline literal) and binds
+/// the parameter's name to that closure's body for the call.
 fn narrate_result_expr(
     expr: &Expr,
     pools: &HashMap<String, PoolDecl>,
@@ -231,9 +226,26 @@ fn narrate_result_expr(
                 calling.remove(name);
             }
         }
-        Expr::FunctionCall { name, .. } => {
+        Expr::FunctionCall { name, args, .. } => {
             if let Some(func) = funcs.get(name) {
                 if calling.insert(name.clone()) {
+                    // Each `Fn(...)`-typed parameter narrates through the
+                    // closure this call passes it, a `let`-bound one or an
+                    // inline literal, for the length of the call.
+                    let mut shadowed = Vec::new();
+                    for (param, arg) in func.params.iter().zip(args) {
+                        if !matches!(param.ty, TypeExpr::Fn(..)) {
+                            continue;
+                        }
+                        let body = match arg {
+                            Expr::Closure { body, .. } => Some(body.clone()),
+                            Expr::Variable(bound) => closures.get(bound).cloned(),
+                            _ => None,
+                        };
+                        if let Some(body) = body {
+                            shadowed.push((param.name.clone(), closures.insert(param.name.clone(), body)));
+                        }
+                    }
                     for decl in &func.body {
                         if let Declaration::Let(binding) = decl {
                             if let Expr::Closure { body: closure_body, .. } = &binding.expr {
@@ -241,6 +253,12 @@ fn narrate_result_expr(
                             }
                             narrate_result_expr(&binding.expr, pools, funcs, closures, steps, calling);
                         }
+                    }
+                    for (param, previous) in shadowed.into_iter().rev() {
+                        match previous {
+                            Some(body) => closures.insert(param, body),
+                            None => closures.remove(&param),
+                        };
                     }
                     calling.remove(name);
                 }
