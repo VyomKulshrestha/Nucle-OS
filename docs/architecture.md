@@ -1554,18 +1554,50 @@ Carbon comes in three figures with different scopes:
   data storage using photolithographic synthesis and advanced information
   reconstruction and error correction", Nat. Commun. 11, 5345, 2020)
   list every reagent of one light-directed array synthesis run in
-  Supplementary Table 2. Three have published emission factors (Amelio et
-  al., Green Chem. 16, 3045, 2014, Table 4): 175 mL of acetonitrile and
-  21 mL of activator, counted as acetonitrile, at 2.96 kg CO2e/kg (range
-  2.27–3.70), and 90 mL of ethanol at 1.19. Together that is about 0.54 kg
-  CO2e per run. The run made 16,383 sequences of 60 nt; the same chip
-  held 196,596 for the authors' largest file, at a cost per megabyte that
-  implies the same reagents per run. Spread over those designed
-  nucleotides, writing costs 0.046 to 0.55 mg CO2e per nucleotide, and
-  `nucle cost` reports that range (`--synthesis-kg-co2e-per-nt` replaces
-  it). It is a floor: the 80 g of DMSO exposure solvent, the
-  phosphoramidites, the oxidizer and the electricity have no public
-  emission factors. Twist Bioscience's own figure, 0.036 kg CO2e per gene
+  Supplementary Table 2, and each is weighed at a cradle-to-gate emission
+  factor:
+
+  | Reagent (use) | Grams | kg CO2e per kg | Factor from | Share |
+  |---|---:|---:|---|---:|
+  | Acetonitrile, with the activator and cleavable-dT solutions (coupling) | 154.3 | 2.96 | Amelio et al. 2014 | 55.5% |
+  | DMSO (exposure solvent) | 79.2 | 1.30 | ACS GCI PMI-LCA tool | 12.5% |
+  | Ethanol (slide functionalization) | 71.0 | 1.19 | Amelio et al. 2014 | 10.3% |
+  | Ethylenediamine (cleavage) | 18.0 | 2.84 | Idemat 2026, amines | 6.2% |
+  | Tetrahydrofuran (oxidizer) | 7.2 | 5.72 | ACS GCI | 5.0% |
+  | Toluene (cleavage) | 17.3 | 1.50 | ACS GCI | 3.2% |
+  | Bz-NPPOC phosphoramidites | 0.26 | 97.3 | ACS GCI, complex reagents | 3.1% |
+  | Dichloromethane (β-carotene UV absorber) | 2.97 | 3.39 | ACS GCI | 1.2% |
+  | Silanizing reagent | 0.66 | 4.56 | Idemat 2026, organosilicon | 0.4% |
+  | Imidazole (exposure solvent) | 0.80 | 2.62 | ACS GCI, averaged solvent | 0.3% |
+  | Iodine and pyridine (oxidizer) | 0.075 | 14.8, 9.74 | Roche et al. 2023; Idemat 2026, pyridines | 0.1% |
+  | Light source, 0.135 kWh | | 0.137 per kWh | Hölz et al. 2017; Idemat 2026, Austria | 2.3% |
+
+  Together that is 0.82 kg CO2e per run, against 0.54 for the
+  acetonitrile and ethanol alone. Amelio et al. (Green Chem. 16, 3045,
+  2014, Table 4; ranges 2.27–3.70 and 1.03–1.39) supply those two; the
+  ACS GCI Pharmaceutical Roundtable's streamlined PMI-LCA tool (v07.2P,
+  ecoinvent v2.2) the other named solvents; Idemat 2026RevB2's chemical
+  class averages the three reagents no database lists; and Roche, Muhl and
+  Finkbeiner (2023) the iodine. The 9 mL of oxidizer is split by the
+  composition the same group gives in Sack et al. 2016. No
+  phosphoramidite has a published factor (Becker et al., ChemSusChem 2023,
+  used ATP and GTP in their place for that reason); at the ACS tool's
+  default for complex reagents with protecting groups the amidites are 3%
+  of the run, and they would reach half only above about 3,000 kg CO2e per
+  kg. The light source is the LED system Hölz, Lietard and Somoza measured
+  (40 W lit, 20 W dark), over 187 cycles of a 35 s exposure and about a
+  minute of chemistry, on Austria's consumption mix, since the run was
+  made in Vienna.
+
+  The run made 16,383 sequences of 60 nt; the same chip held 196,596 for
+  the authors' largest file, at a cost per megabyte that implies the same
+  reagents per run. Spread over those designed nucleotides, writing costs
+  0.070 to 0.84 mg CO2e per nucleotide, and `nucle cost` reports that
+  range (`--synthesis-kg-co2e-per-nt` replaces it). It is still a floor:
+  the synthesizer's fluidics, micromirror array and computer have no
+  published power draw. At an assumed 100 to 500 W over the 4.9-hour run
+  they would add 0.07 to 0.34 kg on the same grid, the largest uncertainty
+  left. Twist Bioscience's own figure, 0.036 kg CO2e per gene
   (2023 ESG report), works out to about 0.35 g per oligo at the 1,000,000
   oligos to 9,600 genes per chip its FY2024 10-K gives, a few mg per
   nucleotide for oligos of a hundred-odd bases, the same order as the
@@ -1587,7 +1619,7 @@ Carbon comes in three figures with different scopes:
   for hard disks and 5.0 for tape.
 
 The first and last figures are far apart. On this repository's `LICENSE`
-(about 10,000 nt), writing comes to 0.47 to 5.6 g CO2e while a year kept is
+(about 10,000 nt), writing comes to 0.72 to 8.6 g CO2e while a year kept is
 7.6 × 10⁻⁹ kg: per byte, today's lab-scale synthesis uses five to six orders
 of magnitude more than the industrial-scale synthesis Nguyen et al. model.
 Both are reported because they answer different questions: what writing

@@ -32,14 +32,16 @@
 //!   synthesis. Antkowiak et al., "Low cost DNA data storage using
 //!   photolithographic synthesis and advanced information reconstruction
 //!   and error correction", Nat. Commun. 11, 5345 (2020), Supplementary
-//!   Table 2, lists the reagents of one run; the acetonitrile, the
-//!   activator (counted as acetonitrile) and the ethanol have published
-//!   emission factors (Amelio et al., Green Chem. 16, 3045 (2014), Table 4),
-//!   about 0.54 kg CO2e per run. Spread over that run's 16,383 sequences of
-//!   60 nt, or over the 196,596 the same chip held for their largest file,
-//!   that is 0.55 down to 0.046 mg CO2e per designed nucleotide. The DMSO
-//!   exposure solvent, the phosphoramidites, the oxidizer and the
-//!   electricity have no public factors, so this is a floor. See
+//!   Table 2, lists the reagents of one run. Each is weighed at a
+//!   published cradle-to-gate emission factor, or at its chemical class's
+//!   where it has none, and the light source at its measured power on
+//!   Austria's grid (see [`array_run_kg_co2e`]): about 0.82 kg CO2e per
+//!   run, two thirds of it acetonitrile and ethanol. Spread over that run's
+//!   16,383 sequences of 60 nt, or over the 196,596 the same chip held for
+//!   their largest file, that is 0.84 down to 0.070 mg CO2e per designed
+//!   nucleotide. The synthesizer's fluidics, micromirror array and
+//!   computer have no published power draw and no phosphoramidite has an
+//!   emission factor of its own, so this is still a floor. See
 //!   [`synthesis_kg_co2e_per_nt_range`].
 
 use serde::{Deserialize, Serialize};
@@ -121,16 +123,54 @@ impl Chemistry {
     }
 }
 
-/// The reagents of one light-directed array synthesis run that have a
-/// published emission factor: grams used (Antkowiak et al. 2020,
-/// Supplementary Table 2, at 0.786 g/mL for acetonitrile and 0.789 g/mL for
-/// ethanol) and kg CO2e per kg (Amelio et al. 2014, Table 4, means; ranges
-/// 2.27-3.70 and 1.03-1.39).
-const ARRAY_RUN_REAGENTS: [(&str, f64, f64); 3] = [
-    ("acetonitrile", 175.0 * 0.786, 2.96),
-    ("activator, counted as acetonitrile", 21.0 * 0.786, 2.96),
+/// The reagents of one light-directed array synthesis run, in grams
+/// (Antkowiak et al. 2020, Supplementary Table 2; the toluene from their
+/// Methods), each with a cradle-to-gate emission factor in kg CO2e per kg:
+///
+/// - acetonitrile (the activator and cleavable-dT solutions counted as
+///   acetonitrile) and ethanol: Amelio et al., Green Chem. 16, 3045
+///   (2014), Table 4, means (ranges 2.27-3.70 and 1.03-1.39);
+/// - DMSO, toluene, tetrahydrofuran and dichloromethane: the ACS GCI
+///   Pharmaceutical Roundtable's PMI-LCA tool v07.2P (ecoinvent v2.2,
+///   IPCC 2007), and its averaged organic solvent for imidazole, which has
+///   no factor of its own;
+/// - ethylenediamine, pyridine and the silanizing reagent: Idemat
+///   2026RevB2's averages for their chemical classes (amines, pyridines,
+///   organosilicon compounds), none having a factor of its own;
+/// - iodine: Roche, Muhl and Finkbeiner, Int. J. Life Cycle Assess. 28,
+///   1132 (2023), Chilean caliche with economic allocation;
+/// - the four Bz-NPPOC phosphoramidites: the ACS tool's default for
+///   complex reagents with protecting groups, since no phosphoramidite has
+///   a published factor (Becker et al., ChemSusChem 2023, say the same).
+///
+/// The 9 mL of oxidizer is split by the composition the same group gives
+/// in Sack et al. 2016: THF/water/pyridine/iodine 90.54/9.05/0.41/0.43
+/// (v/v/v/w). The 80 g of exposure solvent is 1% imidazole in DMSO, and
+/// the 0.03 g of beta-carotene is a 1% solution in dichloromethane.
+const ARRAY_RUN_REAGENTS: [(&str, f64, f64); 12] = [
+    ("acetonitrile, with activator and cleavable dT", (175.0 + 21.0 + 0.25) * 0.786, 2.96),
     ("ethanol", 90.0 * 0.789, 1.19),
+    ("DMSO", 80.0 * 0.99, 1.302),
+    ("imidazole", 80.0 * 0.01, 2.624),
+    ("ethylenediamine", 20.0 * 0.899, 2.844),
+    ("toluene", 20.0 * 0.867, 1.499),
+    ("tetrahydrofuran", 9.0 * 0.9054 * 0.889, 5.720),
+    ("pyridine", 9.0 * 0.0041 * 0.982, 9.743),
+    ("iodine", 9.0 * 0.0043, 14.8),
+    ("dichloromethane", 0.03 * 99.0, 3.393),
+    ("silanizing reagent", 0.66, 4.561),
+    ("Bz-NPPOC phosphoramidites", 0.08 + 0.05 + 0.07 + 0.06, 97.3),
 ];
+
+/// Electricity of the run's light source, kWh. Hölz, Lietard and Somoza
+/// (ACS Sustainable Chem. Eng. 5, 828, 2017) measured the LED system at 40
+/// W lit and 20 W dark, with about a minute of chemistry per cycle after
+/// the exposure; Antkowiak's 187 cycles expose for 35 s each.
+const ARRAY_RUN_LIGHT_KWH: f64 = 187.0 * (35.0 * 40.0 + 60.0 * 20.0) / 3.6e6;
+
+/// kg CO2e per kWh of Austria's consumption mix (Idemat 2026RevB2, 0.0381
+/// per MJ); the run was made at the University of Vienna.
+const AUSTRIA_KG_CO2E_PER_KWH: f64 = 0.038_080_585 * 3.6;
 
 /// Designed nucleotides on that run (16,383 sequences of 60 nt) and on the
 /// same chip at the 196,596 sequences of the authors' largest file, whose
@@ -138,11 +178,12 @@ const ARRAY_RUN_REAGENTS: [(&str, f64, f64); 3] = [
 const ARRAY_RUN_NT_FIRST: f64 = 16_383.0 * 60.0;
 const ARRAY_RUN_NT_FULL: f64 = 196_596.0 * 60.0;
 
-/// kg CO2e of one light-directed array synthesis run's acetonitrile,
-/// activator and ethanol (Antkowiak et al. 2020 amounts, Amelio et al.
-/// 2014 emission factors).
+/// kg CO2e of one light-directed array synthesis run: every reagent in
+/// Antkowiak et al.'s Supplementary Table 2 at its emission factor, and the
+/// light source's electricity on Austria's grid.
 pub fn array_run_kg_co2e() -> f64 {
-    ARRAY_RUN_REAGENTS.iter().map(|(_, grams, factor)| grams / 1000.0 * factor).sum()
+    let reagents: f64 = ARRAY_RUN_REAGENTS.iter().map(|(_, grams, factor)| grams / 1000.0 * factor).sum();
+    reagents + ARRAY_RUN_LIGHT_KWH * AUSTRIA_KG_CO2E_PER_KWH
 }
 
 /// kg CO2e per designed nucleotide, (full chip, first run): the low and
@@ -312,12 +353,18 @@ mod tests {
 
     #[test]
     fn write_side_carbon_is_the_array_run_spread_over_its_nucleotides() {
-        // 137.55 g + 16.51 g of acetonitrile at 2.96, 71.01 g of ethanol at 1.19.
+        // 154.25 g of acetonitrile at 2.96 and 71.01 g of ethanol at 1.19
+        // were the whole estimate before; they are still two thirds of it.
         let run = array_run_kg_co2e();
-        assert!((run - (0.137_55 * 2.96 + 0.016_506 * 2.96 + 0.071_01 * 1.19)).abs() < 1e-9, "{run}");
+        let solvents = 0.154_25 * 2.96 + 0.071_01 * 1.19;
+        assert!((run - 0.8225).abs() < 0.001, "{run}");
+        assert!((0.6..0.7).contains(&(solvents / run)), "{}", solvents / run);
+        // The light source: 0.135 kWh at 0.137 kg CO2e per kWh.
+        assert!((ARRAY_RUN_LIGHT_KWH - 0.135).abs() < 0.001);
+        assert!((AUSTRIA_KG_CO2E_PER_KWH - 0.1371).abs() < 0.0001);
         let (low, high) = synthesis_kg_co2e_per_nt_range();
-        assert!((low - 4.58e-8).abs() < 0.01e-8, "{low:e}");
-        assert!((high - 5.49e-7).abs() < 0.01e-7, "{high:e}");
+        assert!((low - 6.97e-8).abs() < 0.01e-8, "{low:e}");
+        assert!((high - 8.37e-7).abs() < 0.01e-7, "{high:e}");
         let r = estimate(shape(), CostAssumptions::default());
         assert!((r.synthesis_kg_co2e_low - 5.5e6 * low).abs() < 1e-12);
         assert!((r.synthesis_kg_co2e_high - 5.5e6 * high).abs() < 1e-12);

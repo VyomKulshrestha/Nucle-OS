@@ -109,7 +109,7 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
         println!("  carbon, write: {:.3e} kg CO2e (at the given kg CO2e per nucleotide)", r.synthesis_kg_co2e_low);
     } else {
         println!(
-            "  carbon, write: {:.3e} to {:.3e} kg CO2e (synthesis solvents only, light-directed array run: full chip to 16,383 sequences)",
+            "  carbon, write: {:.3e} to {:.3e} kg CO2e (reagents and light source of a light-directed array run: full chip to 16,383 sequences)",
             r.synthesis_kg_co2e_low, r.synthesis_kg_co2e_high
         );
     }
@@ -130,7 +130,8 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
     println!("Read-side carbon is Illumina's own reagent-kit life-cycle assessment per gigabase");
     println!("(2025 Corporate Responsibility Report); a small archive on its own run uses a whole kit.");
     println!("Life-cycle carbon is read from the chart in Nguyen et al. 2020 (1 TB kept a year,");
-    println!("10% read). Write-side carbon counts only the acetonitrile and ethanol of one lab-scale");
-    println!("light-directed synthesis run (Antkowiak et al. 2020) at published emission factors; the");
-    println!("amidites, DMSO and electricity have none, so it is a floor.");
+    println!("10% read). Write-side carbon counts every reagent of one lab-scale light-directed");
+    println!("synthesis run (Antkowiak et al. 2020) at published or chemical-class emission factors,");
+    println!("and its light source's measured power; the synthesizer's fluidics and computer have no");
+    println!("published power draw, so it is a floor.");
 }
