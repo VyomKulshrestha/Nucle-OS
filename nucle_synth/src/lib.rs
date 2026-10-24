@@ -19,6 +19,9 @@
 //! - Strand dropout (entire strand lost)
 //! - Strand truncation (incomplete synthesis)
 //! - Storage decay (Arrhenius strand breakage over time, see [`decay`])
+//!
+//! [`planning`] turns what a channel does to strands into the Reed-Solomon
+//! parity a file needs to come back through it.
 
 pub mod strand;
 pub mod errors;
@@ -26,3 +29,4 @@ pub mod profiles;
 pub mod noise;
 pub mod decay;
 pub mod cost;
+pub mod planning;

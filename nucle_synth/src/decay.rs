@@ -218,7 +218,7 @@ impl ShelfLifeQuery {
 
 /// P(X ≤ k) for X ~ Binomial(n, p), summed in log space so large stripes
 /// and tiny probabilities stay accurate.
-fn binomial_cdf(n: usize, k: usize, p: f64) -> f64 {
+pub(crate) fn binomial_cdf(n: usize, k: usize, p: f64) -> f64 {
     if p <= 0.0 {
         return 1.0;
     }
