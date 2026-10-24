@@ -33,8 +33,8 @@ thiserror = "2"
 log = "0.4"
 env_logger = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "=4.6.6", features = ["derive"] }
-sha2 = "0.10"
+clap = { version = "=4.6.7", features = ["derive"] }
+sha2 = "0.11"
 bitvec = "1.0"
 fd-lock = "4"
 argon2 = "0.5.3"
