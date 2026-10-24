@@ -30,3 +30,4 @@ pub mod yinyang;
 pub mod benchmark;
 pub mod bootstrap;
 pub mod hedges;
+pub mod stable_rng;

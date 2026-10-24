@@ -8,8 +8,7 @@
 //! any N+ε subset can reconstruct the original data.
 
 use nucle_codec::base::DnaError;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use nucle_codec::stable_rng::StableRng;
 use thiserror::Error;
 
 /// Errors specific to fountain erasure coding.
@@ -72,8 +71,8 @@ impl FountainEcc {
     }
 
     /// Sample degree using simplified robust soliton distribution.
-    fn sample_degree(rng: &mut StdRng, k: usize) -> usize {
-        let r: f64 = rng.gen();
+    fn sample_degree(rng: &mut StableRng, k: usize) -> usize {
+        let r = rng.gen_f64();
         if r < 0.35 {
             1
         } else if r < 0.65 {
@@ -86,7 +85,7 @@ impl FountainEcc {
     }
 
     /// Select random source indices for a droplet.
-    fn select_sources(rng: &mut StdRng, k: usize, degree: usize) -> Vec<usize> {
+    fn select_sources(rng: &mut StableRng, k: usize, degree: usize) -> Vec<usize> {
         let mut indices: Vec<usize> = (0..k).collect();
         let d = degree.min(k);
         for i in 0..d {
@@ -111,7 +110,7 @@ impl FountainEcc {
         let strand_len = data_strands[0].len();
         let num_droplets = (k as f64 * self.config.overhead).ceil() as usize;
 
-        let mut rng = StdRng::seed_from_u64(self.config.seed);
+        let mut rng = StableRng::seed_from_u64(self.config.seed);
         let mut droplets = Vec::with_capacity(num_droplets);
 
         for id in 0..num_droplets as u64 {
@@ -214,6 +213,27 @@ impl FountainEcc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FNV-1a over `bytes`, folded into `hash`.
+    fn fnv(hash: u64, bytes: &[u8]) -> u64 {
+        bytes.iter().fold(hash, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+    }
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+    /// Recorded from the rand 0.8 encoder; the droplets a seed makes must not
+    /// change.
+    #[test]
+    fn encoding_is_pinned() {
+        let rows: Vec<Vec<u8>> = (0..20u8).map(|i| (0..16u8).map(|j| i.wrapping_mul(31) ^ j).collect()).collect();
+        let droplets = FountainEcc::new(FountainEccConfig::default()).encode(&rows).unwrap();
+        assert_eq!(droplets.len(), 30);
+        let digest = droplets.iter().fold(FNV_OFFSET, |h, d| {
+            let h = fnv(h, &d.data);
+            let h = d.source_indices.iter().fold(h, |h, &i| fnv(h, &(i as u64).to_le_bytes()));
+            fnv(h, &d.id.to_le_bytes())
+        });
+        assert_eq!(digest, 0x0cc3_6b91_8da3_fd7d);
+    }
 
     #[test]
     fn test_encode_produces_droplets() {

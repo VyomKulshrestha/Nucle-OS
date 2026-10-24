@@ -975,12 +975,15 @@ accepts any other measured kinetics.
   arbitrary binary input; the VFS also screens the final primer-tagged strand
 - Near-optimal density: ~1.57 bits/nucleotide
 - Peeling falls back to GF(2) Gaussian elimination for every full-rank subset
-- Each droplet's segments are drawn from a `StdRng` seeded with its seed,
-  so decoding depends on rand 0.8's exact sampling. rand 0.9 changed what a
-  seeded `random_range` returns, and moving to it would leave every Fountain
-  archive written so far undecodable; the workspace stays on rand 0.8 until
-  Fountain samples with a generator of its own, with the old one kept for
-  existing archives
+- Each droplet's segments and whitening mask are rebuilt from its seed
+  when a file is read, so the numbers a seed produces can never change.
+  They come from `nucle_codec::stable_rng::StableRng`, a fixed copy of the
+  generator the existing archives were written with (rand 0.8's ChaCha12
+  `StdRng`, its PCG32 `seed_from_u64` and its `f64`, `u8` and `usize`-range
+  samplers), checked against rand 0.8 draw for draw and pinned by digests
+  of its streams and of Fountain encodings. A pool's primer library, also
+  rebuilt from a seed on open, uses it too. rand itself no longer touches
+  anything stored
 
 ### Yin-Yang Codec (Ping et al., 2022)
 - Two complementary mapping rules achieve GC balance by construction

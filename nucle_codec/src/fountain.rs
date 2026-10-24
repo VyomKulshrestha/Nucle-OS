@@ -33,8 +33,7 @@
 
 use crate::base::{DnaCodec, DnaError, DnaStrand, Nucleotide, StrandCollection};
 use crate::constraints::{ConstraintConfig, ConstraintValidator};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use crate::stable_rng::StableRng;
 use serde::{Serialize, Deserialize};
 
 // ---------------------------------------------------------------------------
@@ -146,10 +145,10 @@ pub struct Droplet {
 /// segments to XOR) for each droplet.
 ///
 /// This distribution is key to efficient LT code decoding.
-fn sample_degree(rng: &mut StdRng, num_segments: usize) -> usize {
+fn sample_degree(rng: &mut StableRng, num_segments: usize) -> usize {
     // Simplified robust soliton: mix ideal soliton with a spike at 1
     let k = num_segments as f64;
-    let r: f64 = rng.gen();
+    let r = rng.gen_f64();
 
     if r < 0.4 {
         // Degree 1 — these are the "free" segments that start decoding
@@ -172,7 +171,7 @@ fn sample_degree(rng: &mut StdRng, num_segments: usize) -> usize {
 }
 
 /// Select `degree` random segment indices from `num_segments` total.
-fn select_segments(rng: &mut StdRng, num_segments: usize, degree: usize) -> Vec<usize> {
+fn select_segments(rng: &mut StableRng, num_segments: usize, degree: usize) -> Vec<usize> {
     let mut indices: Vec<usize> = (0..num_segments).collect();
     // Fisher-Yates partial shuffle
     let d = degree.min(num_segments);
@@ -255,8 +254,8 @@ impl FountainCodec {
     }
 
     fn whiten_payload(seed: u64, data: &[u8]) -> Vec<u8> {
-        let mut rng = StdRng::seed_from_u64(seed ^ Self::WHITENING_KEY);
-        data.iter().map(|byte| byte ^ rng.gen::<u8>()).collect()
+        let mut rng = StableRng::seed_from_u64(seed ^ Self::WHITENING_KEY);
+        data.iter().map(|byte| byte ^ rng.gen_u8()).collect()
     }
 
     /// Split data into fixed-size segments, padding the last one.
@@ -398,7 +397,7 @@ impl FountainCodec {
         };
 
         // Reconstruct the segment indices using the same PRNG
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut rng = StableRng::seed_from_u64(seed);
         let degree = sample_degree(&mut rng, num_segments);
         let segment_indices = select_segments(&mut rng, num_segments, degree);
 
@@ -612,7 +611,7 @@ impl FountainCodec {
         for _ in 0..max_attempts {
             let droplet_seed = seed;
             seed = seed.wrapping_add(1);
-            let mut rng = StdRng::seed_from_u64(droplet_seed);
+            let mut rng = StableRng::seed_from_u64(droplet_seed);
             let degree = sample_degree(&mut rng, segments.len());
             let indices = select_segments(&mut rng, segments.len(), degree);
             let droplet = Droplet {
@@ -767,6 +766,33 @@ impl DnaCodec for FountainCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FNV-1a over `bytes`, folded into `hash`.
+    fn fnv(hash: u64, bytes: &[u8]) -> u64 {
+        bytes.iter().fold(hash, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+    }
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+    fn strands_digest(strands: &[DnaStrand]) -> u64 {
+        strands.iter().fold(FNV_OFFSET, |h, s| {
+            fnv(fnv(h, &s.bases().iter().map(|n| n.to_bits()).collect::<Vec<u8>>()), b"|")
+        })
+    }
+
+    /// The droplets a seed makes are rebuilt from it when a file is read, so
+    /// they must never change: these digests were recorded from the rand 0.8
+    /// encoder that wrote the archives in existing pools.
+    #[test]
+    fn encoding_is_pinned_to_what_existing_archives_hold() {
+        let data: Vec<u8> = (0..1000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8).collect();
+        let codec = FountainCodec::new(FountainConfig::default());
+        let strands = codec.encode(&data).unwrap().strands;
+        assert_eq!(strands.len(), 95);
+        assert_eq!(strands_digest(&strands), 0x163c_5da2_e465_3aed);
+        let batch = codec.encode_batch(&data, 7, 40).unwrap();
+        assert_eq!(batch.next_seed, 18_226);
+        assert_eq!(strands_digest(&batch.strands.strands), 0xe644_45b6_e944_43c3);
+    }
 
     #[test]
     fn test_segment_data() {
@@ -933,7 +959,7 @@ mod tests {
         let mut collection = StrandCollection::new(data.len());
 
         for seed in config.seed..config.seed + (segments.len() * 3) as u64 {
-            let mut rng = StdRng::seed_from_u64(seed);
+            let mut rng = StableRng::seed_from_u64(seed);
             let degree = sample_degree(&mut rng, segments.len());
             let indices = select_segments(&mut rng, segments.len(), degree);
             let mut bases = FountainCodec::bytes_to_nucleotides(&seed.to_be_bytes());
@@ -955,7 +981,7 @@ mod tests {
     #[test]
     fn test_degree_distribution() {
         // Verify degree distribution produces valid degrees
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StableRng::seed_from_u64(42);
         let num_segments = 10;
 
         for _ in 0..100 {
@@ -966,7 +992,7 @@ mod tests {
 
     #[test]
     fn test_select_segments_valid() {
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StableRng::seed_from_u64(42);
         let num_segments = 10;
 
         for _ in 0..100 {

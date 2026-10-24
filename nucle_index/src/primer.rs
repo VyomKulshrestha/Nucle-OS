@@ -13,8 +13,7 @@
 
 use nucle_codec::base::{DnaStrand, Nucleotide};
 use nucle_codec::constraints::{ConstraintConfig, ConstraintValidator};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use nucle_codec::stable_rng::StableRng;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -239,7 +238,7 @@ impl PrimerLibrary {
     /// Generate a library of `count` orthogonal primer pairs.
     pub fn generate(count: usize, primer_length: usize, seed: u64) -> Self {
         let mut library = Self::new(primer_length);
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut rng = StableRng::seed_from_u64(seed);
         let validator = ConstraintValidator::new(ConstraintConfig {
             gc_min: 0.40,
             gc_max: 0.60,
@@ -280,7 +279,7 @@ impl PrimerLibrary {
     }
 
     /// Generate a random primer sequence.
-    fn random_primer(rng: &mut StdRng, length: usize) -> DnaStrand {
+    fn random_primer(rng: &mut StableRng, length: usize) -> DnaStrand {
         let bases: Vec<Nucleotide> = (0..length)
             .map(|_| Nucleotide::ALL[rng.gen_range(0..4)])
             .collect();
@@ -354,6 +353,28 @@ impl fmt::Display for PrimerLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FNV-1a over `bytes`, folded into `hash`.
+    fn fnv(hash: u64, bytes: &[u8]) -> u64 {
+        bytes.iter().fold(hash, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+    }
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+
+    /// A pool rebuilds its primer library from a fixed seed when it opens,
+    /// so the library must never change: recorded from the rand 0.8
+    /// generator that addressed the files in existing pools.
+    #[test]
+    fn the_library_a_seed_makes_is_pinned() {
+        let library = PrimerLibrary::generate(64, 20, 42);
+        assert_eq!(library.len(), 64);
+        let digest = (0..library.len()).fold(FNV_OFFSET, |h, i| {
+            let pair = library.assign_next(i).unwrap();
+            let h = fnv(h, pair.id.as_bytes());
+            let h = fnv(h, &pair.forward.bases().iter().map(|n| n.to_bits()).collect::<Vec<u8>>());
+            fnv(h, &pair.reverse.bases().iter().map(|n| n.to_bits()).collect::<Vec<u8>>())
+        });
+        assert_eq!(digest, 0x53a3_bbe1_9aeb_b6ef);
+    }
 
     #[test]
     fn test_primer_pair_tag_untag() {
