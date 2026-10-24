@@ -29,4 +29,5 @@ pub mod profiles;
 pub mod noise;
 pub mod decay;
 pub mod cost;
+pub mod procedural;
 pub mod planning;
