@@ -38,7 +38,11 @@ older physical representation stays readable. The software checks demonstrate
 constraint compliance, not successful physical synthesis. Recovery from a
 rank-deficient subset is impossible; the hard arbitrary known-erasure bound is
 provided by `-r/--redundancy` Reed-Solomon parity:
-`2*errors + erasures <= parity_count` after consensus.
+`2*errors + erasures <= parity_count` after consensus. To choose that parity
+for a channel, `nucle parity report.bin --codec hedges -p array-lofi --coverage 3`
+sends the file's strands through the simulated reads and decoder and prints
+the `--redundancy` that keeps the chance of losing the file under 0.1%
+(`--max-failure` changes the target).
 
 ## Version lifecycle
 

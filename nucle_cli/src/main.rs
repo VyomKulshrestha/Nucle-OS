@@ -5,6 +5,7 @@
 mod bootstrap_cli;
 mod cost_cli;
 mod hardware_cli;
+mod parity_cli;
 mod reads_cli;
 mod shelf_life_cli;
 
@@ -309,6 +310,25 @@ enum Commands {
         /// kg CO2e per synthesized nucleotide, replacing the bottom-up range
         #[arg(long)]
         synthesis_kg_co2e_per_nt: Option<f64>,
+    },
+
+    /// Plan the Reed-Solomon parity a file needs to come back through a channel
+    Parity {
+        /// File to plan for
+        file: String,
+        /// Storage codec: ternary, fountain, yin-yang, or hedges
+        #[arg(short, long, default_value = "ternary")]
+        codec: String,
+        /// Channel profile: illumina, nanopore, twist, idt, column-synthesis,
+        /// pristine, array-hifi, array-lofi
+        #[arg(short, long, default_value = "illumina")]
+        profile: String,
+        /// Sequencing reads per strand
+        #[arg(long, default_value = "10")]
+        coverage: u32,
+        /// Highest acceptable chance of losing the file
+        #[arg(long, default_value = "0.001")]
+        max_failure: f64,
     },
 
     /// Score consensus decoding on real clustered sequencing reads
@@ -707,6 +727,10 @@ fn run() {
                 chemistry,
                 synthesis_kg_co2e_per_nt,
             },
+            cli.json,
+        ),
+        Commands::Parity { file, codec, profile, coverage, max_failure } => parity_cli::cmd_parity(
+            parity_cli::ParityArgs { file, codec, profile, coverage, max_failure },
             cli.json,
         ),
         Commands::Reads { centers, clusters, limit, blind } => reads_cli::cmd_reads(&centers, &clusters, limit, blind, cli.json),
@@ -3349,6 +3373,7 @@ fn cmd_help() {
     println!("  nucle shelf-life [--medium m] [--celsius]  How long an archive stays readable in storage");
     println!("  nucle reads <centers> <clusters> [--blind] Score decoding on real sequencing reads");
     println!("  nucle cost <file> [-c codec] [-r parity]   Cost, density and mass of storing a file");
+    println!("  nucle parity <file> [-c codec] [-p prof]  Parity a file needs to survive a channel");
     println!("  nucle bootstrap export|inspect <fasta>     Self-describing header strands for a pool");
     println!("  nucle bench [file]                        Benchmark all codecs");
     println!("  nucle benchmark [file] [-p profile]       Full-pipeline benchmark");

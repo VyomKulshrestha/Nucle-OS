@@ -1084,8 +1084,8 @@ A fixed parity count either spends DNA a clean channel does not need or loses
 files on a noisy one. Through the measured low-fidelity pool at 3 reads per
 strand, the coverage spread leaves 22.8% of strands with no read at all, and a
 1 KB HEDGES file (64 data strands) with 16 parity strands came back 3 times in
-10. `NucleOS::plan_parity` measures what one file loses through one
-channel and plans the parity from that:
+10. `NucleOS::plan_parity` and `nucle parity <file>` measure what one file
+loses through one channel and plan the parity from that:
 
 1. **Unread.** The file's own strands, tagged with a primer pair and repeated
    to 4,000, go through the configured noise. A strand is unread when none of
@@ -1103,7 +1103,7 @@ channel and plans the parity from that:
    missing ones come to at most `p`. Losses are independent in the
    simulator, which makes that a trinomial tail per stripe, and
    `nucle_synth::planning::parity_for` picks the smallest `p` that keeps the
-   chance of losing any stripe at or below a target (0.1% in the runs below),
+   chance of losing any stripe at or below `--max-failure` (0.1% by default),
    with stripes of `256 − p` data strands as `ReedSolomon` cuts them.
 
 The planning noise is seeded apart from the write, so it never shifts the
