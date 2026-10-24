@@ -17,7 +17,7 @@
   "homepage": "https://github.com/VyomKulshrestha/Nucle-OS/tree/main/editors/vscode/nuclescript",
   "keywords": ["nuclescript", "dna", "dna-storage", "language-server", "nucleos"],
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.91.0"
   },
   "categories": ["Programming Languages"],
   "activationEvents": ["onLanguage:nuclescript", "onCommand:nuclescript.runFile", "workspaceContains:**/*.nsl"],
@@ -92,11 +92,11 @@
     }
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^10.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.75.0",
+    "@types/vscode": "^1.91.0",
     "typescript": "^5.4.0",
     "vscode-tmgrammar-test": "^0.1.3"
   },

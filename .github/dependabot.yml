@@ -11,6 +11,15 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # vsce refuses @types/vscode newer than engines.vscode, so the two
+      # move together, by hand, when the oldest supported VS Code moves.
+      - dependency-name: "@types/vscode"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # The oldest supported VS Code (1.91) runs Node 20; newer Node types
+      # would let the extension call APIs that editor doesn't have.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
