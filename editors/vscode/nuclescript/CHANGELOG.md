@@ -4,6 +4,21 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.18]
+
+- Requires VS Code 1.91 or later: the language client moved to
+  `vscode-languageclient` 10.
+- A closure passed to a `Fn(...)` parameter, inline or `let`-bound, is
+  seen through: the call carries the closure's real effect, and `nucle
+  plan` narrates the store inside it where the function calls the
+  parameter.
+- Run File on ternary, Yin-Yang and Fountain pools writes Reed-Solomon
+  parity strands the length of the data strands instead of four times it,
+  and the decoder corrects wrong strands wherever they sit, so files come
+  back through noisier reads with less DNA.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.53 runtime, which contains all of the above.
+
 ## [0.1.17]
 
 - `codec: Hedges` pools and `encode ... using hedges` pipelines are

@@ -17,16 +17,17 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // whenever a newer `v*` release ships with an updated nucle-cli, or a
 // fresh install downloading it will fail to parse -- or silently
 // mis-execute -- any .nsl file using syntax added since the pinned tag.
-// v0.1.46 is the NucleOS release paired with extension v0.1.17. It is the
-// first whose compiler accepts `codec: Hedges` and `storage: silica`, on
-// top of v0.1.35's real package imports, pool and recovery-profile
+// v0.1.53 is the NucleOS release paired with extension v0.1.18. It sees
+// through closures passed to `Fn(...)` parameters and writes data-length
+// parity strands, on top of v0.1.46's `codec: Hedges` and `storage:
+// silica`, v0.1.35's real package imports, pool and recovery-profile
 // arguments and recursion, and v0.1.32's pool `storage:` conditions and
 // store `retain:` requirements, so a clean extension install
 // does not download a CLI that rejects or mis-runs source the bundled
 // grammar and language server accept. Publish that runtime release before
 // publishing this VSIX. This stays independent of nucle-lsp's
 // extension-versioned release tag.
-const CLI_RELEASE_TAG = "v0.1.46";
+const CLI_RELEASE_TAG = "v0.1.53";
 
 /** The release asset name published for this platform, or `undefined` if
  * none exists (arm64 Linux/Windows) -- caller falls back to asking the

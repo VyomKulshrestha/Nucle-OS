@@ -188,9 +188,9 @@ need it.
 
 ## Requirements
 
-Nothing — the extension is a client for two command-line tools from the
-NucleOS project, but both are fetched for you automatically the first
-time they're needed:
+VS Code 1.91 or later, and nothing else — the extension is a client for
+two command-line tools from the NucleOS project, but both are fetched for
+you automatically the first time they're needed:
 
 | Tool | Needed for | If no prebuilt binary exists for your platform |
 |---|---|---|
