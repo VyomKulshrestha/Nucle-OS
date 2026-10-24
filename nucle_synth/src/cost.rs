@@ -33,12 +33,13 @@
 //!   photolithographic synthesis and advanced information reconstruction
 //!   and error correction", Nat. Commun. 11, 5345 (2020), Supplementary
 //!   Table 2, lists the reagents of one run. Each is weighed at a
-//!   published cradle-to-gate emission factor, or at its chemical class's
-//!   where it has none, and the light source at its measured power on
-//!   Austria's grid (see [`array_run_kg_co2e`]): about 0.82 kg CO2e per
-//!   run, two thirds of it acetonitrile and ethanol. Spread over that run's
-//!   16,383 sequences of 60 nt, or over the 196,596 the same chip held for
-//!   their largest file, that is 0.84 down to 0.070 mg CO2e per designed
+//!   published cradle-to-gate emission factor, or where it has none at a
+//!   factor built from its industrial route ([`crate::procedural`]), and
+//!   the light source at its measured power on Austria's grid (see
+//!   [`array_run_kg_co2e`]): about 0.86 kg CO2e per run, nearly two thirds
+//!   of it acetonitrile and ethanol. Spread over that run's 16,383
+//!   sequences of 60 nt, or over the 196,596 the same chip held for their
+//!   largest file, that is 0.87 down to 0.073 mg CO2e per designed
 //!   nucleotide. The synthesizer's fluidics, micromirror array and
 //!   computer have no published power draw and no phosphoramidite has an
 //!   emission factor of its own, so this is still a floor. See
@@ -132,11 +133,13 @@ impl Chemistry {
 ///   (2014), Table 4, means (ranges 2.27-3.70 and 1.03-1.39);
 /// - DMSO, toluene, tetrahydrofuran and dichloromethane: the ACS GCI
 ///   Pharmaceutical Roundtable's PMI-LCA tool v07.2P (ecoinvent v2.2,
-///   IPCC 2007), and its averaged organic solvent for imidazole, which has
-///   no factor of its own;
-/// - ethylenediamine, pyridine and the silanizing reagent: Idemat
-///   2026RevB2's averages for their chemical classes (amines, pyridines,
-///   organosilicon compounds), none having a factor of its own;
+///   IPCC 2007);
+/// - ethylenediamine, pyridine and imidazole, which have no published
+///   factor: built from their industrial routes by Cespi's procedure
+///   ([`crate::procedural`]);
+/// - the silanizing reagent: Idemat 2026RevB2's average for
+///   organosilicon compounds, since its precursor, an aminopropyl
+///   triethoxysilane, has no factor either;
 /// - iodine: Roche, Muhl and Finkbeiner, Int. J. Life Cycle Assess. 28,
 ///   1132 (2023), Chilean caliche with economic allocation;
 /// - the four Bz-NPPOC phosphoramidites: the ACS tool's default for
@@ -147,20 +150,23 @@ impl Chemistry {
 /// in Sack et al. 2016: THF/water/pyridine/iodine 90.54/9.05/0.41/0.43
 /// (v/v/v/w). The 80 g of exposure solvent is 1% imidazole in DMSO, and
 /// the 0.03 g of beta-carotene is a 1% solution in dichloromethane.
-const ARRAY_RUN_REAGENTS: [(&str, f64, f64); 12] = [
-    ("acetonitrile, with activator and cleavable dT", (175.0 + 21.0 + 0.25) * 0.786, 2.96),
-    ("ethanol", 90.0 * 0.789, 1.19),
-    ("DMSO", 80.0 * 0.99, 1.302),
-    ("imidazole", 80.0 * 0.01, 2.624),
-    ("ethylenediamine", 20.0 * 0.899, 2.844),
-    ("toluene", 20.0 * 0.867, 1.499),
-    ("tetrahydrofuran", 9.0 * 0.9054 * 0.889, 5.720),
-    ("pyridine", 9.0 * 0.0041 * 0.982, 9.743),
-    ("iodine", 9.0 * 0.0043, 14.8),
-    ("dichloromethane", 0.03 * 99.0, 3.393),
-    ("silanizing reagent", 0.66, 4.561),
-    ("Bz-NPPOC phosphoramidites", 0.08 + 0.05 + 0.07 + 0.06, 97.3),
-];
+fn array_run_reagents() -> [(&'static str, f64, f64); 12] {
+    use crate::procedural::{ethylenediamine, imidazole, pyridine};
+    [
+        ("acetonitrile, with activator and cleavable dT", (175.0 + 21.0 + 0.25) * 0.786, 2.96),
+        ("ethanol", 90.0 * 0.789, 1.19),
+        ("DMSO", 80.0 * 0.99, 1.302),
+        ("imidazole", 80.0 * 0.01, imidazole()),
+        ("ethylenediamine", 20.0 * 0.899, ethylenediamine()),
+        ("toluene", 20.0 * 0.867, 1.499),
+        ("tetrahydrofuran", 9.0 * 0.9054 * 0.889, 5.720),
+        ("pyridine", 9.0 * 0.0041 * 0.982, pyridine()),
+        ("iodine", 9.0 * 0.0043, 14.8),
+        ("dichloromethane", 0.03 * 99.0, 3.393),
+        ("silanizing reagent", 0.66, 4.561),
+        ("Bz-NPPOC phosphoramidites", 0.08 + 0.05 + 0.07 + 0.06, 97.3),
+    ]
+}
 
 /// Electricity of the run's light source, kWh. Hölz, Lietard and Somoza
 /// (ACS Sustainable Chem. Eng. 5, 828, 2017) measured the LED system at 40
@@ -182,7 +188,7 @@ const ARRAY_RUN_NT_FULL: f64 = 196_596.0 * 60.0;
 /// Antkowiak et al.'s Supplementary Table 2 at its emission factor, and the
 /// light source's electricity on Austria's grid.
 pub fn array_run_kg_co2e() -> f64 {
-    let reagents: f64 = ARRAY_RUN_REAGENTS.iter().map(|(_, grams, factor)| grams / 1000.0 * factor).sum();
+    let reagents: f64 = array_run_reagents().iter().map(|(_, grams, factor)| grams / 1000.0 * factor).sum();
     reagents + ARRAY_RUN_LIGHT_KWH * AUSTRIA_KG_CO2E_PER_KWH
 }
 
@@ -354,17 +360,20 @@ mod tests {
     #[test]
     fn write_side_carbon_is_the_array_run_spread_over_its_nucleotides() {
         // 154.25 g of acetonitrile at 2.96 and 71.01 g of ethanol at 1.19
-        // were the whole estimate before; they are still two thirds of it.
+        // were the whole estimate before; they are still nearly two thirds.
         let run = array_run_kg_co2e();
         let solvents = 0.154_25 * 2.96 + 0.071_01 * 1.19;
-        assert!((run - 0.8225).abs() < 0.001, "{run}");
+        assert!((run - 0.857).abs() < 0.001, "{run}");
         assert!((0.6..0.7).contains(&(solvents / run)), "{}", solvents / run);
+        // Ethylenediamine at its procedural 4.70 kg CO2e/kg is a tenth.
+        let eda = array_run_reagents().iter().find(|r| r.0 == "ethylenediamine").map(|r| r.1 / 1000.0 * r.2).unwrap();
+        assert!((0.09..0.11).contains(&(eda / run)), "{}", eda / run);
         // The light source: 0.135 kWh at 0.137 kg CO2e per kWh.
         assert!((ARRAY_RUN_LIGHT_KWH - 0.135).abs() < 0.001);
         assert!((AUSTRIA_KG_CO2E_PER_KWH - 0.1371).abs() < 0.0001);
         let (low, high) = synthesis_kg_co2e_per_nt_range();
-        assert!((low - 6.97e-8).abs() < 0.01e-8, "{low:e}");
-        assert!((high - 8.37e-7).abs() < 0.01e-7, "{high:e}");
+        assert!((low - 7.26e-8).abs() < 0.01e-8, "{low:e}");
+        assert!((high - 8.72e-7).abs() < 0.01e-7, "{high:e}");
         let r = estimate(shape(), CostAssumptions::default());
         assert!((r.synthesis_kg_co2e_low - 5.5e6 * low).abs() < 1e-12);
         assert!((r.synthesis_kg_co2e_high - 5.5e6 * high).abs() < 1e-12);

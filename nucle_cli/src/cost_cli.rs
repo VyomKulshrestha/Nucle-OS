@@ -131,7 +131,7 @@ pub fn cmd_cost(args: CostArgs, json: bool) {
     println!("(2025 Corporate Responsibility Report); a small archive on its own run uses a whole kit.");
     println!("Life-cycle carbon is read from the chart in Nguyen et al. 2020 (1 TB kept a year,");
     println!("10% read). Write-side carbon counts every reagent of one lab-scale light-directed");
-    println!("synthesis run (Antkowiak et al. 2020) at published or chemical-class emission factors,");
-    println!("and its light source's measured power; the synthesizer's fluidics and computer have no");
-    println!("published power draw, so it is a floor.");
+    println!("synthesis run (Antkowiak et al. 2020) at published emission factors, or ones built from");
+    println!("their industrial routes where none is published, and its light source's measured power;");
+    println!("the synthesizer's fluidics and computer have no published power draw, so it is a floor.");
 }
