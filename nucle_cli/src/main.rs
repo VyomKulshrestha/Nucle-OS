@@ -23,7 +23,7 @@ use nucle_codec::benchmark::{benchmark_codec, BenchmarkResult, ComparisonReport}
 use nucle_synth::noise::{NoiseEngine, SimulationConfig};
 use nucle_synth::profiles::HardwareProfile;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use std::fs;
 use std::time::Instant;
 
@@ -3467,7 +3467,7 @@ fn cmd_stress(size: usize, json: bool) {
     let text_data: Vec<u8> = pangram.bytes().cycle().take(size).collect();
 
     let mut rng = StdRng::seed_from_u64(42);
-    let random_data: Vec<u8> = (0..size).map(|_| rng.gen()).collect();
+    let random_data: Vec<u8> = (0..size).map(|_| rng.random()).collect();
 
     let distributions: Vec<(&str, Vec<u8>)> = vec![
         ("all-zero",     vec![0u8; size]),
@@ -3668,7 +3668,7 @@ fn cmd_pipeline(files: usize, size: usize, profile: &str, coverage: usize, redun
 
     for i in 0..files {
         // Generate unique random data per file
-        let data: Vec<u8> = (0..size).map(|_| rng.gen()).collect();
+        let data: Vec<u8> = (0..size).map(|_| rng.random()).collect();
         let filename = format!("stress_{:04}.bin", i);
 
         // Build a fresh NucleOS with noise enabled

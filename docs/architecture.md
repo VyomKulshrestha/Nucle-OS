@@ -985,8 +985,11 @@ accepts any other measured kinetics.
   rebuilt from a seed on open, uses it too. So do the noise simulator
   (`nucle_synth`), the blind evaluation of real reads and the clustering
   tests' simulated reads, so every seeded run and measurement in this
-  document replays the same draws. rand itself no longer touches anything
-  stored or measured
+  document replays the same draws. With nothing stored or measured left on
+  rand, the workspace moved to rand 0.10, which changed what a seeded
+  integer `gen_range` returns; rand now serves only the CLI's benchmark
+  bytes and the CRISPR simulator, whose `u8` and `f64` draws 0.10 left as
+  they were
 
 ### Yin-Yang Codec (Ping et al., 2022)
 - Two complementary mapping rules achieve GC balance by construction

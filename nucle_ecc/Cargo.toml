@@ -9,7 +9,6 @@ description = "Error correction for DNA storage — Reed-Solomon, fountain codes
 [dependencies]
 nucle_codec = { path = "../nucle_codec" }
 nucle_synth = { path = "../nucle_synth" }
-rand = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }

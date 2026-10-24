@@ -7,7 +7,6 @@ license.workspace = true
 description = "DNA encoding/decoding engine — binary to ATCG with biological constraints"
 
 [dependencies]
-rand = { workspace = true }
 bitvec = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }

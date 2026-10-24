@@ -11,7 +11,7 @@
 use crate::primer::PrimerPair;
 use nucle_codec::base::DnaStrand;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use serde::{Serialize, Deserialize};
 use std::fmt;
 
@@ -152,7 +152,7 @@ impl CrisprSimulator {
             if is_target {
                 total_targets += 1;
                 // Target strand — amplify with configured efficiency
-                if rng.gen::<f64>() < self.config.amplification_efficiency {
+                if rng.random::<f64>() < self.config.amplification_efficiency {
                     target_strands.push(strand.clone());
                     amplified_targets += 1;
                 }
@@ -165,7 +165,7 @@ impl CrisprSimulator {
                     self.config.cross_talk_rate * 0.01 // Very low background
                 };
 
-                if rng.gen::<f64>() < crosstalk_prob {
+                if rng.random::<f64>() < crosstalk_prob {
                     crosstalk_strands.push(strand.clone());
                 }
             }

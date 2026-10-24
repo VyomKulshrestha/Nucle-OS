@@ -8,7 +8,6 @@ description = "DNA synthesis simulator — models realistic error profiles of se
 
 [dependencies]
 nucle_codec = { path = "../nucle_codec" }
-rand = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }

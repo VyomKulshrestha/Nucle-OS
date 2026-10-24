@@ -13,10 +13,10 @@
 //! rand 0.8's `StdRng` (ChaCha with 12 rounds, a 64-bit block counter and a
 //! zero stream, refilled four blocks at a time), seeded the way rand_core
 //! 0.6's `seed_from_u64` fills the key from PCG32, and sampled the way rand
-//! 0.8 samples an `f64`, a `u8`, a `usize` range and an `f64` range. Its
-//! tests pin the streams with digests recorded while rand 0.8 was the
-//! workspace's generator and checked against it draw for draw, so archives
-//! written then still decode.
+//! 0.8 samples an `f64`, a `u8`, a `usize` range and an `f64` range. It was
+//! checked against rand 0.8 draw for draw while that was still the
+//! workspace's generator, and its tests pin the streams with digests
+//! recorded then, so archives written under rand 0.8 still decode.
 
 use std::ops::Range;
 
@@ -177,10 +177,6 @@ fn quarter_round(x: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::StdRng;
-    use rand::{Rng, RngCore, SeedableRng};
-
-    const SEEDS: [u64; 6] = [0, 1, 42, 0x2545_F491_4F6C_DD1D, 0xDEAD_BEEF, u64::MAX];
 
     /// FNV-1a over `bytes`, folded into `hash`.
     fn fnv(hash: u64, bytes: &[u8]) -> u64 {
@@ -221,31 +217,6 @@ mod tests {
                 h = fnv(h, &value.to_bits().to_le_bytes());
             }
             assert_eq!(h, expected, "seed {seed}");
-        }
-    }
-
-    #[test]
-    fn matches_rand_0_8_draw_for_draw() {
-        for seed in SEEDS {
-            let (mut ours, mut theirs) = (StableRng::seed_from_u64(seed), StdRng::seed_from_u64(seed));
-            for i in 0..2000usize {
-                // Mixed widths cross refills at odd offsets too.
-                match i % 7 {
-                    0 | 3 => assert_eq!(ours.next_u32(), theirs.next_u32(), "seed {seed} draw {i}"),
-                    1 => assert_eq!(ours.next_u64(), theirs.next_u64(), "seed {seed} draw {i}"),
-                    2 => assert_eq!(ours.gen_f64().to_bits(), theirs.gen::<f64>().to_bits(), "seed {seed} draw {i}"),
-                    4 => assert_eq!(ours.gen_u8(), theirs.gen::<u8>(), "seed {seed} draw {i}"),
-                    5 => {
-                        let end = 1 + i % 300;
-                        let start = i % end;
-                        assert_eq!(ours.gen_range(start..end), theirs.gen_range(start..end), "seed {seed} draw {i}");
-                    }
-                    _ => {
-                        let range = (usize::MAX / 3)..(usize::MAX - 5);
-                        assert_eq!(ours.gen_range(range.clone()), theirs.gen_range(range), "seed {seed} draw {i}");
-                    }
-                }
-            }
         }
     }
 }

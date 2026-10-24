@@ -26,7 +26,10 @@ repository = "https://github.com/VyomKulshrestha/Nucle-OS"
 description = "A complete software-defined DNA storage engine"
 
 [workspace.dependencies]
-rand = "0.8"
+# Left only for the CLI's benchmark bytes and the CRISPR simulator, both
+# seeded StdRng drawing u8 and f64, which rand 0.9 didn't change. Anything
+# stored or rebuilt from a seed uses nucle_codec::stable_rng instead.
+rand = { version = "0.10", default-features = false, features = ["std", "std_rng"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
