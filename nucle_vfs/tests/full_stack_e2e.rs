@@ -661,3 +661,30 @@ fn test_hedges_recovers_through_nanopore_noise_at_three_reads_per_strand() {
         assert_eq!(os.dna_read("nano.bin").unwrap(), original, "seed {seed}");
     }
 }
+
+/// At three reads per strand the measured low-fidelity array channel leaves
+/// about a fifth of strands with no read at all, far more than the parity
+/// the other HEDGES tests use can replace. Parity planned from that channel
+/// brings the file back.
+#[test]
+fn test_planned_parity_recovers_hedges_through_low_fidelity_reads_at_three_per_strand() {
+    let original: Vec<u8> = (0..1024u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+    for seed in 0..3 {
+        let noise = SimulationConfig::realistic(HardwareProfile::ArrayLowFidelity, 3, 1000 + seed);
+        let mut os = NucleOS::new(10).with_noise(noise);
+        let plan = os.plan_parity(&original, CodecKind::Hedges, 1e-3).unwrap();
+        assert_eq!(plan.data_strands, 64);
+        assert!((0.17..0.30).contains(&plan.outcomes.unread), "{plan:?}");
+        os.dna_write_with_codec("lofi3.bin", &original, plan.parity, CodecKind::Hedges).unwrap();
+        assert_eq!(os.dna_read("lofi3.bin").unwrap(), original, "seed {seed}, {plan:?}");
+    }
+}
+
+#[test]
+fn test_plan_parity_without_noise_needs_none_and_rejects_bad_targets() {
+    let os = NucleOS::new(10);
+    let plan = os.plan_parity(b"hello", CodecKind::Ternary, 1e-3).unwrap();
+    assert_eq!((plan.parity, plan.outcomes), (0, Default::default()));
+    assert!(os.plan_parity(b"hello", CodecKind::Ternary, 0.0).is_err());
+    assert!(os.plan_parity(b"hello", CodecKind::Ternary, 1.0).is_err());
+}

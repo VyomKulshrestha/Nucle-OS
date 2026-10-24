@@ -1048,6 +1048,8 @@ s each. HEDGES spends more DNA (80 strands where ternary uses 58) and wins
 where insertions and deletions decide the outcome. The `array-lofi` row at 3
 reads is limited by coverage, not decoding: that pool's coverage spread
 leaves more strands with no read at all than 16 parity strands can replace.
+Parity planned for the channel brings it to 10 of 10 (see
+[Parity planning](#parity-planning)).
 
 ## Error Correction Architecture
 
@@ -1075,6 +1077,56 @@ and reconstructs known missing strands within the bound
 `2*errors + erasures <= parity_count`. Actual consensus still requires
 sequencing coverage (`coverage_depth > 1` in `SimulationConfig`) — a single
 read has nothing to vote against.
+
+### Parity planning
+
+A fixed parity count either spends DNA a clean channel does not need or loses
+files on a noisy one. Through the measured low-fidelity pool at 3 reads per
+strand, the coverage spread leaves 22.8% of strands with no read at all, and a
+1 KB HEDGES file (64 data strands) with 16 parity strands came back 3 times in
+10. `NucleOS::plan_parity` measures what one file loses through one
+channel and plans the parity from that:
+
+1. **Unread.** The file's own strands, tagged with a primer pair and repeated
+   to 4,000, go through the configured noise. A strand is unread when none of
+   its reads comes back with both primers recognizable, since `dna_read` can
+   use no other.
+2. **Decode trial.** Whole noisy copies of the file, 512 strands in all, go
+   through the decoder `dna_read` uses for each strand (HEDGES read by read
+   or by soft-decoded consensus, the other codecs' consensus vote), and each
+   result is checked against what was written: nothing back (undecoded) or
+   another strand (wrong). The trial is much smaller than the unread sample,
+   so each of its rates is taken at the upper end of its 95% Wilson interval.
+3. **Parity.** Reed-Solomon fills a gap with one parity strand but has to
+   find a wrong strand as well as fix it, which costs two, so a stripe of `n`
+   strands with `p` parity survives when twice its wrong strands plus its
+   missing ones come to at most `p`. Losses are independent in the
+   simulator, which makes that a trinomial tail per stripe, and
+   `nucle_synth::planning::parity_for` picks the smallest `p` that keeps the
+   chance of losing any stripe at or below a target (0.1% in the runs below),
+   with stripes of `256 − p` data strands as `ReedSolomon` cuts them.
+
+The planning noise is seeded apart from the write, so it never shifts the
+noise the archive itself sees. The same 1 KB HEDGES file, written and read 10
+times per row:
+
+| Channel | Reads per strand | Unread | Undecoded / wrong (95% bound) | Predicted loss at 16 parity | Recovered at 16 | Planned parity | Recovered at planned |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `array-lofi` (measured) | 3 | 22.8% | 1.1% / 1.1% | 84% | 3 / 10 | 43 | **10 / 10** |
+| `array-lofi` | 6 | 12.7% | 2.0% / 0.7% | 14% | 10 / 10 | 27 | 10 / 10 |
+| `array-hifi` (measured) | 3 | 11.7% | 0.7% / 0.7% | 3.5% | 10 / 10 | 23 | 10 / 10 |
+| Nanopore | 3 | 0.03% | 4.3% / 0.7% | 0.02% | 10 / 10 | 14 | 10 / 10 |
+
+At 16 parity the predicted loss and the observed failures agree (84% against
+7 failures in 10 at 3 reads). The bounds cost DNA: counting unread strands
+alone, the first row needs 36 parity strands, and the trial's bounds add 7,
+the price of measuring decode failures on 512 strands rather than thousands.
+Planning is the slow part: a plan, write and read of that file takes about 3 s
+on the low-fidelity channel and 6.5 s on Nanopore, against 0.25 s and 1.0 s
+for the read alone. For the ternary codec the plan puts a number on the codec
+trade-off: on the low-fidelity channel at 6 reads per strand about a quarter
+of its strands come out of consensus wrong, and the planner asks for 218
+parity strands per stripe where HEDGES needs 27.
 
 **Fountain in the VFS.** `CodecKind::Fountain` is a real storage selection,
 not just a benchmark option. Writes and migrations store `dna-fountain` on the

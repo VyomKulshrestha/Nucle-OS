@@ -27,11 +27,12 @@ use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
 use nucle_ecc::consensus::build_consensus_with_length;
-use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, RecoveryManifest};
+use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, vote_groups, RecoveryManifest};
 use nucle_index::primer::PrimerLibrary;
 use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
 use nucle_synth::noise::{NoiseEngine, SimulationConfig};
+use nucle_synth::planning::{unread_share, ParityPlan, StrandOutcomes, DEFAULT_LOSS_SAMPLES};
 use serde::{Serialize, Deserialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
@@ -129,16 +130,8 @@ fn simulate_with_provenance(
 /// arrangement of Press et al. 2020.
 fn hedges_parity_strands(data: &[u8], data_strand_count: usize, redundancy: usize) -> Result<Vec<DnaStrand>, String> {
     let hedges = HedgesCodec::new(HedgesConfig::default());
-    let p = HedgesConfig::default().payload_bytes;
-    let rows: Vec<Vec<u8>> = (0..data_strand_count)
-        .map(|k| {
-            let mut row = data[(k * p).min(data.len())..((k + 1) * p).min(data.len())].to_vec();
-            row.resize(p, 0);
-            row
-        })
-        .collect();
     let parity = ReedSolomon::new(RsConfig::new(redundancy))
-        .encode_block(&rows)
+        .encode_block(&hedges_rows(data, data_strand_count))
         .map_err(|e| format!("ECC encoding failed: {}", e))?;
     parity
         .iter()
@@ -150,6 +143,24 @@ fn hedges_parity_strands(data: &[u8], data_strand_count: usize, redundancy: usiz
         })
         .collect()
 }
+
+/// The payload each of a HEDGES file's `data_strand_count` data strands
+/// carries: consecutive slices of `data`, the last padded with zeros.
+fn hedges_rows(data: &[u8], data_strand_count: usize) -> Vec<Vec<u8>> {
+    let p = HedgesConfig::default().payload_bytes;
+    (0..data_strand_count)
+        .map(|k| {
+            let mut row = data[(k * p).min(data.len())..((k + 1) * p).min(data.len())].to_vec();
+            row.resize(p, 0);
+            row
+        })
+        .collect()
+}
+
+/// Strands [`NucleOS::plan_parity`] sends through the decoder, as whole
+/// noisy copies of the file, to see how often a strand that was read still
+/// comes back missing or wrong.
+const PLAN_DECODE_SAMPLES: usize = 512;
 
 /// Search states per read in the first, read-by-read pass over a HEDGES
 /// file. On the measured low-fidelity array channel this decodes 94.8% of
@@ -171,8 +182,8 @@ const HEDGES_PER_READ_MIN_SHARE: f64 = 0.25;
 /// when no read decodes on its own, from the length-aware consensus of its
 /// reads, decoded with each base's edit costs set by how strongly the reads
 /// agreed on it ([`HedgesCodec::decode_consensus`]); then Reed-Solomon over
-/// the data bytes restores whatever is still missing or wrong. Positions nothing could restore are left out, so the
-/// codec reports them.
+/// the data bytes restores whatever is still missing or wrong. Positions
+/// nothing could restore are left out, so the codec reports them.
 ///
 /// Reads noisier than HEDGES can follow one at a time (Nanopore-grade,
 /// about 7% error) make every per-read search run to its limit, so the
@@ -186,9 +197,31 @@ fn hedges_rebuild_data_strands(
     parity_per_stripe: usize,
 ) -> Vec<DnaStrand> {
     let hedges = HedgesCodec::new(HedgesConfig::default());
+    let groups: Vec<&[DnaStrand]> = data_groups.iter().chain(parity_groups).map(Vec::as_slice).collect();
+    let mut rows = hedges_decode_rows(&groups);
+    let parity_rows = rows.split_off(data_groups.len());
+    let data_rows = rows;
+    let rows = if parity_rows.is_empty() {
+        data_rows
+    } else {
+        match ReedSolomon::new(RsConfig::new(parity_per_stripe)).decode_block(&data_rows, &parity_rows) {
+            Ok(rows) => rows.into_iter().map(Some).collect(),
+            Err(_) => data_rows,
+        }
+    };
+    rows.iter()
+        .enumerate()
+        .filter_map(|(i, row)| row.as_ref().map(|r| hedges.strand_for(i as u16, r)))
+        .collect()
+}
+
+/// Each HEDGES strand's payload from its reads, where `groups[i]` holds the
+/// reads of strand index `i`; `None` where nothing decodes. See
+/// [`hedges_rebuild_data_strands`] for the order this tries.
+fn hedges_decode_rows(groups: &[&[DnaStrand]]) -> Vec<Option<Vec<u8>>> {
+    let hedges = HedgesCodec::new(HedgesConfig::default());
     let per_read = HedgesCodec::new(HedgesConfig { max_expansions: HEDGES_PER_READ_EXPANSIONS, ..HedgesConfig::default() });
     let trial_reader = HedgesCodec::new(HedgesConfig { max_expansions: HEDGES_TRIAL_EXPANSIONS, ..HedgesConfig::default() });
-    let groups: Vec<&[DnaStrand]> = data_groups.iter().chain(parity_groups).map(Vec::as_slice).collect();
     // Each strand: decoded read by read with `reader` (when given), else
     // from its length-aware consensus.
     let payload = |index: usize, reader: Option<&HedgesCodec>, stats: &mut RepairStats| -> Option<Vec<u8>> {
@@ -221,21 +254,7 @@ fn hedges_rebuild_data_strands(
     let rest: Vec<usize> = (rows.len()..groups.len()).collect();
     let reader = read_by_read.then_some(&per_read);
     rows.extend(parallel_map(&rest, |&i| payload(i, reader, &mut RepairStats::default())));
-
-    let parity_rows = rows.split_off(data_groups.len());
-    let data_rows = rows;
-    let rows = if parity_rows.is_empty() {
-        data_rows
-    } else {
-        match ReedSolomon::new(RsConfig::new(parity_per_stripe)).decode_block(&data_rows, &parity_rows) {
-            Ok(rows) => rows.into_iter().map(Some).collect(),
-            Err(_) => data_rows,
-        }
-    };
-    rows.iter()
-        .enumerate()
-        .filter_map(|(i, row)| row.as_ref().map(|r| hedges.strand_for(i as u16, r)))
-        .collect()
+    rows
 }
 
 /// `f` over `items` on every available core, results in input order. Work
@@ -746,6 +765,83 @@ impl NucleOS {
         };
         self.record_audit("write", filename, archive_id, result.is_ok(), detail);
         result
+    }
+
+    /// The Reed-Solomon parity per stripe that `data`, written with
+    /// `codec_kind`, needs through this pool's noise channel so that the
+    /// chance of losing it stays at or below `max_failure`.
+    ///
+    /// The file's own strands, tagged with a primer pair and repeated up to
+    /// [`DEFAULT_LOSS_SAMPLES`], go through the configured noise to find the
+    /// share that get no read with both primers recognizable, since
+    /// [`Self::dna_read`] can use no other. A few whole noisy copies of the
+    /// file then go through the decoder [`Self::dna_read`] uses for each
+    /// strand (HEDGES per read or per consensus, the other codecs' consensus
+    /// vote) to find how often a strand that was read still comes back
+    /// missing or wrong; parity follows from [`ParityPlan::new`]. Without
+    /// simulated noise nothing is lost and the plan is zero parity.
+    pub fn plan_parity(&self, data: &[u8], codec_kind: CodecKind, max_failure: f64) -> Result<ParityPlan, String> {
+        if !(max_failure > 0.0 && max_failure < 1.0) {
+            return Err(format!("failure target must be between 0 and 1, got {}", max_failure));
+        }
+        let fountain_config = (codec_kind == CodecKind::Fountain).then(FountainConfig::default);
+        let encoded = codec_kind
+            .to_boxed_with_fountain_config(fountain_config)
+            .encode(data)
+            .map_err(|e| format!("encoding failed: {}", e))?;
+        let strands = &encoded.strands;
+        let outcomes = match self.primers.assign_next(0) {
+            Some(pair) if self.simulate_noise && !strands.is_empty() => {
+                let tagged: Vec<DnaStrand> = strands.iter().map(|s| pair.tag_strand(s)).collect();
+                let samples: Vec<DnaStrand> = tagged.iter().cycle().take(DEFAULT_LOSS_SAMPLES).cloned().collect();
+                let unread = unread_share(&self.noise_config, &samples, |read| pair.untag_strand(read).is_some());
+
+                // Decode trial: whole noisy copies of the file through the
+                // read path's per-strand step, each strand checked against
+                // what was written.
+                let expected_rows = (codec_kind == CodecKind::Hedges).then(|| hedges_rows(data, strands.len()));
+                let (mut attempts, mut undecoded, mut wrong) = (0, 0, 0);
+                for run in 0..PLAN_DECODE_SAMPLES.div_ceil(strands.len()) {
+                    let mut config = self.noise_config.clone();
+                    config.seed ^= 0xA076_1D64_78BD_642F_u64.wrapping_add(run as u64);
+                    let (reads, sources) = simulate_with_provenance(true, &config, tagged.clone(), data.len());
+                    let mut groups = vec![Vec::new(); strands.len()];
+                    for (read, source) in reads.iter().zip(sources) {
+                        if let Some(untagged) = pair.untag_strand(read) {
+                            groups[source].push(untagged);
+                        }
+                    }
+                    let right: Vec<Option<bool>> = match &expected_rows {
+                        Some(rows) => {
+                            let slices: Vec<&[DnaStrand]> = groups.iter().map(Vec::as_slice).collect();
+                            hedges_decode_rows(&slices).into_iter().zip(rows).map(|(got, want)| got.map(|g| g == *want)).collect()
+                        }
+                        None => vote_groups(&groups).into_iter().zip(strands).map(|(got, want)| got.map(|c| c.sequence == *want)).collect(),
+                    };
+                    for (group, right) in groups.iter().zip(right) {
+                        if group.is_empty() {
+                            continue;
+                        }
+                        attempts += 1;
+                        match right {
+                            None => undecoded += 1,
+                            Some(false) => wrong += 1,
+                            Some(true) => {}
+                        }
+                    }
+                }
+                StrandOutcomes::measured(unread, attempts, undecoded, wrong)
+            }
+            _ => StrandOutcomes::default(),
+        };
+        ParityPlan::new(strands.len(), outcomes, max_failure).ok_or_else(|| {
+            format!(
+                "no parity a Reed-Solomon stripe can hold keeps the chance of losing this file under {}: {:.1}% of strands come back missing and {:.1}% wrong",
+                max_failure,
+                outcomes.missing() * 100.0,
+                outcomes.wrong * 100.0
+            )
+        })
     }
 
     /// Re-encode the current Fountain representation with additional
