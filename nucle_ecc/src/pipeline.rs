@@ -110,6 +110,26 @@ pub fn consensus_then_rs_decode(
     rs_decode_voted(&vote_groups(data_groups), &vote_groups(parity_groups), rs_config)
 }
 
+/// A strand's bases as Reed-Solomon symbols, `per_symbol` bases (1 to 4)
+/// to each byte, the first in the high bits; a last partial chunk is
+/// padded with A.
+pub fn pack_bases(bases: &[Nucleotide], per_symbol: usize) -> Vec<u8> {
+    bases
+        .chunks(per_symbol.max(1))
+        .map(|chunk| chunk.iter().enumerate().fold(0u8, |byte, (i, n)| byte | (n.to_bits() << (2 * (per_symbol.max(1) - 1 - i)))))
+        .collect()
+}
+
+/// [`pack_bases`] undone, cut to `len` bases.
+pub fn unpack_bases(bytes: &[u8], per_symbol: usize, len: usize) -> Vec<Nucleotide> {
+    let per_symbol = per_symbol.max(1);
+    bytes
+        .iter()
+        .flat_map(|&byte| (0..per_symbol).filter_map(move |i| Nucleotide::from_bits((byte >> (2 * (per_symbol - 1 - i))) & 3).ok()))
+        .take(len)
+        .collect()
+}
+
 /// The Reed-Solomon half of [`consensus_then_rs_decode`], for callers that
 /// already ran [`vote_groups`] and want to look at the votes too (a group
 /// with no vote is an erasure).
@@ -197,8 +217,9 @@ fn rs_decode_from_sequences(
     }
 
     let rs = ReedSolomon::new(rs_config);
+    let per_symbol = rs_config.bases_per_symbol;
     let received: Vec<Option<Vec<u8>>> = data.iter()
-        .map(|opt| opt.map(|s| s.bases().iter().map(|n| n.to_bits()).collect()))
+        .map(|opt| opt.map(|s| pack_bases(s.bases(), per_symbol)))
         .collect();
     // Parity strands pack 4 bases per byte (see `DnaStrand::from_packed_bytes`
     // at encode time) since parity symbols span the full 0-255 range, unlike
@@ -207,11 +228,20 @@ fn rs_decode_from_sequences(
         .map(|opt| opt.map(|s| s.unpack_bytes()))
         .collect();
 
+    // Packed symbols round each strand up to whole symbols; recovered
+    // strands are cut back to the length most surviving data strands
+    // share, which is the length the codec wrote.
+    let len = if per_symbol > 1 {
+        let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for s in data.iter().flatten() {
+            *counts.entry(s.len()).or_default() += 1;
+        }
+        counts.into_iter().max_by_key(|&(len, count)| (count, len)).map_or(usize::MAX, |(len, _)| len)
+    } else {
+        usize::MAX
+    };
     match rs.decode_block(&received, &parity_bytes) {
-        Ok(recovered_bytes) => recovered_bytes.iter().map(|bytes| {
-            let bases: Vec<_> = bytes.iter().filter_map(|&b| Nucleotide::from_bits(b).ok()).collect();
-            DnaStrand::new(bases)
-        }).collect(),
+        Ok(recovered_bytes) => recovered_bytes.iter().map(|bytes| DnaStrand::new(unpack_bases(bytes, per_symbol, len))).collect(),
         Err(_) => data.into_iter().flatten().cloned().collect(),
     }
 }
@@ -594,6 +624,30 @@ mod tests {
         let (recovered, count) = pipeline.run_rs_recovery(&received, &parity).unwrap();
         assert_eq!(count, 1); // One erasure
         assert_eq!(recovered[1], vec![4, 5, 6]); // Recovered!
+    }
+
+    #[test]
+    fn packed_symbols_make_parity_strands_the_data_strands_length() {
+        let strands: Vec<DnaStrand> = ["ACGTACGTTGCA", "TTGCAACGTGCA", "GGATCCATGCAT", "CATGGATCCAGT"]
+            .iter()
+            .map(|s| DnaStrand::from_str(s).unwrap())
+            .collect();
+        for s in &strands {
+            assert_eq!(unpack_bases(&pack_bases(s.bases(), 4), 4, s.len()), s.bases());
+        }
+        let rows: Vec<Vec<u8>> = strands.iter().map(|s| pack_bases(s.bases(), 4)).collect();
+        let parity: Vec<DnaStrand> =
+            ReedSolomon::new(RsConfig::new(4)).encode_block(&rows).unwrap().iter().map(|p| DnaStrand::from_packed_bytes(p)).collect();
+        assert_eq!(parity[0].len(), strands[0].len());
+
+        // One strand missing and one read wrong: 2 * 1 + 1 <= 4.
+        let mut data: Vec<Option<DnaStrand>> = strands.iter().cloned().map(Some).collect();
+        data[1] = None;
+        data[3] = Some(DnaStrand::from_str("CATGGATCCAGA").unwrap());
+        let parity: Vec<Option<DnaStrand>> = parity.into_iter().map(Some).collect();
+        let config = RsConfig::new(4).with_bases_per_symbol(4);
+        let recovered = rs_decode_from_sequences(&data, &parity, config, &HashSet::new(), &HashSet::new());
+        assert_eq!(recovered, strands);
     }
 
     #[test]

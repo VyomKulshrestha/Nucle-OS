@@ -27,7 +27,7 @@ use nucle_codec::ternary::{TernaryCodec, TernaryConfig};
 use nucle_codec::yinyang::{YinYangCodec, YinYangConfig};
 use nucle_ecc::reed_solomon::{ReedSolomon, RsConfig};
 use nucle_ecc::consensus::build_consensus_with_length;
-use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, vote_groups, RecoveryManifest};
+use nucle_ecc::pipeline::{compute_error_distribution, consensus_then_rs_decode_with_retry, pack_bases, vote_groups, RecoveryManifest};
 use nucle_index::primer::PrimerLibrary;
 use nucle_index::crispr_sim::{CrisprSimulator, CrisprConfig};
 use nucle_index::search::{SearchEngine, FileMeta, SearchResult};
@@ -156,6 +156,10 @@ fn hedges_rows(data: &[u8], data_strand_count: usize) -> Vec<Vec<u8>> {
         })
         .collect()
 }
+
+/// Bases of a data strand per Reed-Solomon symbol in files written now
+/// (see `DnaFile::rs_bases_per_symbol`).
+const RS_BASES_PER_SYMBOL: usize = 4;
 
 /// Strands [`NucleOS::plan_parity`] sends through the decoder, as whole
 /// noisy copies of the file, to see how often a strand that was read still
@@ -1000,18 +1004,23 @@ impl NucleOS {
         } else if redundancy > 0 {
             let rs = ReedSolomon::new(RsConfig::new(redundancy));
 
-            // Convert DNA strands to byte vectors for RS
+            // Each Reed-Solomon symbol is four consecutive bases of a data
+            // strand, so a parity row has a quarter of a data strand's
+            // length in symbols and, written back at 4 bases per byte, the
+            // same length in bases. One base per symbol made parity strands
+            // four times longer, and so about four times as likely to come
+            // out of noisy reads wrong: on the measured low-fidelity array
+            // channel, 55% of 648 nt parity strands for 162 nt ternary
+            // strands survived consensus.
             let strand_bytes: Vec<Vec<u8>> = encoded.strands.iter()
-                .map(|s| s.bases().iter().map(|n| n.to_bits()).collect())
+                .map(|s| pack_bases(s.bases(), RS_BASES_PER_SYMBOL))
                 .collect();
 
             let parity_bytes = rs.encode_block(&strand_bytes)
                 .map_err(|e| format!("ECC encoding failed: {}", e))?;
 
-            // Parity symbols are arbitrary GF(256) values (0-255), unlike
-            // data strand bytes which are always a single to_bits() value
-            // (0-3) -- pack each parity byte into 4 bases so no value is
-            // silently dropped for exceeding the 2-bit range.
+            // Parity symbols span the full 0-255 range, so each is written
+            // as 4 bases.
             for parity in &parity_bytes {
                 parity_strands.push(DnaStrand::from_packed_bytes(parity));
             }
@@ -1168,6 +1177,7 @@ impl NucleOS {
             data_strand_count,
             parity_strand_count: parity_count,
             rs_parity_per_stripe: redundancy,
+            rs_bases_per_symbol: RS_BASES_PER_SYMBOL,
             codec: codec.name().to_string(),
             redundancy: redundancy_ratio,
             manifest: Some(manifest),
@@ -1449,7 +1459,7 @@ impl NucleOS {
             consensus_then_rs_decode_with_retry(
                 &dense_data_groups,
                 &dense_parity_groups,
-                RsConfig::new(dna_file.rs_parity_per_stripe),
+                RsConfig::new(dna_file.rs_parity_per_stripe).with_bases_per_symbol(dna_file.rs_bases_per_symbol),
                 is_valid,
             )
         } else {

@@ -997,9 +997,11 @@ exact; only strands where no read decodes fall back to consensus. And the
 Reed-Solomon parity is computed over the 16 data bytes of each strand and
 written as HEDGES strands with the indices after the data strands, the
 inner-HEDGES, outer-Reed-Solomon layout Press et al. describe. The other
-codecs' parity strands are packed bytes, about 600 nt each, which an
-insertion scrambles; at 1.5% error with indels they came out of a two- or
-three-read consensus wrong and could not rebuild anything.
+codecs' parity covers the bases of their strands; it used to come out four
+times their length (one base per Reed-Solomon symbol, a symbol written as 4
+bases), about 600 nt, and through low-fidelity reads about half of it came
+out of consensus wrong. See "Reed-Solomon over strand bases" below for what
+changed.
 
 Reading a HEDGES file takes three steps:
 
@@ -1035,12 +1037,18 @@ one):
 
 | Channel | Reads per strand | Ternary | HEDGES | Strands (ternary / HEDGES) |
 |---|---:|---:|---:|---:|
-| `array-lofi` (measured, 1.5% error) | 6 | 0 / 10, 5.3 s | **10 / 10, 0.37 s** | 58 / 80 |
-| `array-lofi` | 3 | 0 / 10, 2.0 s | 3 / 10, 0.25 s | 58 / 80 |
-| `array-hifi` (measured, 0.11%) | 3 | 10 / 10, 6.5 s | 10 / 10, 0.09 s | 58 / 80 |
-| Illumina | 3 | 10 / 10, 9.5 s | 10 / 10, 0.16 s | 58 / 80 |
-| Nanopore (about 7%) | 3 | 0 / 10, 4.9 s | **10 / 10, 1.0 s** | 58 / 80 |
-| Nanopore | 6 | 0 / 10, 10.4 s | **10 / 10, 0.55 s** | 58 / 80 |
+| `array-lofi` (measured, 1.5% error) | 6 | 2 / 10, 0.82 s | **9 / 10, 0.19 s** | 58 / 80 |
+| `array-lofi` | 3 | 0 / 10, 0.30 s | 3 / 10, 0.24 s | 58 / 80 |
+| `array-hifi` (measured, 0.11%) | 3 | 10 / 10, 0.08 s | 10 / 10, 0.02 s | 58 / 80 |
+| Illumina | 3 | 10 / 10, 0.14 s | 10 / 10, 0.03 s | 58 / 80 |
+| Nanopore (about 7%) | 3 | 0 / 10, 0.62 s | **10 / 10, 0.59 s** | 58 / 80 |
+| Nanopore | 6 | 3 / 10, 1.83 s | **10 / 10, 0.28 s** | 58 / 80 |
+
+These rows were re-measured after the Reed-Solomon decoder and the parity
+layout changed (see "Reed-Solomon over strand bases"); before, ternary read
+times were 5 to 10 s and it recovered nothing on the low-fidelity channel at
+6 reads or on Nanopore at 6. HEDGES at 6 low-fidelity reads lost one file in
+ten this time, within the 14% the parity planner predicts at 16 parity.
 
 Before the trial ran in parallel and the consensus was length-aware and
 soft-decoded, Nanopore at 3 reads per strand recovered 5 of 10 files at 17.4
@@ -1077,6 +1085,62 @@ and reconstructs known missing strands within the bound
 `2*errors + erasures <= parity_count`. Actual consensus still requires
 sequencing coverage (`coverage_depth > 1` in `SimulationConfig`) — a single
 read has nothing to vote against.
+
+### Reed-Solomon over strand bases
+
+For the codecs other than HEDGES, Reed-Solomon covers the bases of the
+strands: symbol `i` of every data strand, read across the stripe, is one
+codeword. Two things made that weaker than it looked, both found while
+measuring why the ternary codec lost files through noisy reads.
+
+**The decoder missed wrong strands late in the codeword.** The
+Berlekamp-Welch decoder guessed the number of wrong strands `e`, counting
+down from the most the parity allows. Above the real count its square
+system was singular, and at the real count it built the system from only
+the first `2e + k` strands, then checked the answer against all of them. A
+wrong strand past those first points, which is where parity strands sit,
+made every guess fail however much parity was left, so more parity meant
+more places for a wrong strand to land outside the system. Through
+Illumina reads at 3 per strand a 1 KB ternary file came back 8, 7 and 6
+times in 10 at 16, 32 and 48 parity strands. `decode_stripe` now uses
+Gao's algorithm (S. Gao, 2003): interpolate through every available strand,
+run the extended Euclidean algorithm against the product of `(x - x_i)`
+until the remainder's degree falls below `(N + k) / 2`, and divide. It
+corrects up to half the parity in wrong strands wherever they sit, in
+O(N^2) per symbol rather than one O(N^3) solve per guess: 10 of 10 at all
+three parities, and reads 6 to 70 times faster. A unit test puts two wrong
+strands at the very end of the codeword at parities 4 to 64, with and
+without erasures; the old decoder failed 7 of those 9 cases.
+
+**Parity strands were four times the data strands' length.** Each symbol
+was one base, but a parity symbol is any of 256 values and takes 4 bases to
+write, so a 162 nt ternary strand had 648 nt parity strands. Through the
+measured low-fidelity channel at 6 reads per strand, 55% of them came out
+of consensus right. Now each symbol is 4 consecutive bases of a strand
+(`RsConfig::with_bases_per_symbol`, `pipeline::pack_bases`), so a parity
+row is a quarter of the strand in symbols and writes back at the data
+strands' length: 164 nt for that file, at a quarter of the DNA. A wrong
+base still spoils one symbol. Files record the layout
+(`DnaFile::rs_bases_per_symbol`); files and pools saved before it read as
+one base per symbol.
+
+The two together, for the same 1 KB ternary file, 10 runs per row (the
+decoder fix alone in the middle column):
+
+| Channel | Reads per strand | Parity | Before | Gao, 648 nt parity | Gao, 164 nt parity |
+|---|---:|---:|---:|---:|---:|
+| `array-lofi` | 6 | 32 | 0 / 10 | 2 / 10 | 9 / 10 |
+| `array-lofi` | 6 | 48 | 0 / 10 | 7 / 10 | **10 / 10** |
+| `array-lofi` | 3 | 48 | 0 / 10 | 0 / 10 | 5 / 10 |
+| Illumina | 3 | 16 | 8 / 10 | 10 / 10 | 10 / 10 |
+| Illumina | 3 | 48 | 6 / 10 | 10 / 10 | 10 / 10 |
+
+Marking strands that fail a cheap check (wrong length, a homopolymer the
+rotating cipher never writes) as erasures was tried and dropped: most
+wrong ternary strands carry one or two substitutions, which cost parity
+only at the symbols they spoil, while an erasure costs it at every symbol.
+The parity planner still charges a wrong strand at every symbol, so for
+the consensus codecs it asks for more parity than this decoder needs.
 
 ### Parity planning
 
@@ -1182,7 +1246,7 @@ Verified: the ground-truth encoded strands for the `nucle_vfs` Nanopore tests no
 
 That narrowed the remaining gap to "Reed-Solomon can't correct a strand that survives consensus wrong-but-present rather than missing" — but Reed-Solomon itself turned out to have two real, previously undiscovered bugs of its own, unrelated to consensus or the codec. First: parity symbols are arbitrary GF(256) values spanning the full 0-255 range, but `dna_write` packed each one into DNA via the same 2-bit `Nucleotide::from_bits` used for data strand bytes (which are always pre-restricted to 0-3) — any parity byte outside that range was silently dropped, destroying the overwhelming majority of every parity strand's content without ever raising an error. Second: `consensus_then_rs_decode`'s parity conversion collapsed a strand that failed consensus out of the array entirely (`filter_map`) rather than leaving a gap at its position, which shifted every later parity strand onto the wrong evaluation point (`x = k + j` used the strand's position in the surviving subset, not its true configured index) and corrupted the whole stripe regardless of how many strands were actually wrong. Fixed by packing each parity byte into 4 bases (`Nucleotide::byte_to_bases`/`bases_to_byte`, `DnaStrand::from_packed_bytes`/`unpack_bytes`) and representing every erasure — data or parity — as `Option`-per-slot end to end, so a missing strand's true codeword position is never lost (`reed_solomon::tests::test_rs_parity_reindexing_does_not_corrupt_decode`).
 
-With those two bugs fixed, `ReedSolomon::decode_stripe` was rewritten from plain erasure-only Lagrange interpolation to genuine combined error-and-erasure decoding via the Berlekamp-Welch algorithm (`GF256::solve_linear_system`, `GF256::poly_divmod`, `ReedSolomon::try_welch_decode`): it can now blindly correct up to `parity_count / 2` strands that come back from consensus wrong-but-present, without ever being told which ones, in addition to reconstructing up to `parity_count` known-missing strands — combinable per the standard `2*errors + erasures <= parity_count` bound. Verified directly with dedicated unit tests (`test_rs_corrects_silent_error_without_knowing_position`, `test_rs_combines_erasure_and_blind_error`), and the full workspace suite — including the 50x-coverage Nanopore fuzz test — passes with zero regressions.
+With those two bugs fixed, `ReedSolomon::decode_stripe` was rewritten from plain erasure-only Lagrange interpolation to genuine combined error-and-erasure decoding via the Berlekamp-Welch algorithm (`GF256::solve_linear_system`, `GF256::poly_divmod`, and a `try_welch_decode` since replaced by Gao's algorithm, see "Reed-Solomon over strand bases"): it can now blindly correct up to `parity_count / 2` strands that come back from consensus wrong-but-present, without ever being told which ones, in addition to reconstructing up to `parity_count` known-missing strands — combinable per the standard `2*errors + erasures <= parity_count` bound. Verified directly with dedicated unit tests (`test_rs_corrects_silent_error_without_knowing_position`, `test_rs_combines_erasure_and_blind_error`), and the full workspace suite — including the 50x-coverage Nanopore fuzz test — passes with zero regressions.
 
 Nanopore's full end-to-end recovery still failed at realistic settings even with all of this (verified at 50x coverage and 12 parity strands; `nucle benchmark -p nanopore -r 4` and `-r 12` both reported FAIL at the CLI's real defaults, ~14% combined error rate). Direct ablation, comparing `-r 0` through `-r 50` on identical noisy input, produced the *exact same* decode failure at every redundancy level, ruling out Reed-Solomon as the cause. This was reported, for a while, as an open research problem: "consensus itself does not reliably converge to the correct sequence at Oxford Nanopore's real per-base error rate."
 

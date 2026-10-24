@@ -64,6 +64,12 @@ pub struct DnaFile {
     /// needs this exact value to reconstruct a matching `RsConfig` for decode.
     #[serde(default)]
     pub rs_parity_per_stripe: usize,
+    /// Bases of each data strand per Reed-Solomon symbol for the codecs
+    /// whose parity covers strand bases (not HEDGES, whose parity covers
+    /// payload bytes): 4 since parity strands were made the data strands'
+    /// length; files written before that, and pools saved then, read as 1.
+    #[serde(default = "one_base_per_symbol")]
+    pub rs_bases_per_symbol: usize,
     /// Codec used for encoding.
     pub codec: String,
     /// Redundancy level (e.g., 2.0 = 2× parity).
@@ -86,6 +92,10 @@ pub struct DnaFile {
 }
 
 fn default_version() -> u32 {
+    1
+}
+
+fn one_base_per_symbol() -> usize {
     1
 }
 
@@ -158,6 +168,14 @@ impl FileHandle {
 mod tests {
     use super::*;
 
+    #[test]
+    fn files_saved_before_packed_parity_read_as_one_base_per_symbol() {
+        let mut saved = serde_json::to_value(make_file()).unwrap();
+        saved.as_object_mut().unwrap().remove("rs_bases_per_symbol");
+        let file: DnaFile = serde_json::from_value(saved).unwrap();
+        assert_eq!(file.rs_bases_per_symbol, 1);
+    }
+
     fn make_file() -> DnaFile {
         DnaFile {
             file_id: "f1".into(),
@@ -169,6 +187,7 @@ mod tests {
             data_strand_count: 10,
             parity_strand_count: 4,
             rs_parity_per_stripe: 4,
+            rs_bases_per_symbol: 4,
             codec: "ternary".into(),
             redundancy: 1.4,
             manifest: None,

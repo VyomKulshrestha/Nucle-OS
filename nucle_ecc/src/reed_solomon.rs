@@ -13,8 +13,8 @@
 //!
 //! ## Capabilities
 //!
-//! With `t` parity strands per block, decoding is combined
-//! error-and-erasure Berlekamp-Welch (see `decode_stripe`):
+//! With `t` parity strands per block, decoding is combined error and
+//! erasure decoding with Gao's algorithm (see `decode_stripe`):
 //! - Can correct up to `t/2` corrupted-but-present strands, blindly --
 //!   the caller never has to say which ones are wrong
 //! - Can recover up to `t` erased (known-missing) strands
@@ -174,6 +174,57 @@ impl GF256 {
         (quotient, rem)
     }
 
+    /// Degree of a little-endian polynomial, `None` for the zero
+    /// polynomial (trailing zero coefficients ignored).
+    pub fn poly_degree(p: &[u8]) -> Option<usize> {
+        p.iter().rposition(|&c| c != 0)
+    }
+
+    /// `a + b` (and `a - b`: the same in characteristic 2).
+    pub fn poly_add(a: &[u8], b: &[u8]) -> Vec<u8> {
+        let mut sum = vec![0u8; a.len().max(b.len())];
+        for (i, value) in sum.iter_mut().enumerate() {
+            *value = a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
+        }
+        sum
+    }
+
+    /// `a * b`.
+    pub fn poly_mul(a: &[u8], b: &[u8]) -> Vec<u8> {
+        if a.is_empty() || b.is_empty() {
+            return Vec::new();
+        }
+        let mut product = vec![0u8; a.len() + b.len() - 1];
+        for (i, &x) in a.iter().enumerate() {
+            if x == 0 {
+                continue;
+            }
+            for (j, &y) in b.iter().enumerate() {
+                product[i + j] ^= Self::mul(x, y);
+            }
+        }
+        product
+    }
+
+    /// The polynomial of degree below `points.len()` through every
+    /// `(x, y)`, by Newton's divided differences; the `x`s must be
+    /// distinct.
+    pub fn interpolate(points: &[(u8, u8)]) -> Vec<u8> {
+        let n = points.len();
+        let mut coef: Vec<u8> = points.iter().map(|&(_, y)| y).collect();
+        for j in 1..n {
+            for i in (j..n).rev() {
+                coef[i] = Self::div(Self::sub(coef[i], coef[i - 1]), Self::sub(points[i].0, points[i - j].0));
+            }
+        }
+        // c0 + (x - x0)(c1 + (x - x1)(c2 + ...)), from the inside out.
+        let mut poly: Vec<u8> = Vec::new();
+        for i in (0..n).rev() {
+            poly = Self::poly_add(&Self::poly_mul(&poly, &[points[i].0, 1]), &[coef[i]]);
+        }
+        poly
+    }
+
     /// Solve the linear system `matrix * x = rhs` over GF(256) via
     /// Gauss-Jordan elimination with partial pivoting. `matrix` is `dim`
     /// square rows; returns `None` if the system is singular.
@@ -217,18 +268,30 @@ pub struct RsConfig {
     /// Number of parity symbols (strands) per block.
     /// Higher = more redundancy = more error tolerance.
     pub parity_count: usize,
+    /// Bases of a data strand packed into each GF(256) symbol when a
+    /// strand's bases are the codeword (`crate::pipeline`). 1, one base per
+    /// symbol, makes each parity strand four times the data strands'
+    /// length, since a parity symbol takes 4 bases to write; 4 makes them
+    /// the same length. Not used by [`ReedSolomon`] itself, which sees
+    /// only bytes.
+    pub bases_per_symbol: usize,
 }
 
 impl Default for RsConfig {
     fn default() -> Self {
-        Self { parity_count: 4 }
+        Self { parity_count: 4, bases_per_symbol: 1 }
     }
 }
 
 impl RsConfig {
-    /// Create with specified parity count.
+    /// Create with specified parity count, one base per symbol.
     pub fn new(parity_count: usize) -> Self {
-        Self { parity_count }
+        Self { parity_count, bases_per_symbol: 1 }
+    }
+
+    /// The same parity, `bases` data-strand bases per symbol.
+    pub fn with_bases_per_symbol(self, bases: usize) -> Self {
+        Self { bases_per_symbol: bases.clamp(1, 4), ..self }
     }
 
     /// Maximum erasures this configuration can recover.
@@ -418,10 +481,8 @@ impl ReedSolomon {
                 return Err(RsError::TooManyErrors { errors: erasures, parity: n });
             }
 
-            let e_max = (avail.len() - k) / 2;
-            let p_coeffs = (0..=e_max).rev()
-                .find_map(|e| Self::try_welch_decode(&avail, k, e))
-                .ok_or(RsError::TooManyErrors { errors: erasures.max(e_max), parity: n })?;
+            let p_coeffs = Self::gao_decode(&avail, k)
+                .ok_or(RsError::TooManyErrors { errors: erasures.max((avail.len() - k) / 2 + 1), parity: n })?;
 
             for (i, data_strand) in result.iter_mut().enumerate() {
                 data_strand[pos] = GF256::poly_eval(&p_coeffs, i as u8);
@@ -431,67 +492,43 @@ impl ReedSolomon {
         Ok(result)
     }
 
-    /// Attempt Berlekamp-Welch decoding of `avail` points assuming
-    /// exactly `e` of them are wrong, recovering the degree-`<k`
-    /// polynomial `P` whose coefficients are the true data/parity
-    /// symbols. Returns `None` if the assumption doesn't hold (system is
-    /// singular, or the reconstructed error locator doesn't explain
-    /// every point) -- the caller tries progressively smaller `e`.
+    /// The polynomial of degree below `k` through all but at most
+    /// `(N - k) / 2` of the `N` available points, wherever the wrong ones
+    /// sit, or `None` when more are wrong than that. Gao's algorithm (S.
+    /// Gao, "A New Algorithm for Decoding Reed-Solomon Codes", 2003):
+    /// interpolate `g1` through every point, run the extended Euclidean
+    /// algorithm on `g0 = prod (x - x_i)` and `g1` until the remainder's
+    /// degree drops below `(N + k) / 2`, and divide that remainder by its
+    /// Bezout coefficient.
     ///
-    /// Finds `Q` (degree `< e+k`) and monic `E` (degree `e`) satisfying
-    /// `Q(x_i) = E(x_i) * y_i` for every available point; `P = Q / E`
-    /// when `E`'s roots are exactly the error locations. `E(x) = 1` (e=0)
-    /// degenerates to plain consistency-checked interpolation.
-    fn try_welch_decode(avail: &[(u8, u8)], k: usize, e: usize) -> Option<Vec<u8>> {
-        let need = 2 * e + k;
-        if avail.len() < need {
+    /// This replaced a Berlekamp-Welch solve that built its equations from
+    /// only the first `2e + k` points: a wrong point past them, such as a
+    /// wrong parity strand, made decoding fail however much parity was
+    /// left, so more parity strands meant more chances to fail.
+    fn gao_decode(avail: &[(u8, u8)], k: usize) -> Option<Vec<u8>> {
+        let n = avail.len();
+        if n < k {
             return None;
         }
-
-        // Unknowns: q_0..q_{e+k-1} (Q's coefficients), then e_0..e_{e-1}
-        // (E's coefficients below its implicit monic leading term).
-        let dim = need;
-        let mut matrix = vec![vec![0u8; dim]; dim];
-        let mut rhs = vec![0u8; dim];
-
-        for row in 0..dim {
-            let (x, y) = avail[row];
-            let mut x_pow = 1u8;
-            for value in matrix[row].iter_mut().take(e + k) {
-                *value = x_pow;
-                x_pow = GF256::mul(x_pow, x);
-            }
-            let mut x_pow = 1u8;
-            for l in 0..e {
-                // Equation: sum q_j x^j + y * sum e_l x^l = y * x^e
-                // (GF(256) subtraction is addition, so no sign flip needed.)
-                matrix[row][e + k + l] = GF256::mul(y, x_pow);
-                x_pow = GF256::mul(x_pow, x);
-            }
-            rhs[row] = GF256::mul(y, x_pow);
+        let mut g0 = vec![1u8];
+        for &(x, _) in avail {
+            g0 = GF256::poly_mul(&g0, &[x, 1]);
         }
-
-        let solution = GF256::solve_linear_system(matrix, rhs)?;
-        let q_coeffs = solution[0..(e + k)].to_vec();
-        let mut e_coeffs = solution[(e + k)..(2 * e + k)].to_vec();
-        e_coeffs.push(1); // monic leading term
-
-        for &(x, y) in avail {
-            let qx = GF256::poly_eval(&q_coeffs, x);
-            let ex = GF256::poly_eval(&e_coeffs, x);
-            if qx != GF256::mul(y, ex) {
-                return None;
-            }
+        let (mut r_prev, mut r) = (g0, GF256::interpolate(avail));
+        let (mut v_prev, mut v): (Vec<u8>, Vec<u8>) = (Vec::new(), vec![1]);
+        while GF256::poly_degree(&r).is_some_and(|d| 2 * d >= n + k) {
+            let (q, rem) = GF256::poly_divmod(&r_prev, &r);
+            let v_next = GF256::poly_add(&v_prev, &GF256::poly_mul(&q, &v));
+            r_prev = std::mem::replace(&mut r, rem);
+            v_prev = std::mem::replace(&mut v, v_next);
         }
-
-        let (p_coeffs, remainder) = GF256::poly_divmod(&q_coeffs, &e_coeffs);
-        if remainder.iter().any(|&c| c != 0) || p_coeffs.len() > k {
+        let (p, rem) = GF256::poly_divmod(&r, &v);
+        if GF256::poly_degree(&rem).is_some() || GF256::poly_degree(&p).is_some_and(|d| d >= k) {
             return None;
         }
-
-        let mut p_coeffs = p_coeffs;
-        p_coeffs.resize(k, 0);
-        Some(p_coeffs)
+        let mut p = p;
+        p.resize(k, 0);
+        Some(p)
     }
 
     /// Lagrange interpolation: evaluate the polynomial through `points` at `x_target`.
@@ -717,6 +754,40 @@ mod tests {
         let parity_opt: Vec<Option<Vec<u8>>> = parity.iter().map(|p| Some(p.clone())).collect();
         let decoded = rs.decode_block(&received, &parity_opt).unwrap();
         assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_rs_corrects_wrong_strands_wherever_they_sit_at_any_parity() {
+        // Two wrong strands at the very end of the codeword (the last data
+        // strand and the last parity strand), with parity to spare, and with
+        // four erasures as well. The decoder this replaced read its equations
+        // from the first 2e + k points only, once e came down to the real
+        // error count, so wrong strands this late failed it at every parity
+        // above 4: more parity strands, more ways to fail.
+        let data: Vec<Vec<u8>> = (0..20u8).map(|i| (0..12u8).map(|j| i.wrapping_mul(31) ^ j.wrapping_mul(7)).collect()).collect();
+        for parity_count in [4usize, 8, 16, 32, 64] {
+            let rs = ReedSolomon::new(RsConfig::new(parity_count));
+            let parity = rs.encode_block(&data).unwrap();
+            for erasures in [0usize, 4] {
+                if 2 * 2 + erasures > parity_count {
+                    continue;
+                }
+                let mut received: Vec<Option<Vec<u8>>> = data.iter().cloned().map(Some).collect();
+                let mut parity_rx: Vec<Option<Vec<u8>>> = parity.iter().cloned().map(Some).collect();
+                for row in [received[19].as_mut(), parity_rx[parity_count - 1].as_mut()] {
+                    for byte in row.unwrap() {
+                        *byte ^= 0x5A;
+                    }
+                }
+                for slot in received.iter_mut().take(erasures) {
+                    *slot = None;
+                }
+                let decoded = rs
+                    .decode_block(&received, &parity_rx)
+                    .unwrap_or_else(|e| panic!("parity {parity_count}, {erasures} erasures: {e}"));
+                assert_eq!(decoded, data, "parity {parity_count}, {erasures} erasures");
+            }
+        }
     }
 
     #[test]

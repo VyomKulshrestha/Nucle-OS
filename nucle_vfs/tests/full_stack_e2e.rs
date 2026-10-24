@@ -633,6 +633,25 @@ fn test_hedges_store_read_and_migrate() {
     assert_eq!(os.dna_read_version("plain.txt", 1).unwrap(), b"ternary first");
 }
 
+/// The ternary codec has no code inside a strand, so through the measured
+/// low-fidelity channel at 6 reads per strand a third of its strands come
+/// out of consensus missing or wrong. Reed-Solomon carries it now that
+/// parity strands are the data strands' length and a wrong strand anywhere
+/// in the codeword is corrected; before, its 648 nt parity strands mostly
+/// came out wrong and the decoder missed wrong strands late in the
+/// codeword, and no parity brought the file back.
+#[test]
+fn test_ternary_recovers_through_the_measured_low_fidelity_channel() {
+    let original: Vec<u8> = (0..512u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect();
+    for seed in 0..2 {
+        let noise = SimulationConfig::realistic(HardwareProfile::ArrayLowFidelity, 6, 700 + seed);
+        let mut os = NucleOS::new(10).with_noise(noise);
+        let written = os.dna_write_with_codec("lofi-ternary.bin", &original, 40, CodecKind::Ternary).unwrap();
+        assert_eq!(written.total_strand_count - written.data_strand_count, 40);
+        assert_eq!(os.dna_read("lofi-ternary.bin").unwrap(), original, "seed {seed}");
+    }
+}
+
 /// Through the measured low-fidelity array channel (1.5% errors per base,
 /// a third of them indels, reads spread unevenly over strands), HEDGES
 /// strands are rebuilt read by read and the file comes back exactly.

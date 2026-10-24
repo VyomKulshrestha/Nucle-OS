@@ -260,6 +260,7 @@ mod tests {
             data_strand_count: 10,
             parity_strand_count: 4,
             rs_parity_per_stripe: 4,
+            rs_bases_per_symbol: 4,
             codec: "ternary".into(),
             redundancy: 1.4,
             manifest: None,
