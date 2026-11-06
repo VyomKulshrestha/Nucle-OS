@@ -1,0 +1,12 @@
+// Decodes real Oxford Nanopore MinION reads and scores them against the
+// strands Twist synthesized: the 50-cluster sample of Microsoft's Clustered
+// Nanopore Reads dataset that ships with the tests. `nucle reads` reports
+// the same numbers for the same files.
+//
+// `blind` also throws the dataset's cluster labels away and decodes from
+// the reads alone; the run stops if that recovers 90% of the strands or
+// fewer.
+decode reads "../../nucle_ecc/tests/fixtures/cnr/Clusters.txt" against "../../nucle_ecc/tests/fixtures/cnr/Centers.txt" {
+    blind,
+    expect recovery > 90%
+}

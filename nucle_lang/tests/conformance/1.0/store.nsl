@@ -1,0 +1,11 @@
+// Basic DNA pool declaration and store operation
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+store "sample_a.txt" into archive {
+    redundancy: 4x,
+    tag: ["docs", "demo", "nuclescript"]
+}

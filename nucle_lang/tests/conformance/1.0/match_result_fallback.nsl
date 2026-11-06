@@ -1,0 +1,82 @@
+// Pattern matching over `Result<T, E>` -- unlike
+// `result_fallback_store.nsl` (which needs a *second* caller-side
+// function to inspect a caught `Err`), `match` branches on `Ok`/`Err`
+// directly inside the same function: try storing the given target, and
+// fall back to a *different* file (`sample_b.txt`, into a secondary
+// pool) on failure, without a second call. Each function below takes
+// its target as a parameter (rather than a hardcoded filename) so it
+// can be called once with a real, existing file (the `Ok` arm) and once
+// with a filename that genuinely doesn't exist (the `Err` arm) --
+// `dna_write` versions a repeated filename instead of rejecting it, so
+// storing the same name twice no longer reliably fails the way it used
+// to.
+
+pool primary: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+pool secondary: DnaPool {
+    codec: Ternary,
+    redundancy: 2x,
+    profile: Illumina
+}
+
+/// Tries `primary` first; if that `store` fails, falls back to a
+/// different file into `secondary` in the same function -- the `Err`
+/// arm's `?` still propagates a *second* real failure (if `secondary`
+/// is also full) rather than papering over it.
+fn archive_with_fallback(target: File) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store target into primary
+    let saved: DnaFile = match attempt {
+        Ok(file) => file,
+        Err(reason) => (store "sample_b.txt" into secondary)?
+    }
+}
+
+/// Composability: `?` applied directly to a `match` expression's own
+/// result (not just a plain `Result` binding), with `Ok`/`Err` used as
+/// match-arm bodies instead of a bare unwrapped value or a `store`/`?`
+/// expression. Called twice below: the first call's `store` succeeds,
+/// so the `Ok` arm's `Ok(file)` re-wrap runs; the second's fails (a
+/// nonexistent target), so the `Err` arm's `Err(reason)` runs and the
+/// outer `?` propagates it.
+fn archive_with_labeled_outcome(target: File) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store target into primary
+    let saved: DnaFile = (match attempt {
+            Ok(file) => Ok(file),
+            Err(reason) => Err(reason)
+    })?
+}
+
+/// Nested `match`: the outer `match`'s scrutinee is itself another
+/// `match`'s own result, not a plain `Result` binding -- proves a
+/// `match` expression composes with another `match` in scrutinee
+/// position, not just with `?`/a bound variable. `sample_d.txt` is a
+/// fresh name, so the inner match's `Ok` arm always runs here; the
+/// inner match's own `Err` arm (a fallback store into `secondary`) and
+/// the outer match's own `Err` arm (a further fallback into `primary`)
+/// both still need to type-check even though this call never takes
+/// them -- proven by `archive_with_fallback`/`archive_with_labeled_
+/// outcome` above already exercising an `Err` arm for real.
+fn archive_with_nested_check() returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store "sample_d.txt" into primary
+    let saved: DnaFile = match (match attempt {
+            Ok(file) => Ok(file),
+            Err(reason) => store "sample_e.txt" into secondary
+    }) {
+        Ok(file) => file,
+        Err(reason) => (store "sample_a.txt" into primary)?
+    }
+}
+
+let first: Result<DnaFile, Str> = archive_with_fallback("sample_a.txt")
+
+let second: Result<DnaFile, Str> = archive_with_fallback("this_file_does_not_exist.txt")
+
+let third: Result<DnaFile, Str> = archive_with_labeled_outcome("sample_c.txt")
+
+let fourth: Result<DnaFile, Str> = archive_with_labeled_outcome("this_file_does_not_exist_either.txt")
+
+let fifth: Result<DnaFile, Str> = archive_with_nested_check()

@@ -30,6 +30,11 @@ pub mod value;
 use std::fmt;
 use std::path::Path;
 
+/// The NucleScript language version this compiler implements, versioned
+/// apart from the Rust crates (still 0.x). Every 1.x release accepts and
+/// runs what 1.0 does; see docs/stability.md for exactly what that covers.
+pub const LANGUAGE_VERSION: &str = "1.0";
+
 pub use ast::*;
 #[cfg(feature = "runtime")]
 pub use codegen::{execute_program, take_run_trace, CompiledPlan, ExecutionReport, ObservedEffect, RunTrace, VfsCall};

@@ -1,0 +1,26 @@
+// Retention requirements: each pool states where its DNA is kept, and a
+// store can demand the file stay readable for a number of years. The check
+// runs against the strands actually written, using published Arrhenius
+// decay kinetics for the storage medium (see `nucle shelf-life`).
+//
+// The room-temperature shelf cannot keep a file readable for 10,000 years,
+// so that store returns Err and the policy falls back to the cold capsule.
+
+pool shelf: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist, storage: bone at 25C }
+
+pool capsule: DnaPool { codec: YinYang, redundancy: 3x, profile: Twist, storage: encapsulated at -20C }
+
+/// Try the shelf first; if it cannot meet the retention requirement, store
+/// in the capsule instead, which must meet it or fail the whole call.
+fn archive_for(target: File) returns Result<DnaFile, Str> {
+    let attempt: Result<DnaFile, Str> = store target into shelf { retain: 10000y }
+    let saved: DnaFile = match attempt {
+        Ok(file) => file,
+        Err(reason) => (store target into capsule { retain: 10000y })?
+    }
+}
+
+let records: Result<DnaFile, Str> = archive_for("patient_records_2026.csv")
+
+// A short requirement the shelf can meet on its own.
+store "sample_a.txt" into shelf { retain: 50y }

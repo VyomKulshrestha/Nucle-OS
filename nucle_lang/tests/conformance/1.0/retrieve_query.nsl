@@ -1,0 +1,15 @@
+// Retrieve by declarative metadata query
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Illumina
+}
+
+store "sample_a.txt" into archive {
+    tag: ["medical", "docs"]
+}
+
+retrieve from archive where {
+    tag contains "medical",
+    size < 10MB
+}

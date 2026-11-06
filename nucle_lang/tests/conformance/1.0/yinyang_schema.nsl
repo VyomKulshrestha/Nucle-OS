@@ -1,0 +1,11 @@
+// Yin-Yang is supported end to end by the VFS storage backend.
+pool archive: DnaPool {
+    codec: YinYang,
+    redundancy: 3x,
+    profile: Twist
+}
+
+store "sample_a.txt" into archive {
+    redundancy: 3x,
+    tag: ["yin-yang"]
+}

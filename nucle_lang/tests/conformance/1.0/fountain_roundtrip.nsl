@@ -1,0 +1,15 @@
+// Fountain is executable in both direct stores and pipelines.
+pool fountain_archive: DnaPool {
+    codec: Fountain,
+    redundancy: 4x,
+    profile: Illumina
+}
+
+store "sample_a.txt" into fountain_archive
+
+pipeline fountain_backup {
+    encode "sample_b.txt" using Fountain,
+    protect with redundancy 4x,
+    store into fountain_archive,
+    verify roundtrip
+}

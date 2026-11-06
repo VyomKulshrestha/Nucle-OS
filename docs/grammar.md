@@ -1,6 +1,6 @@
 # NucleScript Grammar Reference
 
-This document defines the formal syntax and grammar of NucleScript (`.nsl`), the domain-specific language of NucleOS.
+This document defines the formal syntax and grammar of NucleScript 1.0 (`.nsl`), the domain-specific language of NucleOS. Every 1.x release accepts what it describes; [stability.md](stability.md) says what 1.x may add.
 
 ---
 

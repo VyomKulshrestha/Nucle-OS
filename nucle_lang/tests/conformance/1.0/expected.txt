@@ -1,0 +1,461 @@
+=== archive_fn.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+function archive: Synthesis
+pool vault: Pure
+test consensus voting reduces the inferred error rate: Pure
+
+=== closure_retry.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool primary: Pure
+pool secondary: Pure
+function retry_once: Pure
+function archive_with_retry: Synthesis
+function archive_with_logged_fallback: Synthesis
+function archive_with_self_retry: Synthesis
+let first: Synthesis
+let second: Synthesis
+let third: Synthesis
+let fourth: Synthesis
+let fifth: Synthesis
+
+=== control_flow.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool archive: Pure
+let noisy: Pure
+if if: Pure
+for target: Synthesis
+
+=== critical_redundancy_warning.nsl
+accepted
+Warning E-POOL-LOW-REDUNDANCY
+Warning E-STORE-CRITICAL-LOW-REDUNDANCY
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool archive: Pure
+store sample_a.txt: Synthesis
+
+=== effect_annotated_closure.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool archive: Pure
+function archive_with_cleanup_policy: Destructive
+function run_cleanup: Destructive
+store sample_a.txt: Synthesis
+let cleaned: Destructive
+
+=== effect_confirmations.nsl
+accepted
+pool archive: Pure
+let strands: Synthesis
+let reads: Sequencing
+let recovered: Pure
+delete old_archive.bin: Destructive
+
+=== explicit_type_args_and_file_param.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool illumina_archive: Pure
+pool vault: Pure
+function recover_generically: Pure
+function archive_named_file_twice: Synthesis
+let noisy_illumina: Pure
+let recovered: Pure
+let confirmed: Synthesis
+
+=== failures_missing_confirmation.nsl
+rejected
+Error E-DELETE-UNCONFIRMED
+pool archive: Pure
+delete old_archive.bin: Destructive
+
+=== failures_unconfirmed_function_delete.nsl
+rejected
+Error E-DELETE-UNCONFIRMED
+Error E-SYNTHESIS-UNCONFIRMED
+pool archive: Pure
+function purge: Destructive
+let result: Destructive
+
+=== fountain_roundtrip.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool fountain_archive: Pure
+store sample_a.txt: Synthesis
+pipeline fountain_backup: Synthesis
+
+=== generic_pool_recovery.nsl
+accepted
+pool illumina_archive: Pure
+pool nanopore_archive: Pure
+function recover_from: Pure
+function recover_via_closure: Pure
+let noisy_illumina: Pure
+let recovered_a: Pure
+let recovered_a_explicit: Pure
+let noisy_nanopore: Pure
+let recovered_b: Pure
+let recovered_c: Pure
+
+=== hero.nsl
+accepted
+pool medical_archive: Pure
+let noisy: Pure
+let recovered: Pure
+pipeline archive_patient_records: Synthesis
+
+=== idt_vendor.nsl
+accepted
+pool idt_archive: Pure
+let strands: Synthesis
+
+=== match_result_fallback.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool primary: Pure
+pool secondary: Pure
+function archive_with_fallback: Synthesis
+function archive_with_labeled_outcome: Synthesis
+function archive_with_nested_check: Synthesis
+let first: Synthesis
+let second: Synthesis
+let third: Synthesis
+let fourth: Synthesis
+let fifth: Synthesis
+
+=== minimal.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool archive: Pure
+store sample_a.txt: Synthesis
+retrieve archive: Pure
+
+=== multi_store_search.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool archive: Pure
+store sample_a.txt: Synthesis
+store sample_b.txt: Synthesis
+retrieve archive: Pure
+
+=== nanopore_recovery_warning.nsl
+accepted
+Warning E-POOL-LOW-REDUNDANCY
+Warning E-STORE-UNSATISFIABLE-RECOVERY
+pool field_pool: Pure
+store sample_a.txt: Pure
+
+=== package_workflow.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+import nuclescript/presets: Pure
+import nuclescript/recovery: Pure
+import nuclescript/profiles: Pure
+enum Attempt: Pure
+function archive: Synthesis
+let first: Synthesis
+let second: Synthesis
+let recovered: Pure
+for f: Synthesis
+test imported recovery profiles really reduce noise: Pure
+
+=== pipeline_backup.nsl
+accepted
+pool archive: Pure
+pipeline backup: Synthesis
+
+=== preset_imports.nsl
+accepted
+import nuclescript/presets: Pure
+pool archive: Pure
+let noisy: Pure
+let recovered: Pure
+
+=== probabilistic_recovery.nsl
+accepted
+pool archive: Pure
+let noisy: Pure
+let recovered: Pure
+
+=== real_reads.nsl
+accepted
+decode ../../nucle_ecc/tests/fixtures/cnr/Clusters.txt: Pure
+
+=== recovery_plan.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+enum RecoveryPlan: Pure
+pool primary: Pure
+pool secondary: Pure
+function archive_with_plan: Synthesis
+enum LogLevel: Pure
+function log_message: Pure
+let first: Synthesis
+let second: Synthesis
+
+=== result_fallback_store.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool primary: Pure
+pool backup: Pure
+function archive_in_primary: Synthesis
+function archive_in_backup: Synthesis
+function confirm_backup_copy: Synthesis
+function archival_disabled: Pure
+let outcome: Synthesis
+let confirmed: Synthesis
+let disabled: Pure
+let outcome_failed: Synthesis
+let confirmed_failed: Synthesis
+
+=== retention_policy.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool shelf: Pure
+pool capsule: Pure
+function archive_for: Synthesis
+let records: Synthesis
+store sample_a.txt: Synthesis
+
+=== retrieve_query.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool archive: Pure
+store sample_a.txt: Synthesis
+retrieve archive: Pure
+
+=== sequence_literals.nsl
+accepted
+sequence primer_p0: Pure
+sequence primer_p1: Pure
+sequence primer_p2: Pure
+
+=== simulate_store.nsl
+accepted
+pool archive: Pure
+store sample_a.txt: Pure
+
+=== store.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool archive: Pure
+store sample_a.txt: Synthesis
+
+=== strand_constraints.nsl
+rejected
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+Error E-STRAND-CONSTRAINT-VIOLATION
+pool archive: Pure
+strand bad_literal: Pure
+
+=== tiered_archive.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+import nuclescript/presets: Pure
+enum Tier: Pure
+enum Outcome: Pure
+pool hot: Pure
+pool warm: Pure
+pool cold: Pure
+function place: Synthesis
+function guarded: Pure
+function archive_all: Synthesis
+function recover: Pure
+let noisy_cold: Pure
+let noisy_hot: Pure
+if if: Pure
+for p: Synthesis
+let result: Synthesis
+let missing: Synthesis
+retrieve warm: Pure
+pipeline nightly: Synthesis
+test nanopore reads are noisier than illumina reads: Pure
+
+=== wet_lab_run.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+sequence forward_primer: Pure
+sequence reverse_primer: Pure
+enum Platform: Pure
+pool order: Pure
+pool vendor_b: Pure
+function run_synthesis: Synthesis
+function polish: Pure
+function full_run: Synthesis
+let recovered_main: Synthesis
+let idt_strands: Synthesis
+let idt_reads: Sequencing
+let idt_recovered: Pure
+store sample_e.txt: Synthesis
+delete sample_e.txt: Destructive
+test long-read polishing still leaves nanopore reads noisy before consensus: Pure
+
+=== yinyang_schema.nsl
+accepted
+Warning E-STORE-SYNTHESIS-WITHOUT-SIMULATE
+pool archive: Pure
+store sample_a.txt: Synthesis

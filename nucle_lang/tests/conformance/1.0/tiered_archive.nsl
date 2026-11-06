@@ -1,0 +1,98 @@
+// A tiered archival policy that combines most of the language in one
+// program: package imports, payload enums, a higher-order function taking
+// a closure, nested Result handling with `?`, generics over a pool's
+// profile, compile-time `if`/`for`, a pipeline, and a `test` block.
+//
+// Each pool is its own namespace, so the `for` loop below leaves three
+// independent replicas of sample_a.txt (hot/, warm/, cold/), each with its
+// pool's own codec and redundancy.
+
+import { medical_archive, illumina_recovery } from "nuclescript/presets"
+
+enum Tier {
+    Hot,
+    Warm(Str),
+    Cold(Str),
+}
+
+enum Outcome {
+    Stored(DnaFile),
+    Skipped(Str),
+}
+
+pool hot: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }
+
+pool warm: DnaPool { codec: YinYang, redundancy: 3x, profile: Twist }
+
+pool cold: DnaPool { codec: Fountain, redundancy: 4x, profile: Nanopore }
+
+/// Store into the pool a tier maps to. Every arm yields a Result, so the
+/// match itself is a Result the caller can inspect or propagate.
+fn place(target: File, tier: Tier) returns Result<DnaFile, Str> {
+    let saved: Result<DnaFile, Str> = match tier {
+        Hot => store target into hot,
+        Warm(reason) => store target into warm,
+        Cold(reason) => store target into cold,
+    }
+}
+
+/// Run any placement and turn a failure into a Skipped outcome instead of
+/// aborting the caller.
+fn guarded(attempt: Fn() -> Result<DnaFile, Str>) returns Outcome {
+    let r: Result<DnaFile, Str> = attempt()
+    let o: Outcome = match r {
+        Ok(f) => Outcome::Stored(f),
+        Err(why) => Outcome::Skipped(why),
+    }
+}
+
+/// Primary copy to hot, compliance copy to cold (both guarded), then a
+/// warm replica whose failure does propagate through `?`.
+fn archive_all(primary: File, secondary: File) returns Result<DnaFile, Str> {
+    let first: Outcome = guarded(fn() -> Result<DnaFile, Str> {
+            let r: Result<DnaFile, Str> = place(primary, Tier::Hot)
+    })
+    let second: Outcome = guarded(fn() -> Result<DnaFile, Str> {
+            let r: Result<DnaFile, Str> = place(secondary, Tier::Cold("compliance"))
+    })
+    let last: DnaFile = (place(primary, Tier::Warm("replica")))?
+}
+
+/// Recover any profile's reads; one function instead of one per profile.
+fn recover<P>(noisy: Pool<P, 5%>) returns Pool<Recovered> {
+    let r: Pool<Recovered> = consensus_vote(noisy, coverage: 20x)
+}
+
+let noisy_cold: Pool<Nanopore, 5%> = simulate cold under Nanopore
+
+let noisy_hot: Pool<Illumina, 0.35%> = simulate hot under Illumina
+
+if noisy_cold > 1.0 && !(noisy_hot > 1.0) {
+    let cold_recovered: Pool<Recovered> = recover(noisy_cold)
+} else {
+    let cold_recovered: Pool<Recovered> = consensus_vote(noisy_cold, coverage: 5x)
+}
+
+for p in [hot, warm, cold] {
+    store "sample_a.txt" into p { redundancy: 3x, tags: ["tiered"] }
+}
+
+// Succeeds: both files exist.
+let result: Result<DnaFile, Str> = archive_all("sample_b.txt", "sample_c.txt")
+
+// The hot and warm placements fail (no such file) and the cold copy of
+// sample_d.txt still lands; the warm failure propagates as Err.
+let missing: Result<DnaFile, Str> = archive_all("no_such_file.txt", "sample_d.txt")
+
+retrieve from warm where { name contains "sample" }
+
+pipeline nightly {
+    encode "patient_records_2026.csv" using YinYang,
+    protect with redundancy 4x,
+    store into cold,
+    verify roundtrip
+}
+
+test "nanopore reads are noisier than illumina reads" {
+    assert noisy_cold > noisy_hot, "nanopore should be noisier than illumina"
+}

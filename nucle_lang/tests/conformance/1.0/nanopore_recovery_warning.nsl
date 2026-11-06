@@ -1,0 +1,11 @@
+// Emits a warning: high recovery expectation at Nanopore 1x coverage
+pool field_pool: DnaPool {
+    codec: Ternary,
+    redundancy: 1x,
+    profile: Nanopore
+}
+
+simulate store "sample_a.txt" into field_pool {
+    coverage: 1x,
+    expect recovery > 99.9%
+}

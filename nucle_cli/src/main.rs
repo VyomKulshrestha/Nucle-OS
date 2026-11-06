@@ -31,7 +31,7 @@ use std::time::Instant;
 /// NucleOS — DNA Storage Engine CLI
 #[derive(Parser)]
 #[command(name = "nucle")]
-#[command(version = "0.1.0")]
+#[command(version = concat!(env!("CARGO_PKG_VERSION"), " (NucleScript 1.0)"))]
 #[command(about = "A full software stack for molecular DNA data storage")]
 #[command(long_about = "NucleOS provides encode/decode, error correction, primer-based \
     addressing, CRISPR random access, and a virtual filesystem for DNA storage.")]
@@ -2125,6 +2125,7 @@ fn cmd_check(source: &str, json: bool) {
             if json {
                 let err_report = serde_json::json!({
                     "ok": false,
+                    "language": nucle_lang::LANGUAGE_VERSION,
                     "diagnostics": [{
                         "level": "error",
                         "message": e.to_string(),
@@ -2139,7 +2140,9 @@ fn cmd_check(source: &str, json: bool) {
     };
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        let mut value = serde_json::to_value(&report).unwrap();
+        value["language"] = nucle_lang::LANGUAGE_VERSION.into();
+        println!("{}", serde_json::to_string_pretty(&value).unwrap());
     } else {
         if report.ok {
             println!("Check status: OK (no errors or warnings)");

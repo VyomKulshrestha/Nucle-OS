@@ -1,0 +1,15 @@
+// Failure mode: a function whose body performs an unconfirmed destructive
+// delete. Calling it should require the SAME confirmation a literal delete
+// would — the effect system must not treat a function call as automatically
+// Pure/pre-confirmed just because it's wrapped in a function.
+pool archive: DnaPool {
+    codec: Ternary,
+    redundancy: 3x,
+    profile: Twist
+}
+
+fn purge() returns Void {
+    delete "old_archive.bin" from archive
+}
+
+let result: Void = purge()

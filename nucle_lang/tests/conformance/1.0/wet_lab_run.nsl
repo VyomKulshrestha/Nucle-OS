@@ -1,0 +1,58 @@
+// A full wet-lab run plan: synthesis and sequencing behind explicit
+// hardware confirmations, a closure whose effect ceiling is declared in its
+// type, and a generic polishing step whose `match` recovers at different
+// coverages per sequencing platform. The match's pool type joins at the
+// worse of the two error rates, so `recovered_main` is typed by the noise
+// both branches can actually guarantee.
+
+seq forward_primer: Sequence = "ATCGATCGGCTAGCTA"
+
+let reverse_primer = seq"GCTAGCTA-ATCGATCG"
+
+enum Platform {
+    ShortRead,
+    LongRead(Str),
+}
+
+pool order: DnaPool { codec: YinYang, redundancy: 3x, profile: Twist }
+
+pool vendor_b: DnaPool { codec: Ternary, redundancy: 3x, profile: IDT }
+
+/// Synthesis is a hardware effect; the closure type declares that ceiling,
+/// so the call inside is trusted to be confirmed.
+fn run_synthesis(job: Fn() -> Pool<Twist, 0.03%> confirm hardware) returns Pool<Twist, 0.03%> {
+    let strands: Pool<Twist, 0.03%> = job()
+}
+
+/// Generic over the read pool's profile. Long reads get deeper coverage.
+fn polish<P>(reads: Pool<P>, platform: Platform) returns Pool<Recovered> {
+    let out: Pool<Recovered> = match platform {
+        ShortRead => consensus_vote(reads, coverage: 10x),
+        LongRead(chemistry) => consensus_vote(reads, coverage: 30x),
+    }
+}
+
+fn full_run() returns Pool<Recovered> {
+    let synthesized: Pool<Twist, 0.03%> = run_synthesis(fn() -> Pool<Twist, 0.03%> {
+            let s: Pool<Twist, 0.03%> = synthesise order via Twist confirm hardware
+    })
+    let reads: Pool<Illumina, 0.35%> = sequence synthesized via Illumina confirm hardware
+    let recovered: Pool<Recovered> = polish(reads, Platform::ShortRead)
+}
+
+let recovered_main: Pool<Recovered> = full_run()
+
+let idt_strands: Pool<IDT, 0.05%> = synthesise vendor_b via IDT confirm hardware
+
+let idt_reads: Pool<Nanopore, 5%> = sequence idt_strands via Nanopore confirm hardware
+
+let idt_recovered: Pool<Recovered> = polish::<Nanopore>(idt_reads, Platform::LongRead("R10.4.1"))
+
+store "sample_e.txt" into order { redundancy: 3x, coverage: 12x, expect recovery > 99.5% }
+
+delete "sample_e.txt" from order confirm physical_key
+
+test "long-read polishing still leaves nanopore reads noisy before consensus" {
+    assert idt_reads > 1.0, "nanopore reads are noisy"
+    assert idt_recovered < idt_reads, "consensus must reduce the error rate"
+}
