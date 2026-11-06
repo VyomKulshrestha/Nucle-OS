@@ -42,7 +42,10 @@ jobs:
           # Apple-Silicon build, finished in under 2.5 minutes). An Intel
           # Mac user can still build nucle_lsp from source; only the
           # prebuilt-binary download fallback loses that one platform.
-          - os: macos-14
+          # GitHub retired the macos-14 image ("configuration
+          # 'macos-14-arm64-us-default' is not supported"); macos-latest is
+          # Apple Silicon too.
+          - os: macos-latest
             asset_name: nucle-lsp-macos-arm64
             binary_name: nucle-lsp
     runs-on: ${{ matrix.os }}

@@ -22,9 +22,14 @@ jobs:
           - os: windows-latest
             asset_name: nucle-cli-windows-x86_64.exe
             bin_path: target/release/nucle-cli.exe
+          # macos-latest is Apple Silicon, so the Intel binary is built for
+          # its target explicitly; Apple Silicon Macs run it under Rosetta.
+          # Built natively, this asset was an arm64 binary under an x86_64
+          # name that no Intel Mac could run.
           - os: macos-latest
             asset_name: nucle-cli-macos-x86_64
-            bin_path: target/release/nucle-cli
+            target: x86_64-apple-darwin
+            bin_path: target/x86_64-apple-darwin/release/nucle-cli
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -33,7 +38,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.1
-      - run: cargo build --release -p nucle-cli
+          targets: ${{ matrix.target }}
+      - run: cargo build --release -p nucle-cli ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
       - name: Stage binary
         shell: bash
         run: cp "${{ matrix.bin_path }}" "${{ matrix.asset_name }}"
