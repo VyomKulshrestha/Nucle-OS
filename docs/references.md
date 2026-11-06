@@ -1,6 +1,6 @@
 # References — Foundational Papers
 
-The NucleOS codec layer implements algorithms described in three landmark papers on DNA data storage. This document maps each paper to its corresponding implementation in the codebase.
+The NucleOS codec layer implements algorithms described in three landmark papers on DNA data storage. This document maps each paper to its corresponding implementation in the codebase. For the languages and systems NucleScript is compared with, see [related-work.md](related-work.md).
 
 ---
 

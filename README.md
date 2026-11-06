@@ -587,7 +587,11 @@ constraints before lowering operations to NucleOS VFS calls.
 The language is at version **1.0**, versioned apart from the 0.x Rust
 crates: every 1.x release accepts and runs what 1.0 does, and a frozen
 copy of the 1.0 example programs checks that in CI. What 1.x may still
-change is in [docs/stability.md](docs/stability.md).
+change is in [docs/stability.md](docs/stability.md). How it compares with
+the languages for designing DNA (Cello, Eugene, GSL), lab systems such as
+Puddle, and DNA-storage toolkits such as Chamaeleo and DNA-Storalator, what
+it adds and where it falls short, is in
+[docs/related-work.md](docs/related-work.md).
 
 ```nuclescript
 pool archive: DnaPool {
