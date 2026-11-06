@@ -288,10 +288,25 @@ pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConf
 
     let references: std::collections::HashSet<&DnaStrand> =
         data.iter().filter(|c| !c.reads.is_empty()).map(|c| &c.reference).collect();
-    let mut recovered: std::collections::HashSet<DnaStrand> = std::collections::HashSet::new();
     let multi = clusters.iter().filter(|c| c.len() >= 2).count();
-    let len = modal_reference_length(data);
-    for c in &clusters {
+    let len = modal_length(data.iter().map(|c| &c.reference));
+    let recovered = recovered_references(&reads, &clusters, &references, len);
+
+    BlindReport {
+        reads: reads.len(),
+        references: references.len(),
+        clusters: clusters.len(),
+        multi_read_clusters: multi,
+        purity: if reads.is_empty() { 0.0 } else { majority_hits as f64 / reads.len() as f64 },
+        recovered_exact: recovered,
+    }
+}
+
+/// How many distinct `references` some cluster's length-aware consensus
+/// reproduces exactly.
+fn recovered_references(reads: &[DnaStrand], clusters: &[Vec<usize>], references: &std::collections::HashSet<&DnaStrand>, len: usize) -> usize {
+    let mut recovered: std::collections::HashSet<DnaStrand> = std::collections::HashSet::new();
+    for c in clusters {
         // A single read is its own best guess (most clean short reads are
         // error-free); larger clusters vote, on at most
         // `MAX_CONSENSUS_READS` reads, since agreement saturates long
@@ -303,23 +318,103 @@ pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConf
             }
         }
     }
+    recovered.len()
+}
 
-    BlindReport {
+/// Seed with which `nucle reads` and NucleScript's `decode reads` shuffle
+/// the pooled reads before decoding them blind.
+pub const BLIND_SEED: u64 = 2021;
+
+/// The labelled score as published: each cluster's partial-order vote,
+/// median-polished to the reference length.
+pub fn evaluate_published(clusters: &[ReadCluster]) -> RealDataReport {
+    evaluate_with(clusters, |reads, len| crate::consensus::build_consensus_with_length(reads, len).map(|r| r.sequence))
+}
+
+/// Blind decoding as published: the merge threshold fitted to the pooled
+/// reads alone, then [`evaluate_blind`] with [`BLIND_SEED`].
+pub fn evaluate_blind_fitted(clusters: &[ReadCluster]) -> (crate::cluster::ClusterConfig, BlindReport) {
+    let pooled: Vec<DnaStrand> = clusters.iter().flat_map(|c| c.reads.iter().cloned()).collect();
+    let config = crate::cluster::ClusterConfig::fitted(&pooled);
+    let report = evaluate_blind(clusters, &config, BLIND_SEED);
+    (config, report)
+}
+
+/// Sequences from a FASTA file (`>` headers, sequences possibly wrapped
+/// over several lines), a FASTQ file (four-line `@` records) or plain text
+/// with one sequence per line. A sequence with anything but A/C/G/T (an
+/// `N` call, say) fails the parse, or with `skip_invalid` is counted and
+/// left out: the second value is how many were.
+pub fn parse_sequences(text: &str, skip_invalid: bool) -> Result<(Vec<DnaStrand>, usize), RealDataError> {
+    let lines: Vec<(usize, &str)> = text.lines().map(str::trim).enumerate().filter(|(_, l)| !l.is_empty()).map(|(i, l)| (i + 1, l)).collect();
+    let mut raw: Vec<(usize, String)> = Vec::new();
+    match lines.first().map(|(_, l)| l.chars().next()) {
+        // Record by record, since a quality line may itself start with '@'.
+        Some(Some('@')) => raw.extend(lines.chunks(4).filter_map(|record| record.get(1)).map(|&(n, l)| (n, l.to_string()))),
+        Some(Some('>')) => {
+            for &(n, line) in &lines {
+                if line.starts_with('>') {
+                    raw.push((n + 1, String::new()));
+                } else if let Some((_, sequence)) = raw.last_mut() {
+                    sequence.push_str(line);
+                }
+            }
+        }
+        _ => raw.extend(lines.iter().map(|&(n, l)| (n, l.to_string()))),
+    }
+    let mut sequences = Vec::with_capacity(raw.len());
+    let mut skipped = 0;
+    for (line, sequence) in raw {
+        match DnaStrand::from_str(&sequence) {
+            Ok(strand) => sequences.push(strand),
+            Err(_) if skip_invalid => skipped += 1,
+            Err(e) => return Err(RealDataError::BadBase { line, source: e }),
+        }
+    }
+    Ok((sequences, skipped))
+}
+
+/// Result of decoding reads that never had cluster labels, as they come
+/// off a sequencer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnlabelledReport {
+    pub reads: usize,
+    pub references: usize,
+    /// Clusters [`cluster_reads`](crate::cluster::cluster_reads) produced.
+    pub clusters: usize,
+    /// Clusters with at least two reads (enough to vote).
+    pub multi_read_clusters: usize,
+    /// Distinct references some cluster's consensus reproduced exactly.
+    pub recovered_exact: usize,
+}
+
+impl UnlabelledReport {
+    pub fn recovery_rate(&self) -> f64 {
+        if self.references == 0 { 0.0 } else { self.recovered_exact as f64 / self.references as f64 }
+    }
+}
+
+/// Cluster `reads` with no labels, take a length-aware consensus of each
+/// cluster, and count the `references` that come back exactly: the decode
+/// path of [`evaluate_blind`] for reads that never had labels to discard.
+pub fn evaluate_unlabelled(reads: &[DnaStrand], references: &[DnaStrand], config: &crate::cluster::ClusterConfig) -> UnlabelledReport {
+    let clusters = crate::cluster::cluster_reads(reads, config);
+    let wanted: std::collections::HashSet<&DnaStrand> = references.iter().collect();
+    UnlabelledReport {
         reads: reads.len(),
-        references: references.len(),
+        references: wanted.len(),
         clusters: clusters.len(),
-        multi_read_clusters: multi,
-        purity: if reads.is_empty() { 0.0 } else { majority_hits as f64 / reads.len() as f64 },
-        recovered_exact: recovered.len(),
+        multi_read_clusters: clusters.iter().filter(|c| c.len() >= 2).count(),
+        recovered_exact: recovered_references(reads, &clusters, &wanted, modal_length(references.iter())),
     }
 }
 
 /// The strand length a decoder would be configured with: the most common
 /// reference length.
-fn modal_reference_length(data: &[ReadCluster]) -> usize {
+fn modal_length<'a>(references: impl Iterator<Item = &'a DnaStrand>) -> usize {
     let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    for c in data {
-        *counts.entry(c.reference.len()).or_insert(0) += 1;
+    for reference in references {
+        *counts.entry(reference.len()).or_insert(0) += 1;
     }
     counts.into_iter().max_by_key(|&(len, n)| (n, len)).map(|(len, _)| len).unwrap_or(0)
 }
@@ -356,6 +451,30 @@ mod tests {
 
     fn s(x: &str) -> DnaStrand {
         DnaStrand::from_str(x).unwrap()
+    }
+
+    #[test]
+    fn sequences_parse_from_fasta_fastq_and_plain_lines() {
+        let fasta = ">a first\nACGT\nACGT\n>b\nTTGG\n";
+        assert_eq!(parse_sequences(fasta, false).unwrap(), (vec![s("ACGTACGT"), s("TTGG")], 0));
+        // A quality line that starts with '@' is still a quality line.
+        let fastq = "@r1\nACGTAC\n+\n@@@@@@\n@r2\nGGNTT\n+\nIIIII\n@r3\nCCCC\n+\nIIII\n";
+        assert_eq!(parse_sequences(fastq, true).unwrap(), (vec![s("ACGTAC"), s("CCCC")], 1));
+        assert!(matches!(parse_sequences(fastq, false), Err(RealDataError::BadBase { line: 6, .. })));
+        assert_eq!(parse_sequences("ACGT\n\nGGCC\n", false).unwrap().0, vec![s("ACGT"), s("GGCC")]);
+    }
+
+    #[test]
+    fn unlabelled_reads_recover_the_references_their_clusters_reproduce() {
+        let references = [s("ACGTACGTACGTACGTACGTACGTACGTAC"), s("TTGGCCAATTGGCCAATTGGCCAATTGGCC")];
+        let mut reads = vec![references[0].clone(); 4];
+        reads.extend(vec![references[1].clone(); 3]);
+        reads.push(s("ACGTACGTACGTACCTACGTACGTACGTAC"));
+        let report = evaluate_unlabelled(&reads, &references, &crate::cluster::ClusterConfig::default());
+        assert_eq!((report.reads, report.references, report.recovered_exact), (8, 2, 2));
+        assert_eq!(report.recovery_rate(), 1.0);
+        let absent = [s("GGGGGGGGGGCCCCCCCCCCAAAAAAAAAA")];
+        assert_eq!(evaluate_unlabelled(&reads, &absent, &crate::cluster::ClusterConfig::default()).recovered_exact, 0);
     }
 
     #[test]

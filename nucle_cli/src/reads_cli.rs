@@ -7,9 +7,7 @@
 //! `--blind`, again after discarding them and clustering the reads from
 //! scratch.
 
-use nucle_ecc::cluster::ClusterConfig;
-use nucle_ecc::consensus::build_consensus_with_length;
-use nucle_ecc::realdata::{evaluate_blind, evaluate_with, parse_cnr};
+use nucle_ecc::realdata::{evaluate_blind_fitted, evaluate_published, parse_cnr};
 
 pub fn cmd_reads(centers: &str, clusters: &str, limit: Option<usize>, blind: bool, json: bool) {
     let read = |path: &str| {
@@ -26,14 +24,14 @@ pub fn cmd_reads(centers: &str, clusters: &str, limit: Option<usize>, blind: boo
         data.truncate(n);
     }
 
-    let report = evaluate_with(&data, |reads, len| build_consensus_with_length(reads, len).map(|r| r.sequence));
+    // NucleScript's `decode reads` scores with the same two functions.
+    let report = evaluate_published(&data);
     // The merge threshold comes from the reads alone, like everything else
     // in the blind run.
-    let config = blind.then(|| {
-        let pooled: Vec<_> = data.iter().flat_map(|c| c.reads.iter().cloned()).collect();
-        ClusterConfig::fitted(&pooled)
-    });
-    let blind_report = config.as_ref().map(|config| evaluate_blind(&data, config, 2021));
+    let (config, blind_report) = match blind.then(|| evaluate_blind_fitted(&data)) {
+        Some((config, report)) => (Some(config), Some(report)),
+        None => (None, None),
+    };
 
     if json {
         let mut out = serde_json::json!({
