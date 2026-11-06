@@ -1,7 +1,7 @@
 # NucleScript for VS Code
 
 Syntax highlighting and a live language server for `.nsl` files —
-NucleScript, the declarative DNA-storage operations language for
+NucleScript 1.0, the declarative DNA-storage operations language for
 [NucleOS](https://github.com/VyomKulshrestha/Nucle-OS).
 
 **Repository & issues:** [github.com/VyomKulshrestha/Nucle-OS](https://github.com/VyomKulshrestha/Nucle-OS)
@@ -45,7 +45,15 @@ NucleScript, the declarative DNA-storage operations language for
 - **Generics** — `fn name<T>(...)` over `Pool<T>`'s profile, so the same
   function works for `Illumina`/`Nanopore`/`Twist`/`IDT` instead of needing one
   copy per profile. Highlighting, diagnostics, hover, formatting, and
-  `nucle doc` all render and check the type-parameter list correctly.
+  `nucle doc` all render and check the type-parameter list correctly. A
+  call that picks a concrete profile checks the body again with it, so a
+  Nanopore-only warning inside a generic function shows at the call that
+  passes a Nanopore pool.
+- **Decoding real reads** — `decode reads "Clusters.txt" against
+  "Centers.txt" { blind, expect recovery > 90% }` decodes reads from a real
+  sequencer and scores them against the synthesized strands, with the
+  numbers `nucle reads` reports, and Run File stops if recovery falls
+  short. Clustered reads, FASTQ and FASTA all work.
 - **Real package imports** — `import { archive_with_guarantee, medical_archive }
   from "nuclescript/presets"` brings the package's actual pools, recovery
   profiles and functions into the program, so Run File executes imported
@@ -94,8 +102,10 @@ NucleScript, the declarative DNA-storage operations language for
   being silently assumed `Pure`. No annotation means exactly the
   pre-existing behavior — purely additive, opt-in syntax reusing the same
   `confirm hardware`/`confirm physical_key` tokens already used
-  elsewhere. Diagnostics (`E-FN-EFFECT-ARG-MISMATCH`), hover, formatting,
-  and `nucle doc` all understand the new syntax.
+  elsewhere. Every kind of effect a closure has must fit the ceiling, so
+  one that both stores and deletes fits neither. Diagnostics
+  (`E-FN-EFFECT-ARG-MISMATCH`), hover, formatting, and `nucle doc` all
+  understand the new syntax.
 - **`Ok(...)`/`Err(...)` constructors, explicit `::<Illumina>()` type
   arguments, and real parameter values** — `Result` values can now be
   built directly (`Ok("ready")`, `Err(reason)`), composed with nested

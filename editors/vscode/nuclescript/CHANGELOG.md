@@ -4,6 +4,27 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.19]
+
+- NucleScript is at language version 1.0: every 1.x release accepts and
+  runs what 1.0 does (docs/stability.md in the NucleOS repository).
+- `decode reads "<reads>" against "<references>" { blind, limit: N,
+  expect recovery > P% }` is highlighted and runs: Run File decodes real
+  sequencing reads and scores them against the synthesized strands with
+  the same numbers `nucle reads` reports. `reads` is a keyword only right
+  after `decode`, so pools named `reads` keep their colour.
+- Diagnostics follow three fixes to the effect rules: a function that
+  deletes through a closure it binds itself is Destructive, a pipeline
+  that stores is Synthesis, and a closure that both stores and deletes no
+  longer fits either `confirm` ceiling.
+- A generic function or closure called with a concrete profile has its
+  body checked again with it, so a Nanopore-only warning shows at the
+  call that picks Nanopore.
+- Files saved with a UTF-8 byte-order mark open without a lex error at
+  1:1.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.64 runtime, which contains all of the above.
+
 ## [0.1.18]
 
 - Requires VS Code 1.91 or later: the language client moved to
