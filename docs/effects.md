@@ -27,7 +27,8 @@ Source: `nucle_lang/src/ast.rs`'s `Effect` enum; classification logic lives in
 - `store` is `Synthesis` unless written as `simulate store ...`, which is
   `Pure` (it never reaches real hardware). A `pipeline` with a `store into`
   step is `Synthesis` too: it stores for real.
-- `retrieve` is always `Pure`.
+- `retrieve` is always `Pure`, and so is `decode reads`, which reads two
+  local files of sequencing reads and references.
 - `delete` is always `Destructive` and requires `confirm physical_key`.
 - A **function's** effect is the *join* of every declaration in its body
   (`join_effects` in `effects.rs`): if any statement in the body is

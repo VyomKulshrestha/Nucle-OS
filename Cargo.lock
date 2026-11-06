@@ -1404,6 +1404,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "nucle_codec",
+ "nucle_ecc",
  "nucle_synth",
  "nucle_vfs",
  "serde",

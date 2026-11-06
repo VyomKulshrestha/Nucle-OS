@@ -209,6 +209,7 @@ Operation           ::= StoreOp
                       | RetrieveOp
                       | DeleteOp
                       | AssertOp
+                      | DecodeOp
 
 StoreOp             ::= 'store' ( StringLiteral | Identifier ) 'into' Identifier StoreOptions?
                       | 'simulate' 'store' ( StringLiteral | Identifier ) 'into' Identifier StoreOptions?
@@ -236,6 +237,14 @@ QueryValue          ::= StringLiteral
                       | NumberLiteral
 
 DeleteOp            ::= 'delete' ( StringLiteral | Identifier ) 'from' Identifier ( 'confirm' 'physical_key' )?
+
+// Runs at `nucle run`: decodes real sequencing reads and scores them
+// against the strands that were synthesized. See "Decoding real reads".
+DecodeOp            ::= 'decode' 'reads' StringLiteral 'against' StringLiteral DecodeOptions?
+DecodeOptions       ::= '{' DecodeOption ( ',' DecodeOption )* ','? '}'
+DecodeOption        ::= 'blind'
+                      | 'limit' ':' NumberLiteral
+                      | 'expect' 'recovery' '>' PercentLiteral
 
 // Evaluated at compile time with the same `Condition` grammar an `if`
 // uses (see the "Control Flow" section below) -- there is no runtime to
@@ -340,6 +349,42 @@ back a versioned write would also remove the versions before it.
 `retain` on a pool without `storage` is `E-RETAIN-WITHOUT-STORAGE`, a
 non-positive retention is `E-RETAIN-INVALID`, and a temperature below
 absolute zero is `E-STORAGE-TEMPERATURE` (a warning above 100 °C).
+
+### Decoding real reads (`decode reads`)
+
+```nsl
+decode reads "cnr/Clusters.txt" against "cnr/Centers.txt" {
+    blind,
+    expect recovery > 90%
+}
+```
+
+Everything else in a program runs against the simulator. `decode reads`
+takes reads that came off a real sequencer and decodes them: a consensus
+per strand, scored against the strands that were synthesized. Both paths
+are relative to the program's file. The reads can be:
+
+- clustered, in the layout of Microsoft's Clustered Nanopore Reads
+  dataset (each reference's reads in a block under a line of `=`, the
+  references one per line). Each cluster's partial-order vote is
+  median-polished to the reference length, and `blind` also pools and
+  shuffles every read, clusters them from scratch with a merge threshold
+  fitted to the reads, and decodes from those clusters;
+- unlabelled, as a sequencer writes them: FASTQ, FASTA, or one read per
+  line, against references in FASTA or one per line. These are always
+  decoded blind; reads with bases other than A/C/G/T are counted and left
+  out.
+
+The scores come from the same functions `nucle reads` uses
+(`nucle_ecc::realdata`), so a program and the CLI report the same numbers
+for the same files. `limit: N` scores the first N references. `expect
+recovery > P%` stops the run, as a failed `store` does, unless more than P%
+of the references come back exactly (counting the blind decode when there
+is one); a decode inside a function stops that function the same way. A
+percentage outside 0 to 100 is `E-DECODE-EXPECT-INVALID`. Reading two
+local files touches no hardware, so `decode reads` is `Pure`.
+[`docs/examples/real_reads.nsl`](examples/real_reads.nsl) decodes the
+MinION sample that ships with the tests.
 
 ---
 

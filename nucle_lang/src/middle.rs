@@ -126,6 +126,9 @@ pub fn lower_program(program: &Program) -> MirProgram {
             // `typeck::TypeChecker::check_assert`), not lowered to a VFS
             // call -- it has no runtime effect for `nucle run` to execute.
             Declaration::Operation(Operation::Assert(_)) => {}
+            // Runs at `nucle run` (`codegen::exec_decode_reads`) and asks
+            // nothing of the VFS.
+            Declaration::Operation(Operation::Decode(_)) => {}
             Declaration::Pipeline(pipeline) => {
                 if let Some(op) = lower_pipeline(pipeline, &pools) {
                     ops.push(op);

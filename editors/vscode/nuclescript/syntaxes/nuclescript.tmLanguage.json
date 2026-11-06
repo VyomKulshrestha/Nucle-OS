@@ -87,8 +87,16 @@
     "control-keywords": {
       "patterns": [
         {
+          "comment": "`reads` is a keyword only right after `decode`; elsewhere it is an ordinary name, often a pool of sequencing reads.",
+          "match": "\\b(decode)\\s+(reads)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.nuclescript" },
+            "2": { "name": "keyword.control.nuclescript" }
+          }
+        },
+        {
           "name": "keyword.control.nuclescript",
-          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|retain|storage|at|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test|match|enum)\\b"
+          "match": "\\b(import|from|as|pool|strand|seq|let|fn|returns|store|simulate|into|retrieve|where|contains|delete|assert|against|blind|limit|pipeline|encode|using|protect|with|redundancy|coverage|tag|tags|expect|recovery|retain|storage|at|verify|roundtrip|synthesise|synthesize|sequence|consensus_vote|under|via|for|if|else|in|test|match|enum)\\b"
         }
       ]
     },

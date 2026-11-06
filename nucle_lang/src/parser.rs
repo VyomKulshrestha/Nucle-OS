@@ -69,6 +69,9 @@ impl Parser {
         } else if self.check_ident("assert") {
             self.reject_doc_comment(&doc, "assert")?;
             self.parse_assert().map(|op| Declaration::Operation(Operation::Assert(op)))
+        } else if self.check_ident("decode") {
+            self.reject_doc_comment(&doc, "decode")?;
+            self.parse_decode().map(|op| Declaration::Operation(Operation::Decode(op)))
         } else if self.check_ident("pipeline") {
             self.parse_pipeline(doc).map(Declaration::Pipeline)
         } else if self.check_ident("if") {
@@ -83,7 +86,7 @@ impl Parser {
         } else if doc.is_some() {
             Err(self.error_here("expected a documentable declaration (pool, strand, seq, fn, enum, or pipeline) after a doc comment"))
         } else {
-            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, enum, store, retrieve, delete, assert, simulate, pipeline, if, for, or test"))
+            Err(self.error_here("expected declaration: import, pool, strand, seq, let, fn, enum, store, retrieve, delete, assert, decode, simulate, pipeline, if, for, or test"))
         }
     }
 
@@ -1004,6 +1007,46 @@ impl Parser {
         }
         self.expect(TokenKind::RBrace, "'}' after store options")?;
         Ok(options)
+    }
+
+    /// `decode` `reads` StringLiteral `against` StringLiteral
+    /// (`{` (`blind` | `limit` `:` Number | `expect` `recovery` `>` Percent),* `}`)?
+    fn parse_decode(&mut self) -> Result<DecodeReadsOp, ParseError> {
+        let start = self.start_span();
+        self.expect_ident_text("decode")?;
+        self.expect_ident_text("reads")?;
+        let reads = self.expect_string("reads file")?;
+        self.expect_ident_text("against")?;
+        let references = self.expect_string("references file")?;
+        let (mut blind, mut limit, mut expect_recovery_gt) = (false, None, None);
+        if self.check(TokenKind::LBrace) {
+            self.advance();
+            while !self.check(TokenKind::RBrace) {
+                if self.check_ident("expect") {
+                    self.advance();
+                    self.expect_ident_text("recovery")?;
+                    self.expect(TokenKind::Gt, "'>' after recovery")?;
+                    expect_recovery_gt = Some(self.expect_percent("recovery percentage")?);
+                } else if self.check_ident("blind") {
+                    self.advance();
+                    blind = true;
+                } else {
+                    let key = self.expect_ident_any("decode option")?;
+                    self.expect(TokenKind::Colon, "':' after decode option")?;
+                    match key.as_str() {
+                        "limit" => {
+                            let raw = self.expect_number("number of references")?;
+                            let n = raw.parse::<usize>().ok().filter(|&n| n > 0);
+                            limit = Some(n.ok_or_else(|| self.error_previous(format!("limit must be a whole number of references above 0, not '{}'", raw)))?);
+                        }
+                        other => return Err(self.error_previous(format!("unknown decode option '{}'; expected blind, limit or expect recovery", other))),
+                    }
+                }
+                self.consume_comma();
+            }
+            self.expect(TokenKind::RBrace, "'}' after decode options")?;
+        }
+        Ok(DecodeReadsOp { reads, references, blind, limit, expect_recovery_gt, span: self.span_since(start) })
     }
 
     fn parse_retrieve(&mut self) -> Result<RetrieveOp, ParseError> {

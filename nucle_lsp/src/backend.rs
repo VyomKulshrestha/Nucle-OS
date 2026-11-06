@@ -37,6 +37,10 @@ const KEYWORDS: &[&str] = &[
     "contains",
     "delete",
     "assert",
+    "decode",
+    "against",
+    "blind",
+    "limit",
     "pipeline",
     "encode",
     "using",
@@ -779,6 +783,15 @@ fn semantic_tokens(text: &str, symbols: &SymbolTable) -> Vec<SemanticToken> {
             {
                 TOKEN_KEYWORD
             }
+            // `reads` is a keyword only in `decode reads`; anywhere else it
+            // is an ordinary name, often a pool of sequencing reads.
+            TokenKind::Ident(name)
+                if name == "reads"
+                    && index > 0
+                    && matches!(&tokens[index - 1].kind, TokenKind::Ident(previous) if previous == "decode") =>
+            {
+                TOKEN_KEYWORD
+            }
             TokenKind::Ident(_)
                 if index > 0 && matches!(tokens[index - 1].kind, TokenKind::ColonColon) =>
             {
@@ -1137,6 +1150,19 @@ fn save(target: File) returns Result<DnaFile, Str> { store target into archive }
             .any(|token| token.token_type == TOKEN_FUNCTION));
         assert!(tokens.iter().any(|token| token.token_type == TOKEN_TYPE));
         assert!(tokens.iter().any(|token| token.token_type == TOKEN_STRING));
+    }
+
+    #[test]
+    fn reads_is_a_keyword_only_after_decode() {
+        let types = |source: &str| -> Vec<u32> {
+            let (_, symbols) = analysis_for(source);
+            semantic_tokens(source, &symbols).iter().map(|token| token.token_type).collect()
+        };
+        assert_eq!(
+            types("decode reads \"r.fastq\" against \"refs.fasta\""),
+            vec![TOKEN_KEYWORD, TOKEN_KEYWORD, TOKEN_STRING, TOKEN_KEYWORD, TOKEN_STRING]
+        );
+        assert_eq!(types("let reads: Str = \"x\"")[1], TOKEN_VARIABLE);
     }
 
     #[test]

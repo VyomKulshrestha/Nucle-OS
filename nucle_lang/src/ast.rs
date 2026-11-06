@@ -589,6 +589,7 @@ pub enum Operation {
     Retrieve(RetrieveOp),
     Delete(DeleteOp),
     Assert(AssertOp),
+    Decode(DecodeReadsOp),
 }
 
 impl Operation {
@@ -598,6 +599,7 @@ impl Operation {
             Operation::Retrieve(op) => op.span,
             Operation::Delete(op) => op.span,
             Operation::Assert(op) => op.span,
+            Operation::Decode(op) => op.span,
         }
     }
 }
@@ -611,6 +613,34 @@ impl Operation {
 /// `nucle check` surfaces an always-false assertion anywhere in a program
 /// as a real bug, and `nucle test` additionally groups the ones that fall
 /// within each test's span into that test's pass/fail result.
+/// `decode reads "<reads>" against "<references>" { blind, limit: N, expect
+/// recovery > P% }`: decodes real sequencing reads and scores what comes
+/// back against the strands that were written, the way `nucle reads` does.
+/// It runs when the program runs and only reads two local files, so it is
+/// Pure.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecodeReadsOp {
+    /// The reads: blocks under `=` lines, one per reference, as in the
+    /// Clustered Nanopore Reads dataset; or unlabelled FASTA, FASTQ, or one
+    /// read per line. Relative to the program's own directory.
+    pub reads: String,
+    /// The strands that were synthesized: FASTA or one per line.
+    pub references: String,
+    /// Also throw the reads' cluster labels away and decode from the reads
+    /// alone. Unlabelled reads are always decoded that way.
+    #[serde(default)]
+    pub blind: bool,
+    /// Score only the first N references.
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Stop the run unless more than this percentage of the references
+    /// comes back exactly (from the blind decode, when there is one).
+    #[serde(default)]
+    pub expect_recovery_gt: Option<f64>,
+    #[serde(default)]
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssertOp {
     pub condition: Expr,

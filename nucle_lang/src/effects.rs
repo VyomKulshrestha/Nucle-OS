@@ -232,6 +232,7 @@ pub fn operation_effect(operation: &Operation) -> Effect {
         Operation::Retrieve(_) => Effect::Pure,
         Operation::Delete(_) => Effect::Destructive,
         Operation::Assert(_) => Effect::Pure,
+        Operation::Decode(_) => Effect::Pure,
     }
 }
 
@@ -481,6 +482,14 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, closures: &Fu
                 confirmed: delete.confirmed,
             }
         }
+        Declaration::Operation(Operation::Decode(decode)) => DeclEffect {
+            name: decode.reads.clone(),
+            kind: "decode".into(),
+            effect: Effect::Pure,
+            effects: EffectSet::default(),
+            confirmation_required: false,
+            confirmed: true,
+        },
         Declaration::Operation(Operation::Assert(assert)) => DeclEffect {
             name: assert.message.clone().unwrap_or_else(|| "assert".into()),
             kind: "assert".into(),

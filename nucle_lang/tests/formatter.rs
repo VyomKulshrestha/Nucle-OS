@@ -116,6 +116,7 @@ fn zero_span(decl: &mut nucle_lang::Declaration) {
                 Retrieve(o) => o.span = zero,
                 Delete(o) => o.span = zero,
                 Assert(o) => o.span = zero,
+                Decode(o) => o.span = zero,
             }
         }
         Enum(d) => d.span = zero,

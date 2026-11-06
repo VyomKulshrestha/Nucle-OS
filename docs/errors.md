@@ -156,6 +156,14 @@ missing confirmation, or an unindexed query field is caught identically
 whether `store`/`delete`/`retrieve` appears as a bare statement or on the
 right-hand side of a `let`.
 
+## Decoding real reads
+
+| Code | Level | Meaning |
+|------|-------|---------|
+| `E-DECODE-EXPECT-INVALID` | error | `decode reads ... { expect recovery > P% }` asks for a percentage below 0 or of 100 or more, which no decode can exceed. |
+
+**Fix:** expect a recovery percentage from 0 up to, but not including, 100.
+
 ## Delete operations
 
 | Code | Level | Meaning |

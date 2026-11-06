@@ -318,6 +318,12 @@ impl TypeChecker {
                 self.check_assert(assert);
                 vec![declaration.clone()]
             }
+            Declaration::Operation(Operation::Decode(decode)) => {
+                if decode.expect_recovery_gt.is_some_and(|p| !(0.0..100.0).contains(&p)) {
+                    self.report.error(decode.span, "E-DECODE-EXPECT-INVALID", "decode reads can only expect recovery above a percentage from 0 up to, but not including, 100");
+                }
+                vec![declaration.clone()]
+            }
             Declaration::Pipeline(pipeline) => {
                 self.check_pipeline(pipeline);
                 vec![declaration.clone()]
@@ -2771,7 +2777,9 @@ fn substitute_declaration(decl: &Declaration, binding: &str, value: &str, litera
             body: d.body.iter().map(|inner| substitute_declaration(inner, binding, value, literal)).collect(),
             span: d.span,
         }),
-        Declaration::Import(_)
+        // Its two paths are string literals, never a loop variable.
+        Declaration::Operation(Operation::Decode(_))
+        | Declaration::Import(_)
         | Declaration::Pool(_)
         | Declaration::Strand(_)
         | Declaration::Sequence(_)

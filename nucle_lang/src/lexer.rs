@@ -68,7 +68,9 @@ pub struct Lexer<'a> {
 impl<'a> Lexer<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
-            chars: source.chars().collect(),
+            // Windows editors often save UTF-8 with a byte-order mark;
+            // it carries no meaning, so it is not a token.
+            chars: source.strip_prefix('\u{feff}').unwrap_or(source).chars().collect(),
             index: 0,
             line: 1,
             column: 1,
@@ -301,6 +303,13 @@ mod tests {
         let tokens = Lexer::new("redundancy: 3x, expect recovery > 99.5%").tokenize().unwrap();
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Number("3x".into())));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Number("99.5%".into())));
+    }
+
+    #[test]
+    fn a_leading_byte_order_mark_is_not_a_token() {
+        let tokens = Lexer::new("\u{feff}pool").tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Ident("pool".into()));
+        assert_eq!((tokens[0].line, tokens[0].column), (1, 1));
     }
 
     #[test]

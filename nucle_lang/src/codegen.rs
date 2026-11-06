@@ -299,6 +299,7 @@ pub fn execute_program(
                     execute_vfs_call(call, delete_confirmed, os, base_dir, &mut steps)?;
                 }
             }
+            Declaration::Operation(Operation::Decode(op)) => exec_decode_reads(op, base_dir, &mut steps)?,
             Declaration::Let(binding) if is_result_producing(&binding.expr, &funcs) => {
                 // Top-level `?` is impossible here: typeck rejects `?`
                 // outside a `Result`-returning function
@@ -1065,10 +1066,93 @@ fn exec_function_body(
             // call -- it has no runtime effect for this loop to execute,
             // the same reason `middle::lower_program` skips it too.
             Declaration::Operation(Operation::Assert(_)) => {}
+            Declaration::Operation(Operation::Decode(op)) => {
+                if let Err(msg) = exec_decode_reads(op, base_dir, steps) {
+                    return EvalOutcome::Err(msg);
+                }
+            }
             _ => {}
         }
     }
     last
+}
+
+/// `decode reads ... against ...`: loads the reads and references next to
+/// the program, decodes them with the functions `nucle reads` uses
+/// (`nucle_ecc::realdata::evaluate_published`/`evaluate_blind_fitted`, or
+/// `evaluate_unlabelled` for reads with no labels), logs the scores, and
+/// fails when `expect recovery > P%` is not met.
+fn exec_decode_reads(op: &DecodeReadsOp, base_dir: &Path, steps: &mut Vec<String>) -> Result<(), String> {
+    use nucle_ecc::cluster::ClusterConfig;
+    use nucle_ecc::realdata::{evaluate_blind_fitted, evaluate_published, evaluate_unlabelled, parse_cnr, parse_sequences};
+
+    let label = format!("decode reads {}", op.reads);
+    let read = |file: &str| {
+        let path = resolve_source_path(base_dir, file);
+        std::fs::read_to_string(&path).map_err(|err| format!("{}: failed to read '{}': {}", label, path.display(), err))
+    };
+    let (reads_text, references_text) = (read(&op.reads)?, read(&op.references)?);
+    let recovery = if reads_text.lines().any(|l| l.trim_start().starts_with('=')) {
+        let mut data = parse_cnr(&references_text, &reads_text).map_err(|e| format!("{}: {}", label, e))?;
+        if let Some(n) = op.limit {
+            data.truncate(n);
+        }
+        let labelled = evaluate_published(&data);
+        steps.push(format!(
+            "✓ {}: {} reads of {} references, {:.2}% raw error; consensus exact for {} ({:.2}%), {:.3}% error left",
+            label,
+            labelled.reads,
+            data.len(),
+            labelled.raw_read_error_rate * 100.0,
+            labelled.exact,
+            labelled.exact_rate() * 100.0,
+            labelled.consensus_error_rate() * 100.0
+        ));
+        if op.blind {
+            let (config, blind) = evaluate_blind_fitted(&data);
+            steps.push(format!(
+                "✓ {} with the labels discarded: {} clusters at a {:.3} merge threshold, {:.2}% pure; {} of {} references recovered ({:.2}%)",
+                label,
+                blind.clusters,
+                config.max_distance_fraction,
+                blind.purity * 100.0,
+                blind.recovered_exact,
+                blind.references,
+                blind.recovery_rate() * 100.0
+            ));
+            blind.recovery_rate()
+        } else {
+            labelled.exact_rate()
+        }
+    } else {
+        let (reads, skipped) = parse_sequences(&reads_text, true).map_err(|e| format!("{}: {}", label, e))?;
+        let (mut references, _) = parse_sequences(&references_text, false).map_err(|e| format!("{}: references: {}", label, e))?;
+        if let Some(n) = op.limit {
+            references.truncate(n);
+        }
+        let config = ClusterConfig::fitted(&reads);
+        let report = evaluate_unlabelled(&reads, &references, &config);
+        steps.push(format!(
+            "✓ {}: {} unlabelled reads ({} with other bases left out) in {} clusters at a {:.3} merge threshold; {} of {} references recovered ({:.2}%)",
+            label,
+            report.reads,
+            skipped,
+            report.clusters,
+            config.max_distance_fraction,
+            report.recovered_exact,
+            report.references,
+            report.recovery_rate() * 100.0
+        ));
+        report.recovery_rate()
+    };
+    match op.expect_recovery_gt {
+        Some(expected) if recovery * 100.0 <= expected => {
+            let msg = format!("{} recovered {:.2}% of its references, not more than the {}% expected", label, recovery * 100.0, expected);
+            steps.push(format!("✗ {}", msg));
+            Err(msg)
+        }
+        _ => Ok(()),
+    }
 }
 
 fn codec_to_vfs_kind(codec: Codec) -> CodecKind {

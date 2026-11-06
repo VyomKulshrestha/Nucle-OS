@@ -11,6 +11,7 @@ nucle run docs/examples/store.nsl
 |---|---|
 | `hero.nsl` | Compact end-to-end language showcase used by the root README: Yin-Yang pool, probabilistic recovery, pipeline store, and exact roundtrip verification |
 | `minimal.nsl` | Smallest runnable NucleScript program: pool, store, retrieve |
+| `real_reads.nsl` | `decode reads` on real Oxford Nanopore MinION reads, the sample of Microsoft's Clustered Nanopore Reads dataset that ships with the tests, with and without the cluster labels and a recovery requirement the run must meet |
 | `store.nsl` | Pool declaration plus store operation with tags and redundancy |
 | `retrieve_query.nsl` | Declarative retrieval query over stored metadata |
 | `simulate_store.nsl` | Simulated store with coverage and recovery expectation |

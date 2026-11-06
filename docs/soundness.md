@@ -114,7 +114,7 @@ declared `returns Void` returns nothing, whatever its last binding holds.
 the promises: no unconfirmed delete ran, no declaration exceeded its
 reported effect, and no fault was recorded. It runs two sets of programs:
 
-- every shipped example in `docs/examples` that compiles: 29 of the 30,
+- every shipped example in `docs/examples` that compiles: 30 of the 31,
   which ran 48 stores and deletes between them;
 - 300 programs generated from seeds 0 to 299 in CI, from a generator
   (`Gen` in the same file) that writes functions, closures held in `let`s,
