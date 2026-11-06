@@ -211,6 +211,10 @@ struct TypeChecker {
     /// `self.bindings`) purely so `infer_scrutinee_kind` has one map to
     /// check regardless of which kind of binding it is.
     enum_bindings: HashMap<String, String>,
+    /// The generic instantiations (`archive<P = Nanopore>`) whose bodies
+    /// are being checked, so a generic function that calls itself is not
+    /// instantiated forever; see `check_instantiation`.
+    instantiating: HashSet<String>,
     report: TypeReport,
 }
 
@@ -1521,25 +1525,8 @@ impl TypeChecker {
         // Capture: the closure's own checker starts as a full snapshot of
         // everything already in scope at this literal's own position --
         // params, `let` bindings of any shape, and other already-defined
-        // closures. This *is* capture (see `Expr::Closure`'s doc comment
-        // for why capture-by-snapshot is simply correct here); `pools`/
-        // `functions` are cloned the same way `check_function` already
-        // clones them for a top-level function with no outer scope.
-        let mut closure_checker = TypeChecker {
-            pools: self.pools.clone(),
-            functions: self.functions.clone(),
-            pool_bindings: self.pool_bindings.clone(),
-            bindings: self.bindings.clone(),
-            result_bindings: self.result_bindings.clone(),
-            strands: self.strands.clone(),
-            sequences: self.sequences.clone(),
-            closures: self.closures.clone(),
-            closure_decls: self.closure_decls.clone(),
-            fn_param_effects: self.fn_param_effects.clone(),
-            enums: self.enums.clone(),
-            enum_bindings: self.enum_bindings.clone(),
-            ..Default::default()
-        };
+        // closures.
+        let mut closure_checker = self.closure_body_checker();
         // Set from the CLOSURE's own return type, not inherited from the
         // outer scope's `self.enclosing_result_return` -- a `?` inside
         // this closure's body validates against this closure's own
@@ -1550,51 +1537,7 @@ impl TypeChecker {
         }
 
         for param in params {
-            match &param.ty {
-                TypeExpr::Pool(pool_type) => {
-                    closure_checker.pool_bindings.insert(
-                        param.name.clone(),
-                        ProbPoolType { state: pool_type.state.clone(), error_rate_percent: pool_type.error_rate_percent.unwrap_or(0.0) },
-                    );
-                }
-                TypeExpr::Sequence => {
-                    closure_checker.sequences.insert(param.name.clone(), span);
-                }
-                TypeExpr::Strand => {
-                    closure_checker.strands.insert(param.name.clone(), span);
-                }
-                TypeExpr::Fn(param_types, ret, effect) => {
-                    closure_checker.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**ret).clone()));
-                    if let Some(effect) = effect {
-                        closure_checker.fn_param_effects.insert(param.name.clone(), effect.to_effect());
-                    }
-                }
-                // A user-enum-typed parameter -- tracked
-                // separately from `bindings` (which only ever holds real
-                // `let` declarations) since a parameter has no `LetDecl`
-                // of its own. See `TypeChecker::enum_bindings`'s own doc
-                // comment.
-                TypeExpr::Enum(enum_name) => {
-                    closure_checker.enum_bindings.insert(param.name.clone(), enum_name.clone());
-                }
-                TypeExpr::Result(ok, err) => {
-                    closure_checker.result_bindings.insert(param.name.clone(), ((**ok).clone(), (**err).clone()));
-                    closure_checker.bindings.insert(param.name.clone(), LetDecl {
-                        name: param.name.clone(),
-                        annotation: param.ty.clone(),
-                        expr: Expr::Variable(param.name.clone()),
-                        span,
-                    });
-                }
-                _ => {
-                    closure_checker.bindings.insert(param.name.clone(), LetDecl {
-                        name: param.name.clone(),
-                        annotation: param.ty.clone(),
-                        expr: Expr::Variable(param.name.clone()),
-                        span,
-                    });
-                }
-            }
+            closure_checker.bind_param(param, span);
         }
 
         let mut desugared_body = Vec::new();
@@ -1720,6 +1663,11 @@ impl TypeChecker {
                     t, name
                 ));
                 return None;
+            }
+        }
+        if !type_params.is_empty() {
+            if let Some(closure) = self.closure_decls.get(name).cloned() {
+                self.check_instantiation(Self::closure_body_checker, name, &closure.params, &closure.return_type, &closure.body, &substitution, span);
             }
         }
         Some(substitute_pool_state(return_type, &substitution))
@@ -2071,6 +2019,9 @@ impl TypeChecker {
                         return None;
                     }
                 }
+                if !func.type_params.is_empty() {
+                    self.check_instantiation(Self::function_body_checker, name, &func.params, &func.return_type, &func.body, &substitution, span);
+                }
 
                 let return_type = substitute_pool_state(&func.return_type, &substitution);
                 match &return_type {
@@ -2188,6 +2139,162 @@ impl TypeChecker {
         Some(ProbPoolType::new(PoolState::Recovered, consensus_error_rate_percent(source_type.error_rate_percent, coverage)))
     }
 
+    /// Makes `param` visible to the body being checked, in the binding
+    /// table its type belongs to. `span` stands in for the parameter's
+    /// own, which `FnParam` does not carry: the enclosing function's or
+    /// closure's.
+    fn bind_param(&mut self, param: &FnParam, span: Span) {
+        match &param.ty {
+            TypeExpr::Pool(pool_type) => {
+                self.pool_bindings.insert(
+                    param.name.clone(),
+                    ProbPoolType {
+                        state: pool_type.state.clone(),
+                        error_rate_percent: pool_type.error_rate_percent.unwrap_or(0.0),
+                    },
+                );
+            }
+            TypeExpr::Sequence => {
+                self.sequences.insert(param.name.clone(), span);
+            }
+            TypeExpr::Strand => {
+                self.strands.insert(param.name.clone(), span);
+            }
+            // A `Fn(...)`-typed parameter -- what makes calling
+            // `func` "higher-order": whatever closure the caller
+            // passes becomes callable by this parameter's own name
+            // inside the body, resolved through `infer_expr`/
+            // `infer_result_expr`'s closures-first `FunctionCall`
+            // lookup exactly like a `let`-bound closure already is.
+            TypeExpr::Fn(param_types, return_type, effect) => {
+                self.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**return_type).clone()));
+                if let Some(effect) = effect {
+                    self.fn_param_effects.insert(param.name.clone(), effect.to_effect());
+                }
+            }
+            // A user-enum-typed parameter -- see
+            // `TypeChecker::enum_bindings`'s own doc comment.
+            TypeExpr::Enum(enum_name) => {
+                self.enum_bindings.insert(param.name.clone(), enum_name.clone());
+            }
+            TypeExpr::Result(ok, err) => {
+                self.result_bindings.insert(param.name.clone(), ((**ok).clone(), (**err).clone()));
+                self.bindings.insert(param.name.clone(), LetDecl {
+                    name: param.name.clone(),
+                    annotation: param.ty.clone(),
+                    expr: Expr::Variable(param.name.clone()),
+                    span,
+                });
+            }
+            _ => {
+                self.bindings.insert(param.name.clone(), LetDecl {
+                    name: param.name.clone(),
+                    annotation: param.ty.clone(),
+                    expr: Expr::Variable(param.name.clone()),
+                    span,
+                });
+            }
+        }
+    }
+
+    /// The checker a named function's body starts from: the program's
+    /// compile-time constants declared before it (simulated and recovered
+    /// pools, strands, sequences), but no top-level run-time values,
+    /// because each call starts from an empty run-time environment.
+    fn function_body_checker(&self) -> TypeChecker {
+        TypeChecker {
+            pools: self.pools.clone(),
+            pool_bindings: self.pool_bindings.clone(),
+            strands: self.strands.clone(),
+            sequences: self.sequences.clone(),
+            functions: self.functions.clone(),
+            enums: self.enums.clone(),
+            enum_bindings: self.enum_bindings.clone(),
+            instantiating: self.instantiating.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// The checker a closure's body starts from: a snapshot of everything
+    /// in scope where it is checked. That snapshot *is* capture (see
+    /// `Expr::Closure`'s doc comment for why capture-by-snapshot is
+    /// correct for this language).
+    fn closure_body_checker(&self) -> TypeChecker {
+        TypeChecker {
+            pools: self.pools.clone(),
+            functions: self.functions.clone(),
+            pool_bindings: self.pool_bindings.clone(),
+            bindings: self.bindings.clone(),
+            result_bindings: self.result_bindings.clone(),
+            strands: self.strands.clone(),
+            sequences: self.sequences.clone(),
+            closures: self.closures.clone(),
+            closure_decls: self.closure_decls.clone(),
+            fn_param_effects: self.fn_param_effects.clone(),
+            enums: self.enums.clone(),
+            enum_bindings: self.enum_bindings.clone(),
+            instantiating: self.instantiating.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// Reports the diagnostics a generic body raises only once its type
+    /// parameters are concrete, such as a Nanopore-only warning that
+    /// cannot fire against an abstract `P`. Checks `body` twice from the
+    /// same starting scope (`make_checker`), once as declared and once
+    /// with `substitution` applied to its parameters, and reports at the
+    /// call's `span` each diagnostic that only the concrete check raised.
+    /// Does nothing while a type parameter is still abstract (a call from
+    /// inside another generic body): that body's own instantiations reach
+    /// this one with concrete profiles.
+    #[allow(clippy::too_many_arguments)]
+    fn check_instantiation(
+        &mut self,
+        make_checker: fn(&TypeChecker) -> TypeChecker,
+        name: &str,
+        params: &[FnParam],
+        return_type: &TypeExpr,
+        body: &[Declaration],
+        substitution: &HashMap<String, PoolState>,
+        span: Span,
+    ) {
+        if substitution.is_empty() || substitution.values().any(|state| matches!(state, PoolState::Var(_))) {
+            return;
+        }
+        let mut bound: Vec<String> = substitution.iter().map(|(t, state)| format!("{} = {}", t, state)).collect();
+        bound.sort();
+        let instance = format!("{}<{}>", name, bound.join(", "));
+        if self.instantiating.contains(&instance) {
+            return;
+        }
+        let check = |this: &TypeChecker, params: &[FnParam]| -> Vec<Diagnostic> {
+            let mut checker = make_checker(this);
+            checker.instantiating.insert(instance.clone());
+            if let TypeExpr::Result(ok, err) = return_type {
+                checker.enclosing_result_return = Some(((**ok).clone(), (**err).clone()));
+            }
+            for param in params {
+                checker.bind_param(param, span);
+            }
+            for decl in body {
+                checker.check_declaration_single(decl);
+            }
+            checker.report.diagnostics
+        };
+        let generic = check(self, params);
+        let concrete_params: Vec<FnParam> = params.iter().map(|p| FnParam { name: p.name.clone(), ty: substitute_pool_state(&p.ty, substitution) }).collect();
+        for diagnostic in check(self, &concrete_params) {
+            if generic.iter().any(|g| g.code == diagnostic.code && g.span == diagnostic.span) {
+                continue;
+            }
+            self.report.diagnostics.push(Diagnostic {
+                message: format!("in {}, line {}: {}", instance, diagnostic.span.line, diagnostic.message),
+                span,
+                ..diagnostic
+            });
+        }
+    }
+
     fn check_function(&mut self, func: &FunctionDecl) -> FunctionDecl {
         if self.functions_predeclared {
             // A different span under this name is the duplicate already
@@ -2210,20 +2317,7 @@ impl TypeChecker {
             }
         }
 
-        // A function body sees the program's compile-time constants
-        // declared before it -- simulated and recovered pools, strands,
-        // sequences -- but not top-level run-time values, because each
-        // call starts from an empty run-time environment.
-        let mut body_checker = TypeChecker {
-            pools: self.pools.clone(),
-            pool_bindings: self.pool_bindings.clone(),
-            strands: self.strands.clone(),
-            sequences: self.sequences.clone(),
-            functions: self.functions.clone(),
-            enums: self.enums.clone(),
-            enum_bindings: self.enum_bindings.clone(),
-            ..Default::default()
-        };
+        let mut body_checker = self.function_body_checker();
         // Must be set before the body is checked below (not after): it's
         // what `check_try` (reached through `check_let`, reached through
         // `check_declaration_single`) reads to validate every `?` inside
@@ -2232,60 +2326,7 @@ impl TypeChecker {
             body_checker.enclosing_result_return = Some(((**ok).clone(), (**err).clone()));
         }
         for param in &func.params {
-            match &param.ty {
-                TypeExpr::Pool(pool_type) => {
-                    body_checker.pool_bindings.insert(
-                        param.name.clone(),
-                        ProbPoolType {
-                            state: pool_type.state.clone(),
-                            error_rate_percent: pool_type.error_rate_percent.unwrap_or(0.0),
-                        },
-                    );
-                }
-                TypeExpr::Sequence => {
-                    // A parameter has no declaration span of its own (`FnParam`
-                    // doesn't carry one) -- point at the enclosing function's
-                    // span as the closest available "where is this defined".
-                    body_checker.sequences.insert(param.name.clone(), func.span);
-                }
-                TypeExpr::Strand => {
-                    body_checker.strands.insert(param.name.clone(), func.span);
-                }
-                // A `Fn(...)`-typed parameter -- what makes calling
-                // `func` "higher-order": whatever closure the caller
-                // passes becomes callable by this parameter's own name
-                // inside the body, resolved through `infer_expr`/
-                // `infer_result_expr`'s closures-first `FunctionCall`
-                // lookup exactly like a `let`-bound closure already is.
-                TypeExpr::Fn(param_types, return_type, effect) => {
-                    body_checker.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**return_type).clone()));
-                    if let Some(effect) = effect {
-                        body_checker.fn_param_effects.insert(param.name.clone(), effect.to_effect());
-                    }
-                }
-                // A user-enum-typed parameter -- see
-                // `TypeChecker::enum_bindings`'s own doc comment.
-                TypeExpr::Enum(enum_name) => {
-                    body_checker.enum_bindings.insert(param.name.clone(), enum_name.clone());
-                }
-                TypeExpr::Result(ok, err) => {
-                    body_checker.result_bindings.insert(param.name.clone(), ((**ok).clone(), (**err).clone()));
-                    body_checker.bindings.insert(param.name.clone(), LetDecl {
-                        name: param.name.clone(),
-                        annotation: param.ty.clone(),
-                        expr: Expr::Variable(param.name.clone()),
-                        span: func.span,
-                    });
-                }
-                _ => {
-                    body_checker.bindings.insert(param.name.clone(), LetDecl {
-                        name: param.name.clone(),
-                        annotation: param.ty.clone(),
-                        expr: Expr::Variable(param.name.clone()),
-                        span: func.span,
-                    });
-                }
-            }
+            body_checker.bind_param(param, func.span);
         }
 
         let mut desugared_body = Vec::new();

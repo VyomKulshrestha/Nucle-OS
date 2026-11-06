@@ -229,11 +229,10 @@ navigation come from the language server below.
 
 ### Generics (`fn name<T>(...)`)
 
-Resolves entirely at type-check time, with no runtime representation and
-no per-instantiation re-checking of a function's body — neither classic
-monomorphization (generating a fresh copy of code per concrete type) nor
-dynamic dispatch, because this codebase's actual constraints make both
-unnecessary: `Profile` (`Illumina`/`Nanopore`/`Twist`/`IDT`) is a closed, flat
+Resolves entirely at type-check time, with no runtime representation —
+neither classic monomorphization (generating a fresh copy of code per
+concrete type) nor dynamic dispatch, because this codebase's actual
+constraints make both unnecessary: `Profile` (`Illumina`/`Nanopore`/`Twist`/`IDT`) is a closed, flat
 enum with no subtyping anywhere in the language, so variance never comes
 up, and effect classification (`effects.rs`) never inspects a pool's
 profile at all — every operation already behaves identically across all
@@ -251,10 +250,26 @@ resolve a return type that mentions the type parameter to the concrete
 type for that specific call. `codegen.rs`'s interpreter (the one added
 for `Result<T,E>`/`?` above) needs zero changes — it resolves a function
 call purely by name and executes whatever concrete `Value`s were passed,
-with no notion of "generic" at any point. See the "Generics" section of
-[docs/grammar.md](grammar.md) for the full semantics, including the one
-honest limitation (a handful of profile-specific typeck warnings can't
-fire while checking a generic body against an abstract type parameter).
+with no notion of "generic" at any point.
+
+Checking the body only against an abstract `P` left a gap: a diagnostic
+that depends on a concrete profile (`E-STORE-UNSATISFIABLE-RECOVERY`
+fires only for Nanopore) could never fire inside a generic body. So once
+a call's substitution binds every type parameter to a concrete state,
+`typeck::TypeChecker::check_instantiation` checks the body twice from the
+same starting scope, once with the parameters as declared and once with
+the substitution applied, and reports at the call each diagnostic the
+concrete run raised that the generic run did not at the same code and
+span. That is checking per instantiation, not code generation per
+instantiation: nothing is emitted, and the interpreter still sees one
+function. A call whose substitution is still abstract (from inside
+another generic body) is skipped, since that body's own instantiation
+reaches it with concrete profiles; `TypeChecker::instantiating` names
+the instances in progress so a recursive generic function stops after
+one. Both function and closure bodies go through the same parameter
+binding (`bind_param`) and starting scopes (`function_body_checker`,
+`closure_body_checker`) as their ordinary checks. See the "Generics"
+section of [docs/grammar.md](grammar.md) for the full semantics.
 
 **Explicit type-argument syntax, `name::<Illumina>(...)`**:
 seeds the call's substitution map from the explicit arguments (zipped

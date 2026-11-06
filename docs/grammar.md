@@ -523,11 +523,13 @@ let noisy_nanopore: Pool<Nanopore, 5%> = simulate nanopore_archive under Nanopor
 let recovered_b: Pool<Recovered> = recover_from(noisy_nanopore)
 ```
 
-`recover_from` is declared and type-checked **once**, treating `P` as an
-opaque, unresolved placeholder (`PoolState::Var("P")`) — not once per
-concrete profile, and not through any runtime mechanism (`P` never
-exists once type-checking finishes; the interpreter that runs
-`Result<T,E>`/`?`'s function calls has no notion of "generic" at all).
+`recover_from` is declared and type-checked once, treating `P` as an
+opaque, unresolved placeholder (`PoolState::Var("P")`), and not through
+any runtime mechanism (`P` never exists once type-checking finishes; the
+interpreter that runs `Result<T,E>`/`?`'s function calls has no notion of
+"generic" at all). A call that fixes every type parameter to a real
+profile also checks the body once more with them substituted (see the
+last bullet below).
 At each call site, `P` is **unified** against that call's real argument:
 the first `Pool<T>`-typed argument in a call binds `T`, and any later
 argument using the same `T` must agree or the call is rejected
@@ -562,16 +564,26 @@ and `recover_from(noisy_nanopore)` above both type-check as
   type system needs one — every operation a `Pool<T>`-typed value can be
   used for already works identically across all three profiles (effect
   classification never depends on profile at all).
-- **A real, honest limitation**: a handful of profile-*specific* typeck
-  warnings (e.g. `E-STORE-UNSATISFIABLE-RECOVERY`, which only fires for
-  `Nanopore`) can't fire while checking a generic body against an
-  abstract `P` — there's no concrete profile yet to check against. They
-  still fire correctly for the equivalent non-generic code, and would
-  still fire on a *non-generic* argument passed through a generic
-  parameter's own call-site checks to the extent those inspect the
-  argument's real type. This is the direct language-level analog of
-  `consensus_vote`/`protect`'s existing "type system honesty" precedent
-  (see [docs/stdlib.md](stdlib.md)) — a documented gap, not a silent one.
+- **Profile-specific checks run per instantiation.** Some diagnostics
+  depend on a concrete profile (`E-STORE-UNSATISFIABLE-RECOVERY` only
+  fires for `Nanopore`) and cannot fire against an abstract `P`. So a call
+  that fixes every type parameter to a real profile checks the body again
+  with those profiles substituted, and reports, at the call, each
+  diagnostic only that concrete check raises, prefixed with the instance
+  and the line in the body:
+
+  ```
+  warning [E-STORE-UNSATISFIABLE-RECOVERY]: in archive<P = Nanopore>, line 4: expect recovery > 99.5% is statistically unsatisfiable for Nanopore at 1x coverage
+  ```
+
+  The same body called with `Pool<Illumina>` raises nothing. A generic
+  function calling another passes its profile through (the message
+  nests: `in archive_twice<Q = Nanopore>, line 7: in archive<P =
+  Nanopore>, line 4: ...`), a generic closure is instantiated when its
+  enclosing generic function is, and a recursive generic function is
+  instantiated once per profile. A call from inside another generic
+  body, where the argument's profile is still abstract, is checked when
+  that body is instantiated.
 
 See [docs/errors.md](errors.md) for `E-TYPE-PARAM-CONFLICT`/`E-TYPE-PARAM-
 UNRESOLVED`/`E-TYPE-PARAM-ARITY`, and

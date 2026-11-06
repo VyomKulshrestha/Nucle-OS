@@ -1,13 +1,14 @@
 //! Generics over `Pool<T>`'s profile: `fn name<T>(params) returns T { body }`.
 //! Type-check-time-only -- resolved via call-site unification against the
-//! argument's real concrete state, with no runtime representation and no
-//! per-instantiation re-checking of the function body. See the "Generics"
-//! section of docs/grammar.md for the full semantics.
+//! argument's real concrete state, with no runtime representation. A call
+//! that fixes every type parameter re-checks the body with them concrete,
+//! so warnings that depend on a real profile still fire. See the
+//! "Generics" section of docs/grammar.md for the full semantics.
 
 use nucle_lang::ast::*;
 use nucle_lang::lexer::Lexer;
 use nucle_lang::parser::Parser;
-use nucle_lang::{check_source, format_source};
+use nucle_lang::{check_source, format_source, Diagnostic};
 
 fn parse(src: &str) -> Program {
     let tokens = Lexer::new(src).tokenize().unwrap_or_else(|e| panic!("lex error: {}", e));
@@ -284,4 +285,95 @@ if noisy > 0.1 {
 ";
     let formatted = format_source(src).unwrap_or_else(|e| panic!("failed to format: {}", e));
     assert!(formatted.contains("if noisy > 0.1 {"), "comparison lost its spacing, got:\n{}", formatted);
+}
+
+// ---------------------------------------------------------------------
+// Instantiation: profile-specific diagnostics inside a generic body
+// ---------------------------------------------------------------------
+
+/// A store that a Nanopore pool cannot satisfy at 1x coverage, written
+/// once against an abstract profile.
+const GENERIC_STORE: &str = "fn archive<P>(target: Pool<P>) returns Void {
+    store \"a.txt\" into target { coverage: 1x, expect recovery > 99.9% }
+}
+";
+
+fn diagnostics(src: &str) -> Vec<Diagnostic> {
+    check_source(src).diagnostics
+}
+
+#[test]
+fn a_profile_specific_warning_fires_where_a_generic_function_is_called_with_that_profile() {
+    let src = format!("{POOLS}{GENERIC_STORE}let stored: Void = archive(nanopore_archive)
+");
+    let found: Vec<Diagnostic> = diagnostics(&src).into_iter().filter(|d| d.code == "E-STORE-UNSATISFIABLE-RECOVERY").collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].span.line, 6, "reported at the call, where the profile is chosen");
+    assert!(found[0].message.starts_with("in archive<P = Nanopore>, line 4: "), "{}", found[0].message);
+}
+
+#[test]
+fn the_same_generic_body_is_quiet_for_a_profile_that_can_meet_it() {
+    let src = format!("{POOLS}{GENERIC_STORE}let stored: Void = archive(illumina_archive)
+");
+    assert!(!diagnostic_codes(&src).contains(&"E-STORE-UNSATISFIABLE-RECOVERY".to_string()));
+}
+
+#[test]
+fn an_explicit_type_argument_instantiates_the_body_too() {
+    let src = format!(
+        "{POOLS}fn archive_one<P>(target: Pool<P>) returns Void {{
+    store \"a.txt\" into target {{ coverage: 1x, expect recovery > 99.9% }}
+}}
+let noisy: Pool<Nanopore, 5%> = simulate nanopore_archive under Nanopore
+let stored: Void = archive_one::<Nanopore>(noisy)
+"
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-STORE-UNSATISFIABLE-RECOVERY".to_string()));
+}
+
+#[test]
+fn a_generic_function_calling_another_passes_its_profile_through() {
+    let src = format!(
+        "{POOLS}{GENERIC_STORE}fn archive_twice<Q>(target: Pool<Q>) returns Void {{
+    let first: Void = archive(target)
+}}
+let stored: Void = archive_twice(nanopore_archive)
+"
+    );
+    let found: Vec<Diagnostic> = diagnostics(&src).into_iter().filter(|d| d.code == "E-STORE-UNSATISFIABLE-RECOVERY").collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].message.starts_with("in archive_twice<Q = Nanopore>, line 7: in archive<P = Nanopore>, line 4: "), "{}", found[0].message);
+}
+
+#[test]
+fn a_recursive_generic_function_is_instantiated_once() {
+    let src = format!(
+        "{POOLS}fn again<P>(target: Pool<P>) returns Void {{
+    store \"a.txt\" into target {{ coverage: 1x, expect recovery > 99.9% }}
+    let next: Void = again(target)
+}}
+let stored: Void = again(nanopore_archive)
+"
+    );
+    let found = diagnostics(&src).into_iter().filter(|d| d.code == "E-STORE-UNSATISFIABLE-RECOVERY").count();
+    assert_eq!(found, 1);
+}
+
+#[test]
+fn a_generic_closure_is_instantiated_when_its_enclosing_function_is() {
+    let src = format!(
+        "{POOLS}fn archive_via<P>(source: Pool<P>) returns Void {{
+    let archive_any: Fn(Pool<P>) -> Void = fn<P>(target: Pool<P>) -> Void {{
+        store \"a.txt\" into target {{ coverage: 1x, expect recovery > 99.9% }}
+    }}
+    let stored: Void = archive_any(source)
+}}
+let stored: Void = archive_via(nanopore_archive)
+let quiet: Void = archive_via(illumina_archive)
+"
+    );
+    let found: Vec<Diagnostic> = diagnostics(&src).into_iter().filter(|d| d.code == "E-STORE-UNSATISFIABLE-RECOVERY").collect();
+    assert_eq!(found.len(), 1, "{:?}", diagnostics(&src));
+    assert!(found[0].message.starts_with("in archive_via<P = Nanopore>, line 7: in archive_any<P = Nanopore>, line 5: "), "{}", found[0].message);
 }
