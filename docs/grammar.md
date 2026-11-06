@@ -921,6 +921,11 @@ fn run_cleanup() returns Void {
   scope (an inner closure calling an annotated outer parameter) and a
   parameter forwarded straight through as another function's compatibly
   annotated parameter, with no special-casing for either.
+- **Every effect has to fit, not just the worst.** A closure that
+  stores and deletes needs both `confirm hardware` and `confirm
+  physical_key`, so it fits neither ceiling, and the check sees through
+  the functions a closure calls, including the closures those functions
+  bind themselves.
 - **Still a ceiling, not full hardware-request precision** — `Synthesis`
   and `Sequencing` are deliberately not distinguished at the annotation
   level (the language's own `confirm hardware` doesn't distinguish them

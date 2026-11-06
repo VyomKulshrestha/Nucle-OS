@@ -1,6 +1,6 @@
 //! Effect classification and confirmation checks for NucleScript.
 
-use crate::ast::{DeleteOp, Declaration, Effect, Expr, FnEffectAnnotation, FnParam, FunctionDecl, Operation, Program, TypeExpr};
+use crate::ast::{DeleteOp, Declaration, Effect, Expr, FnEffectAnnotation, FnParam, FunctionDecl, LetDecl, Operation, PipelineStep, Program, TypeExpr};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -14,6 +14,72 @@ pub type FunctionTable = HashMap<String, FunctionDecl>;
 /// threaded through every nested call in one top-level resolution — never
 /// a fresh one per call, or the cycle guard can't see the call in progress.
 pub type ResolvingSet = HashSet<String>;
+
+/// Every kind of effect a piece of code may have, each tracked on its own.
+/// `Effect` orders them (`Destructive > Synthesis > Sequencing > Pure`)
+/// and keeps only the worst, which is all confirmation needs, since each
+/// operation carries its own. An effect ceiling needs every kind: a
+/// closure that stores and deletes needs both `confirm hardware` and
+/// `confirm physical_key`, so neither ceiling alone covers it, though its
+/// worst effect alone would fit `confirm physical_key`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EffectSet {
+    synthesis: bool,
+    sequencing: bool,
+    destructive: bool,
+}
+
+impl EffectSet {
+    pub fn of(effect: Effect) -> Self {
+        EffectSet {
+            synthesis: effect == Effect::Synthesis,
+            sequencing: effect == Effect::Sequencing,
+            destructive: effect == Effect::Destructive,
+        }
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        EffectSet {
+            synthesis: self.synthesis || other.synthesis,
+            sequencing: self.sequencing || other.sequencing,
+            destructive: self.destructive || other.destructive,
+        }
+    }
+
+    /// The worst effect in the set, as `join_effects` orders them.
+    pub fn worst(self) -> Effect {
+        if self.destructive {
+            Effect::Destructive
+        } else if self.synthesis {
+            Effect::Synthesis
+        } else if self.sequencing {
+            Effect::Sequencing
+        } else {
+            Effect::Pure
+        }
+    }
+
+    /// Whether every effect in the set falls within `ceiling`.
+    pub fn within(self, ceiling: FnEffectAnnotation) -> bool {
+        [(self.synthesis, Effect::Synthesis), (self.sequencing, Effect::Sequencing), (self.destructive, Effect::Destructive)]
+            .into_iter()
+            .all(|(present, effect)| !present || effect_satisfies_annotation(effect, ceiling))
+    }
+}
+
+impl std::fmt::Display for EffectSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kinds: Vec<&str> = [(self.sequencing, "Sequencing"), (self.synthesis, "Synthesis"), (self.destructive, "Destructive")]
+            .into_iter()
+            .filter_map(|(present, name)| present.then_some(name))
+            .collect();
+        if kinds.is_empty() {
+            write!(f, "Pure")
+        } else {
+            write!(f, "{}", kinds.join(" and "))
+        }
+    }
+}
 
 /// Every function a program can call: the built-ins
 /// (`stdlib::builtin_functions`) plus whatever `fn` declarations the
@@ -42,48 +108,51 @@ pub fn function_table(program: &Program) -> FunctionTable {
 /// to `function_call_effect`'s "can't resolve" fallback -- no worse than
 /// the pre-existing behavior for any other unresolvable name, just an
 /// explicit, still-accepted opt-in boundary now rather than the only
-/// option. `effect_summary`'s own top-level pass (used by `nucle
-/// explain`) always passes empty tables here: it has no per-scope
-/// tracking of its own, and correctness matters more than completeness
-/// -- see `decl_effect_info`'s `Declaration::Let` arm.
+/// option. `effect_summary` (used by `nucle explain`) and `body_effect`
+/// build `closures` up as they walk, so a call to a closure bound earlier
+/// in the same block resolves to its body (see `block_effect`).
 pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> Effect {
+    expr_effects(expr, funcs, closures, fn_param_effects, resolving).worst()
+}
+
+/// Every kind of effect `expr` may have; see [`EffectSet`].
+pub fn expr_effects(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> EffectSet {
     match expr {
-        Expr::SimulatePool { .. } => Effect::Pure,
-        Expr::SynthesizePool { .. } => Effect::Synthesis,
-        Expr::SequencePool { .. } => Effect::Sequencing,
-        Expr::FunctionCall { name, args, .. } => join_effects(
-            function_call_effect(name, funcs, closures, fn_param_effects, resolving).0,
-            closure_args_effect(name, args, funcs, closures, fn_param_effects, resolving),
-        ),
-        Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => Effect::Pure,
+        Expr::SimulatePool { .. } => EffectSet::default(),
+        Expr::SynthesizePool { .. } => EffectSet::of(Effect::Synthesis),
+        Expr::SequencePool { .. } => EffectSet::of(Effect::Sequencing),
+        Expr::FunctionCall { name, args, .. } => function_call_effects(name, funcs, closures, fn_param_effects, resolving)
+            .0
+            .union(closure_args_effect(name, args, funcs, closures, fn_param_effects, resolving)),
+        Expr::Variable(_) | Expr::StringLiteral(_) | Expr::Number(_) => EffectSet::default(),
         // Defining a closure is always inert -- nothing runs until it's
         // called. The call site (`Expr::FunctionCall` above) is where its
         // real effect gets resolved, via `closures`.
-        Expr::Closure { .. } => Effect::Pure,
+        Expr::Closure { .. } => EffectSet::default(),
         Expr::BinaryOp { left, right, .. } => {
-            join_effects(expr_effect(left, funcs, closures, fn_param_effects, resolving), expr_effect(right, funcs, closures, fn_param_effects, resolving))
+            expr_effects(left, funcs, closures, fn_param_effects, resolving).union(expr_effects(right, funcs, closures, fn_param_effects, resolving))
         }
-        Expr::Not(inner) => expr_effect(inner, funcs, closures, fn_param_effects, resolving),
+        Expr::Not(inner) => expr_effects(inner, funcs, closures, fn_param_effects, resolving),
         // Wrapping something in `?` never changes its effect classification
         // -- `?` is purely a control-flow/unwrap operator, not an operation
         // in its own right, so this forwards to the inner expression.
-        Expr::Try(inner) => expr_effect(inner, funcs, closures, fn_param_effects, resolving),
+        Expr::Try(inner) => expr_effects(inner, funcs, closures, fn_param_effects, resolving),
         // Constructing a Result is inert on its own -- same reasoning as
         // `Try`'s forwarding arm; only what's already inside could have
         // an effect.
-        Expr::Ok(inner) => expr_effect(inner, funcs, closures, fn_param_effects, resolving),
-        Expr::Err(inner) => expr_effect(inner, funcs, closures, fn_param_effects, resolving),
+        Expr::Ok(inner) => expr_effects(inner, funcs, closures, fn_param_effects, resolving),
+        Expr::Err(inner) => expr_effects(inner, funcs, closures, fn_param_effects, resolving),
         // Constructing a user enum instance is inert the same
         // way -- only its payload (if any) could have an effect.
-        Expr::EnumConstruct { payload, .. } => payload.as_deref().map_or(Effect::Pure, |inner| expr_effect(inner, funcs, closures, fn_param_effects, resolving)),
+        Expr::EnumConstruct { payload, .. } => payload.as_deref().map_or(EffectSet::default(), |inner| expr_effects(inner, funcs, closures, fn_param_effects, resolving)),
         // The expression-position and statement-position forms of these
         // operations share the identical `StoreOp`/`RetrieveOp`/`DeleteOp`
         // payload, so they get the identical effect via the same
         // `operation_effect` the statement form already uses -- one
         // resolution path, not two.
-        Expr::StoreExpr(op) => operation_effect(&Operation::Store(op.clone())),
-        Expr::RetrieveExpr(op) => operation_effect(&Operation::Retrieve(op.clone())),
-        Expr::DeleteExpr(op) => operation_effect(&Operation::Delete(op.clone())),
+        Expr::StoreExpr(op) => EffectSet::of(operation_effect(&Operation::Store(op.clone()))),
+        Expr::RetrieveExpr(op) => EffectSet::of(operation_effect(&Operation::Retrieve(op.clone()))),
+        Expr::DeleteExpr(op) => EffectSet::of(operation_effect(&Operation::Delete(op.clone()))),
         // Joins the scrutinee and every arm's body unconditionally
         // (generalized from a fixed two-arm join to N arms), mirroring
         // `Declaration::If`'s existing branch-join: this
@@ -92,7 +161,7 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable,
         // operation in any one arm still requires confirmation.
         Expr::Match { scrutinee, arms } => arms
             .iter()
-            .fold(expr_effect(scrutinee, funcs, closures, fn_param_effects, resolving), |acc, arm| join_effects(acc, expr_effect(&arm.body, funcs, closures, fn_param_effects, resolving))),
+            .fold(expr_effects(scrutinee, funcs, closures, fn_param_effects, resolving), |acc, arm| acc.union(expr_effects(&arm.body, funcs, closures, fn_param_effects, resolving))),
     }
 }
 
@@ -106,20 +175,20 @@ pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable,
 /// callee's body already counts their declared ceiling. Joined whether or
 /// not the callee calls the parameter on every path, the same
 /// over-approximation an untaken `if` branch gets.
-fn closure_args_effect(name: &str, args: &[Expr], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> Effect {
+fn closure_args_effect(name: &str, args: &[Expr], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> EffectSet {
     let Some(callee) = funcs.get(name).or_else(|| closures.get(name)) else {
-        return Effect::Pure;
+        return EffectSet::default();
     };
-    callee.params.iter().zip(args).fold(Effect::Pure, |acc, (param, arg)| {
+    callee.params.iter().zip(args).fold(EffectSet::default(), |acc, (param, arg)| {
         if !matches!(param.ty, TypeExpr::Fn(_, _, None)) {
             return acc;
         }
         let effect = match arg {
-            Expr::Closure { params, body, .. } => body_effect(body, funcs, &scoped_fn_param_effects(params, fn_param_effects), resolving).0,
-            Expr::Variable(bound) => function_call_effect(bound, funcs, closures, fn_param_effects, resolving).0,
-            _ => Effect::Pure,
+            Expr::Closure { params, body, .. } => body_effects(body, funcs, closures, &scoped_fn_param_effects(params, fn_param_effects), resolving).0,
+            Expr::Variable(bound) => function_call_effects(bound, funcs, closures, fn_param_effects, resolving).0,
+            _ => EffectSet::default(),
         };
-        join_effects(acc, effect)
+        acc.union(effect)
     })
 }
 
@@ -210,7 +279,11 @@ pub fn delete_has_required_confirmation(delete: &DeleteOp) -> bool {
 pub struct DeclEffect {
     pub name: String,
     pub kind: String,
+    /// The worst of `effects`.
     pub effect: Effect,
+    /// Every kind of effect the declaration may have.
+    #[serde(skip)]
+    pub effects: EffectSet,
     pub confirmation_required: bool,
     pub confirmed: bool,
 }
@@ -245,6 +318,12 @@ pub fn join_effects(a: Effect, b: Effect) -> Effect {
 /// the identical way a real call to it already would, when validating a
 /// concrete closure bound into an effect-annotated `Fn(...)`-typed slot.
 pub fn function_call_effect(name: &str, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (Effect, bool) {
+    let (effects, confirmed) = function_call_effects(name, funcs, closures, fn_param_effects, resolving);
+    (effects.worst(), confirmed)
+}
+
+/// `function_call_effect` with every kind of effect kept; see [`EffectSet`].
+pub fn function_call_effects(name: &str, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (EffectSet, bool) {
     // Global functions take priority (matches typeck's own closures-
     // *before*-global lookup order for resolving *what* gets called --
     // but here it doesn't actually matter which table wins first, since
@@ -262,15 +341,15 @@ pub fn function_call_effect(name: &str, funcs: &FunctionTable, closures: &Functi
         // in" case, not the only option -- see `expr_effect`'s doc
         // comment.
         return match fn_param_effects.get(name) {
-            Some(&effect) => (effect, true),
-            None => (Effect::Pure, true),
+            Some(&effect) => (EffectSet::of(effect), true),
+            None => (EffectSet::default(), true),
         };
     };
     if !resolving.insert(name.to_string()) {
-        return (Effect::Pure, true);
+        return (EffectSet::default(), true);
     }
     let scoped = scoped_fn_param_effects(&func.params, fn_param_effects);
-    let (joint_effect, confirmed) = body_effect(&func.body, funcs, &scoped, resolving);
+    let (joint_effect, confirmed) = body_effects(&func.body, funcs, closures, &scoped, resolving);
     resolving.remove(name);
     (joint_effect, confirmed)
 }
@@ -282,30 +361,62 @@ pub fn function_call_effect(name: &str, funcs: &FunctionTable, closures: &Functi
 /// effect-computed the identical way, from `typeck::TypeChecker::
 /// check_fn_effect_compatibility` -- the one place this analysis needs
 /// to inspect a concrete closure's real effect without first resolving
-/// it by name. No `closures` parameter -- `decl_effect_info`'s own
-/// `Declaration::Let` arm always resolves a nested closure call with an
-/// empty table regardless (a real, pre-existing, separate limitation of
-/// this reporting path, not something this function could change even
-/// if it had one to pass through).
-pub fn body_effect(body: &[Declaration], funcs: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (Effect, bool) {
-    let mut joint_effect = Effect::Pure;
-    let mut confirmed = true;
-    for inner in body {
-        let info = decl_effect_info(inner, funcs, fn_param_effects, resolving);
-        joint_effect = join_effects(joint_effect, info.effect);
-        if info.confirmation_required && !info.confirmed {
-            confirmed = false;
-        }
-    }
-    (joint_effect, confirmed)
+/// it by name. `closures` are the closures in scope where the body is
+/// written; ones the body binds itself are added as the walk reaches them.
+pub fn body_effect(body: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (Effect, bool) {
+    let (effects, confirmed) = body_effects(body, funcs, closures, fn_param_effects, resolving);
+    (effects.worst(), confirmed)
 }
 
-pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> DeclEffect {
+/// `body_effect` with every kind of effect kept; see [`EffectSet`].
+pub fn body_effects(body: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (EffectSet, bool) {
+    let (effects, _, confirmed) = block_effect(body, funcs, closures, fn_param_effects, resolving);
+    (effects, confirmed)
+}
+
+/// Joins every declaration in `block` in the order it runs, adding each
+/// closure a `let` binds to the scope of the declarations after it, so a
+/// later call to that closure resolves to its body instead of to nothing.
+/// Returns the joined effect, whether anything in it needs confirmation,
+/// and whether everything that does has it.
+fn block_effect(block: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (EffectSet, bool, bool) {
+    let mut scope = closures.clone();
+    let (mut effect, mut required, mut confirmed) = (EffectSet::default(), false, true);
+    for decl in block {
+        let info = decl_effect_info(decl, funcs, &scope, fn_param_effects, resolving);
+        effect = effect.union(info.effects);
+        if info.confirmation_required {
+            required = true;
+            confirmed &= info.confirmed;
+        }
+        bind_closure(&mut scope, decl);
+    }
+    (effect, required, confirmed)
+}
+
+/// Adds the closure `decl` binds, if it binds one, to `scope`.
+pub fn bind_closure(scope: &mut FunctionTable, decl: &Declaration) {
+    if let Declaration::Let(LetDecl { name, expr: Expr::Closure { type_params, params, return_type, body, span }, .. }) = decl {
+        scope.insert(name.clone(), FunctionDecl {
+            name: name.clone(),
+            type_params: type_params.clone(),
+            params: params.clone(),
+            return_type: return_type.clone(),
+            body: body.clone(),
+            span: *span,
+            doc: None,
+        });
+    }
+}
+
+/// `closures` are the `let`-bound closures in scope at `decl`.
+pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> DeclEffect {
     match decl {
         Declaration::Pool(pool) => DeclEffect {
             name: pool.name.clone(),
             kind: "pool".into(),
             effect: Effect::Pure,
+            effects: EffectSet::of(Effect::Pure),
             confirmation_required: false,
             confirmed: true,
         },
@@ -313,6 +424,7 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
             name: strand.name.clone(),
             kind: "strand".into(),
             effect: Effect::Pure,
+            effects: EffectSet::of(Effect::Pure),
             confirmation_required: false,
             confirmed: true,
         },
@@ -320,31 +432,20 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
             name: seq.name.clone(),
             kind: "sequence".into(),
             effect: Effect::Pure,
+            effects: EffectSet::of(Effect::Pure),
             confirmation_required: false,
             confirmed: true,
         },
         Declaration::Let(binding) => {
-            // `closures` itself is still hardcoded empty here (unlike
-            // `typeck::TypeChecker::check_let`, which passes its real,
-            // current `self.closure_decls`) -- a call to a `let`-bound
-            // closure declared *inside* this same body is still treated
-            // as inert by this pass alone, a real, separate, pre-existing
-            // limitation of `nucle explain`'s reporting-only walk, not
-            // something this change fixes. `fn_param_effects`, by
-            // contrast, *is* the real one passed in -- it's what makes a
-            // call to an effect-annotated `Fn(...)`-typed parameter
-            // resolve correctly even through this path (see
-            // `function_call_effect`'s own `scoped_fn_param_effects`
-            // call, which is what populates it correctly for whichever
-            // callable's body is currently being walked).
-            let empty_closures = FunctionTable::new();
-            let eff = expr_effect(&binding.expr, funcs, &empty_closures, fn_param_effects, resolving);
+            let effects = expr_effects(&binding.expr, funcs, closures, fn_param_effects, resolving);
+            let eff = effects.worst();
             let req = eff == Effect::Synthesis || eff == Effect::Sequencing || eff == Effect::Destructive;
-            let conf = expr_has_required_confirmation(&binding.expr, funcs, &empty_closures, fn_param_effects, resolving);
+            let conf = expr_has_required_confirmation(&binding.expr, funcs, closures, fn_param_effects, resolving);
             DeclEffect {
                 name: binding.name.clone(),
                 kind: "let".into(),
                 effect: eff,
+                effects,
                 confirmation_required: req,
                 confirmed: conf,
             }
@@ -356,6 +457,7 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
                 name: store.file.clone(),
                 kind: "store".into(),
                 effect: eff,
+                effects: EffectSet::of(eff),
                 confirmation_required: req,
                 confirmed: true,
             }
@@ -364,6 +466,7 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
             name: retrieve.pool.clone(),
             kind: "retrieve".into(),
             effect: Effect::Pure,
+            effects: EffectSet::of(Effect::Pure),
             confirmation_required: false,
             confirmed: true,
         },
@@ -373,6 +476,7 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
                 name: delete.file.clone(),
                 kind: "delete".into(),
                 effect: eff,
+                effects: EffectSet::of(eff),
                 confirmation_required: true,
                 confirmed: delete.confirmed,
             }
@@ -381,22 +485,31 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
             name: assert.message.clone().unwrap_or_else(|| "assert".into()),
             kind: "assert".into(),
             effect: Effect::Pure,
+            effects: EffectSet::of(Effect::Pure),
             confirmation_required: false,
             confirmed: true,
         },
-        Declaration::Pipeline(pipeline) => DeclEffect {
-            name: pipeline.name.clone(),
-            kind: "pipeline".into(),
-            effect: Effect::Pure,
-            confirmation_required: false,
-            confirmed: true,
-        },
+        // A pipeline with a `store into` step writes for real
+        // (`middle::lower_pipeline` never simulates one): the same
+        // Synthesis, needing the same no confirmation, as a `store`.
+        Declaration::Pipeline(pipeline) => {
+            let stores = pipeline.steps.iter().any(|step| matches!(step, PipelineStep::Store { .. }));
+            DeclEffect {
+                name: pipeline.name.clone(),
+                kind: "pipeline".into(),
+                effect: if stores { Effect::Synthesis } else { Effect::Pure },
+                effects: EffectSet::of(if stores { Effect::Synthesis } else { Effect::Pure }),
+                confirmation_required: stores,
+                confirmed: true,
+            }
+        }
         Declaration::Function(func) => {
             if !resolving.insert(func.name.clone()) {
                 return DeclEffect {
                     name: func.name.clone(),
                     kind: "function".into(),
                     effect: Effect::Destructive,
+                    effects: EffectSet::of(Effect::Destructive),
                     confirmation_required: true,
                     confirmed: false,
                 };
@@ -420,13 +533,15 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
             // parameter's call just as accurately as the real
             // confirmation gate does, not just as blindly as it used to.
             let scoped = scoped_fn_param_effects(&func.params, fn_param_effects);
-            let (joint_effect, conf) = body_effect(&func.body, funcs, &scoped, resolving);
+            let (effects, conf) = body_effects(&func.body, funcs, closures, &scoped, resolving);
+            let joint_effect = effects.worst();
             let req = joint_effect == Effect::Synthesis || joint_effect == Effect::Sequencing || joint_effect == Effect::Destructive;
             resolving.remove(&func.name);
             DeclEffect {
                 name: func.name.clone(),
                 kind: "function".into(),
                 effect: joint_effect,
+                effects,
                 confirmation_required: req,
                 confirmed: conf,
             }
@@ -435,6 +550,7 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
             name: import.source.clone(),
             kind: "import".into(),
             effect: Effect::Pure,
+            effects: EffectSet::of(Effect::Pure),
             confirmation_required: false,
             confirmed: true,
         },
@@ -444,37 +560,20 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
         // so this joins across every branch/the loop body conservatively --
         // a function's effect is the worst case over anything it might run.
         Declaration::If(if_decl) => {
-            let mut joint_effect = Effect::Pure;
-            let mut req = false;
-            let mut conf = true;
-            let branches = if_decl.then_branch.iter().chain(if_decl.else_branch.iter().flatten());
-            for inner in branches {
-                let info = decl_effect_info(inner, funcs, fn_param_effects, resolving);
-                joint_effect = join_effects(joint_effect, info.effect);
-                if info.confirmation_required {
-                    req = true;
-                    if !info.confirmed {
-                        conf = false;
-                    }
-                }
+            let (then_effect, then_req, then_conf) = block_effect(&if_decl.then_branch, funcs, closures, fn_param_effects, resolving);
+            let (else_effect, else_req, else_conf) = block_effect(if_decl.else_branch.as_deref().unwrap_or_default(), funcs, closures, fn_param_effects, resolving);
+            DeclEffect {
+                name: "if".into(),
+                kind: "if".into(),
+                effect: then_effect.union(else_effect).worst(),
+                effects: then_effect.union(else_effect),
+                confirmation_required: then_req || else_req,
+                confirmed: then_conf && else_conf,
             }
-            DeclEffect { name: "if".into(), kind: "if".into(), effect: joint_effect, confirmation_required: req, confirmed: conf }
         }
         Declaration::For(for_decl) => {
-            let mut joint_effect = Effect::Pure;
-            let mut req = false;
-            let mut conf = true;
-            for inner in &for_decl.body {
-                let info = decl_effect_info(inner, funcs, fn_param_effects, resolving);
-                joint_effect = join_effects(joint_effect, info.effect);
-                if info.confirmation_required {
-                    req = true;
-                    if !info.confirmed {
-                        conf = false;
-                    }
-                }
-            }
-            DeclEffect { name: for_decl.binding.clone(), kind: "for".into(), effect: joint_effect, confirmation_required: req, confirmed: conf }
+            let (effect, req, conf) = block_effect(&for_decl.body, funcs, closures, fn_param_effects, resolving);
+            DeclEffect { name: for_decl.binding.clone(), kind: "for".into(), effect: effect.worst(), effects: effect, confirmation_required: req, confirmed: conf }
         }
         // A test's own effect is the worst case over its body, same
         // reasoning as `if`/`for` above -- a test that stores/deletes
@@ -482,25 +581,14 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
         // effect summary, not be hidden just because it's wrapped in
         // `test { ... }`.
         Declaration::Test(test) => {
-            let mut joint_effect = Effect::Pure;
-            let mut req = false;
-            let mut conf = true;
-            for inner in &test.body {
-                let info = decl_effect_info(inner, funcs, fn_param_effects, resolving);
-                joint_effect = join_effects(joint_effect, info.effect);
-                if info.confirmation_required {
-                    req = true;
-                    if !info.confirmed {
-                        conf = false;
-                    }
-                }
-            }
-            DeclEffect { name: test.name.clone(), kind: "test".into(), effect: joint_effect, confirmation_required: req, confirmed: conf }
+            let (effect, req, conf) = block_effect(&test.body, funcs, closures, fn_param_effects, resolving);
+            DeclEffect { name: test.name.clone(), kind: "test".into(), effect: effect.worst(), effects: effect, confirmation_required: req, confirmed: conf }
         }
         Declaration::Enum(decl) => DeclEffect {
             name: decl.name.clone(),
             kind: "enum".into(),
             effect: Effect::Pure,
+            effects: EffectSet::of(Effect::Pure),
             confirmation_required: false,
             confirmed: true,
         },
@@ -509,9 +597,11 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, fn_param_effe
 
 pub fn effect_summary(program: &Program) -> EffectSummary {
     let funcs = function_table(program);
+    let mut closures = FunctionTable::new();
     let mut declarations = Vec::new();
     for decl in &program.declarations {
-        declarations.push(decl_effect_info(decl, &funcs, &HashMap::new(), &mut ResolvingSet::new()));
+        declarations.push(decl_effect_info(decl, &funcs, &closures, &HashMap::new(), &mut ResolvingSet::new()));
+        bind_closure(&mut closures, decl);
     }
     EffectSummary { declarations }
 }

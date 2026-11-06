@@ -1874,7 +1874,7 @@ impl TypeChecker {
     /// no special-casing for any of them.
     fn check_fn_effect_compatibility(&mut self, expected: Option<FnEffectAnnotation>, expr: &Expr, span: Span) {
         let Some(expected) = expected else { return };
-        let (actual_effect, actual_confirmed) = match expr {
+        let (actual, actual_confirmed) = match expr {
             Expr::Closure { params, body, .. } => {
                 // The literal's own annotated `Fn(...)`-typed parameters
                 // (if it takes any) are scoped in too, exactly like
@@ -1883,18 +1883,21 @@ impl TypeChecker {
                 // takes an effect-annotated parameter resolves calls to
                 // it correctly, not just calls to whatever it captures.
                 let scoped = crate::effects::scoped_fn_param_effects(params, &self.fn_param_effects);
-                crate::effects::body_effect(body, &self.functions, &scoped, &mut HashSet::new())
+                crate::effects::body_effects(body, &self.functions, &self.closure_decls, &scoped, &mut HashSet::new())
             }
             Expr::Variable(name) => {
-                crate::effects::function_call_effect(name, &self.functions, &self.closure_decls, &self.fn_param_effects, &mut HashSet::new())
+                crate::effects::function_call_effects(name, &self.functions, &self.closure_decls, &self.fn_param_effects, &mut HashSet::new())
             }
             _ => return,
         };
+        let actual_effect = actual.worst();
         let confirmed_enough = actual_effect == Effect::Pure || actual_confirmed;
-        if !crate::effects::effect_satisfies_annotation(actual_effect, expected) {
+        // Every kind of effect the closure may have must fit, not just its
+        // worst: one that stores and deletes fits neither ceiling.
+        if !actual.within(expected) {
             self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
                 "this closure's real effect is {}, which doesn't fall within the parameter's declared {}",
-                actual_effect,
+                actual,
                 match expected { FnEffectAnnotation::Hardware => "confirm hardware", FnEffectAnnotation::PhysicalKey => "confirm physical_key" },
             ));
         } else if !confirmed_enough {

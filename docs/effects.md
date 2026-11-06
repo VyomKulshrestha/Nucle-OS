@@ -25,7 +25,8 @@ Source: `nucle_lang/src/ast.rs`'s `Effect` enum; classification logic lives in
   is `Sequencing`. Both require `confirm hardware` in source, checked by
   `expr_has_required_confirmation`.
 - `store` is `Synthesis` unless written as `simulate store ...`, which is
-  `Pure` (it never reaches real hardware).
+  `Pure` (it never reaches real hardware). A `pipeline` with a `store into`
+  step is `Synthesis` too: it stores for real.
 - `retrieve` is always `Pure`.
 - `delete` is always `Destructive` and requires `confirm physical_key`.
 - A **function's** effect is the *join* of every declaration in its body
@@ -69,6 +70,18 @@ See `docs/examples/failures/unconfirmed_function_delete.nsl` for a runnable
 version of this example, and `nucle_lang/tests/functions.rs` for the
 corresponding tests (`test_calling_destructive_function_requires_confirmation`,
 `test_calling_confirmed_destructive_function_passes`).
+
+## Closures in scope
+
+A call to a closure resolves to the closure's own body wherever the
+closure was `let`-bound earlier in the same block, at top level or inside
+a function, so a function that deletes through its own closure is
+`Destructive` to its callers and in `nucle explain`.
+
+An effect ceiling (`Fn(...) -> T confirm hardware`) is checked against
+every kind of effect a closure may have, not just the worst one: a closure
+that stores and deletes needs both confirmations, so it fits neither
+ceiling.
 
 ## What surfaces this
 

@@ -127,7 +127,7 @@ fn render_section<'a>(
         }
         out.push_str(&format!("\n```nuclescript\n{}\n```\n", entry.signature));
 
-        let info = decl_effect_info(decl, funcs, &std::collections::HashMap::new(), &mut ResolvingSet::new());
+        let info = decl_effect_info(decl, funcs, &crate::effects::FunctionTable::new(), &std::collections::HashMap::new(), &mut ResolvingSet::new());
         let confirmation = if !info.confirmation_required {
             String::new()
         } else if info.confirmed {

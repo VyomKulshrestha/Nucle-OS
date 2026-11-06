@@ -621,6 +621,19 @@ through `eval_expr` except one returning a compile-time-only type
 `value::Value` has a runtime representation for at all, so `eval_expr`
 has nothing to produce for them anyway).
 
+**Two holes found later.** The induction above holds
+only if the effect computed at each binding site is right, and it was
+wrong in two ways that let a closure past its ceiling. The walk saw a
+`let`-bound closure only where the checker was standing, so a function
+that deleted through a closure it bound itself counted as Pure, and a
+closure calling that function fit `confirm hardware`. And the walk kept
+only the worst effect, so a closure that both stored and deleted counted
+as Destructive and fit `confirm physical_key`, store and all. The walk now
+carries the closures in scope through every block (`effects::
+block_effect`, also used by `effect_summary` and MIR lowering), and keeps
+every kind of effect in an `EffectSet`; `effect_satisfies_annotation`
+applies to each kind and a ceiling holds only if all fit.
+
 See the "Effect-Annotated Function Types" section of
 [docs/grammar.md](grammar.md) for the full surface semantics, and
 [`docs/examples/effect_annotated_closure.nsl`](examples/effect_annotated_closure.nsl)
