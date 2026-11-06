@@ -4,8 +4,13 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
-## [0.1.19]
+## [0.1.20]
 
+- 0.1.19 was tagged but never released: its build stopped on a macOS
+  runner GitHub had retired. This release carries its changes.
+- On macOS the downloaded `nucle-cli` is an Intel binary again, which
+  Apple Silicon runs under Rosetta. Earlier releases shipped an Apple
+  Silicon binary under the Intel name, which Intel Macs could not run.
 - NucleScript is at language version 1.0: every 1.x release accepts and
   runs what 1.0 does (docs/stability.md in the NucleOS repository).
 - `decode reads "<reads>" against "<references>" { blind, limit: N,
@@ -23,7 +28,7 @@ here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 - Files saved with a UTF-8 byte-order mark open without a lex error at
   1:1.
 - Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
-  v0.1.64 runtime, which contains all of the above.
+  v0.1.65 runtime, which contains all of the above.
 
 ## [0.1.18]
 
