@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use NucleOS or NucleScript in your work, please cite it as below."
+type: software
+title: "NucleOS and NucleScript: a software-defined DNA storage engine and its language"
+abstract: >-
+  NucleOS encodes files into DNA strands and back: ternary, DNA Fountain,
+  Yin-Yang and HEDGES codecs, Reed-Solomon parity planned from a measured
+  channel, consensus and clustering of real sequencing reads, primer
+  addressing and a versioned virtual filesystem, tested against a noise
+  simulator with channels measured from real oligo pools. NucleScript,
+  version 1.0, is its language: pools typed by sequencer profile and
+  error rate, and effects for synthesis, sequencing and deletion whose
+  confirmations are checked at compile time, run against the simulator,
+  with order sheets for Twist and IDT and decoding of real reads at its
+  edges.
+authors:
+  - family-names: Kulshrestha
+    given-names: Vyom
+    affiliation: "Independent Researcher, India"
+    orcid: "https://orcid.org/0009-0009-1434-7148"
+repository-code: "https://github.com/VyomKulshrestha/Nucle-OS"
+url: "https://nuclescript.github.io/playground/"
+license: MIT
+keywords:
+  - DNA data storage
+  - domain-specific language
+  - effect system
+  - error-correcting codes
+  - Reed-Solomon
+  - DNA Fountain
+  - HEDGES
+  - synthetic biology
+  - Rust

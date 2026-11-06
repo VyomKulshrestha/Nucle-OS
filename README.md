@@ -1454,6 +1454,13 @@ dev environment setup, code style, and how to open a pull request. Please
 also read the [Code of Conduct](CODE_OF_CONDUCT.md). Found a security
 issue? See [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
+## Citing
+
+[CITATION.cff](CITATION.cff) gives the citation; GitHub shows it under
+"Cite this repository". [.zenodo.json](.zenodo.json) describes the
+software to Zenodo, which archives each GitHub release and gives it a DOI
+once the repository is switched on in Zenodo's GitHub settings.
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
