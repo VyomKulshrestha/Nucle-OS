@@ -15,6 +15,7 @@ pub mod confirm;
 pub mod delayed_mock;
 pub mod file_export;
 pub mod mock;
+pub mod order_sheet;
 mod http_client;
 pub mod idt;
 pub mod illumina;

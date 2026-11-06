@@ -71,6 +71,43 @@ and a loopback TLS gRPC MinKNOW stand-in to exercise discovery, submission,
 resume, and status polling without an instrument; CLI tests separately verify
 credential/config refusal.
 
+## Order sheets
+
+The API adapters below need an account's private endpoints, and no
+NucleScript program has yet been sent through one to a real synthesizer.
+`nucle hardware order` produces what a person can submit through a
+vendor's ordinary ordering page instead:
+
+```bash
+nucle hardware order archive.nsl --vendor twist --out order.fasta
+nucle hardware order archive.nsl --vendor idt --out order.csv
+```
+
+It encodes every top-level `store` and `pipeline` that writes for real
+(simulated stores are left out), exactly as `nucle run` would but with no
+noise, into a fresh pool, and writes one oligo per strand: the archive
+header's strands first (`header_0`, ...), then each file's data and parity
+strands with their primers (`archive_records.csv_d0`, `..._p0`). Because
+the header is included, `nucle bootstrap inspect order.fasta` gives back
+the file table from the sheet alone. Stores inside functions are not
+collected, the same as for `hardware export`.
+
+The sheet is checked against the limits each vendor publishes, and none is
+written if the vendor would refuse it:
+
+| Vendor | File | Oligo length | Pool size |
+|---|---|---|---|
+| Twist | `.fasta` or `.csv` (`Name,Sequence`) | 20-350 nt | not checked |
+| IDT oPools | `.csv` (`Name,Sequence`), pasted into the Excel template IDT's page provides | 40-350 nt | 2-384 oligos at 50 pmol, 10-2,000 at 10 pmol, 100-20,000 at 1 pmol |
+
+Every sequence must be plain A/C/G/T and every name unique. For IDT the
+command lists the scales that take a pool of that size. The IDT figures are
+from its oPools entry page, which accepts Excel uploads only and does not
+publish its template's column names, hence the CSV to paste. The Twist
+figures are its oligo-pool requirements as university core facilities pass
+them on (a sequence file with one oligo per line). Nothing is ordered;
+check the sheet against the vendor's current page before uploading it.
+
 ## Twist
 
 ```json

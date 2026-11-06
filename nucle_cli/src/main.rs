@@ -5,6 +5,7 @@
 mod bootstrap_cli;
 mod cost_cli;
 mod hardware_cli;
+mod order_cli;
 mod parity_cli;
 mod reads_cli;
 mod shelf_life_cli;
@@ -599,6 +600,19 @@ enum HardwareSubcommand {
         /// '--provider mock-delayed'.
         #[arg(long, default_value_t = 500)]
         simulated_delay_ms: u64,
+    },
+    /// Write the strands a program stores as an oligo-pool order sheet for
+    /// Twist (.fasta or .csv) or IDT (.csv to paste into its Excel
+    /// template), checked against the vendor's limits. Orders nothing.
+    Order {
+        /// NucleScript file whose top-level stores and pipelines to encode
+        source: String,
+        /// Vendor: twist or idt
+        #[arg(long)]
+        vendor: String,
+        /// Sheet to write; the extension picks the format
+        #[arg(short, long)]
+        out: String,
     },
     /// Poll vendor jobs previously submitted by `hardware export`.
     Status {
@@ -2670,6 +2684,7 @@ fn indexed_output_path(base: &str, index: usize) -> String {
 fn cmd_hardware(subcommand: HardwareSubcommand, pool_dir: &std::path::Path, json: bool) {
     match subcommand {
         HardwareSubcommand::Capabilities { provider } => cmd_hardware_capabilities(provider.as_deref(), json),
+        HardwareSubcommand::Order { source, vendor, out } => order_cli::cmd_order(&source, &vendor, &out, json),
         HardwareSubcommand::Export {
             source,
             output,
