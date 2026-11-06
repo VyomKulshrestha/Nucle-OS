@@ -32,7 +32,7 @@ use std::path::Path;
 
 pub use ast::*;
 #[cfg(feature = "runtime")]
-pub use codegen::{execute_program, CompiledPlan, ExecutionReport, VfsCall};
+pub use codegen::{execute_program, take_run_trace, CompiledPlan, ExecutionReport, ObservedEffect, RunTrace, VfsCall};
 pub use docgen::generate_docs;
 pub use formatter::{format_source, is_formatted, FormatError};
 pub use lexer::{Lexer, Token, TokenKind};

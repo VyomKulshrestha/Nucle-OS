@@ -19,7 +19,7 @@
 //!     arm), never something that actually ran.
 
 use crate::ast::*;
-use crate::effects::{function_table, FunctionTable};
+use crate::effects::{effect_satisfies_annotation, function_table, FunctionTable};
 use crate::middle::{lower_program, MirOp};
 use crate::typeck::TypeReport;
 use crate::value::{EvalOutcome, Value};
@@ -80,6 +80,83 @@ impl std::fmt::Display for ExecutionReport {
     }
 }
 
+/// What the last `execute_program` on this thread did, for comparing with
+/// what the checker promised before it ran (see `docs/soundness.md`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RunTrace {
+    /// Every store and delete that reached the VFS, in order.
+    pub effects: Vec<ObservedEffect>,
+    /// Every point where the interpreter met a value the type checker
+    /// should have ruled out: a `?` on something that is not a `Result`, a
+    /// `match` with no arm for its value, a value of the wrong shape bound
+    /// to an annotated name, passed as an argument or returned.
+    pub faults: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObservedEffect {
+    /// Index of the top-level declaration that was running, in the
+    /// executed (desugared) program.
+    pub declaration: usize,
+    /// `Synthesis` for a store, `Pure` for a simulated one, `Destructive`
+    /// for a delete.
+    pub effect: Effect,
+    /// Whether the operation's own source carried its confirmation:
+    /// `confirm physical_key` on a delete; always true for a store, which
+    /// needs none.
+    pub confirmed: bool,
+    /// `<pool>/<file>` the operation touched.
+    pub target: String,
+}
+
+thread_local! {
+    static RUN_TRACE: std::cell::RefCell<RunTrace> = std::cell::RefCell::new(RunTrace::default());
+    static CURRENT_DECLARATION: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The ceilings of every closure call in progress, outermost first.
+    static CEILINGS: std::cell::RefCell<Vec<FnEffectAnnotation>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The trace of the last `execute_program` on this thread, taken whether
+/// that run finished or stopped on an error; the next run starts empty.
+pub fn take_run_trace() -> RunTrace {
+    RUN_TRACE.with(|t| std::mem::take(&mut *t.borrow_mut()))
+}
+
+/// Records an operation about to reach the VFS, and a fault for each
+/// closure call in progress whose ceiling it exceeds.
+fn observe(effect: Effect, confirmed: bool, target: String) {
+    let declaration = CURRENT_DECLARATION.with(|d| d.get());
+    let exceeded: Vec<FnEffectAnnotation> = CEILINGS.with(|c| c.borrow().iter().copied().filter(|&c| !effect_satisfies_annotation(effect, c)).collect());
+    for ceiling in exceeded {
+        fault(format!("a {} operation on {} ran inside a closure limited to {:?}", effect, target, ceiling));
+    }
+    RUN_TRACE.with(|t| t.borrow_mut().effects.push(ObservedEffect { declaration, effect, confirmed, target }));
+}
+
+/// `value` as bound into a slot of type `ty`: a closure entering a
+/// `Fn(...) -> T confirm ...` slot takes on that ceiling.
+fn bound_into(value: Value, ty: &TypeExpr) -> Value {
+    match (value, ty) {
+        (Value::Closure { params, return_type, body, captured_env, mut ceilings }, TypeExpr::Fn(_, _, Some(ceiling))) => {
+            ceilings.push(*ceiling);
+            Value::Closure { params, return_type, body, captured_env, ceilings }
+        }
+        (value, _) => value,
+    }
+}
+
+fn fault(message: String) {
+    RUN_TRACE.with(|t| t.borrow_mut().faults.push(message));
+}
+
+/// Records a fault when `value` is not one `ty` allows; `what` names where
+/// it was found.
+fn check_conforms(value: &Value, ty: &TypeExpr, what: impl FnOnce() -> String) {
+    if !value.conforms_to(ty) {
+        fault(format!("{} is {:?}, which {:?} does not allow", what(), value, ty));
+    }
+}
+
 pub fn compile_program(program: Program, type_report: TypeReport) -> CompiledPlan {
     let mir = lower_program(&program);
     let mut calls = Vec::new();
@@ -125,7 +202,9 @@ pub fn compile_program(program: Program, type_report: TypeReport) -> CompiledPla
 /// semantics, same `steps.push(...)` messages), not rewritten, so a
 /// program using none of `Result<T, E>`/`?`'s new syntax produces
 /// byte-identical output (see `nucle_lang/tests/result_backward_compat.rs`).
-fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &mut Vec<String>) -> Result<(), String> {
+/// `delete_confirmed` is whether the `delete` this call came from carried
+/// `confirm physical_key`, which the lowered call itself no longer holds.
+fn execute_vfs_call(call: &VfsCall, delete_confirmed: bool, os: &mut NucleOS, base_dir: &Path, steps: &mut Vec<String>) -> Result<(), String> {
     match call {
         VfsCall::Store { file, pool, codec, redundancy, simulate, coverage, profile, verify_roundtrip, retain_years, storage } => {
             let path = resolve_source_path(base_dir, file);
@@ -139,6 +218,7 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
             }
 
             let codec_kind = codec_to_vfs_kind(*codec);
+            observe(if *simulate { Effect::Pure } else { Effect::Synthesis }, true, filename.clone());
             let result = os.dna_write_with_codec(&filename, &data, *redundancy, codec_kind)?;
             steps.push(format!("✓ store into {}: {}", pool, result));
             if let (Some(years), Some(storage)) = (retain_years, storage) {
@@ -167,6 +247,7 @@ fn execute_vfs_call(call: &VfsCall, os: &mut NucleOS, base_dir: &Path, steps: &m
         }
         VfsCall::Delete { file, pool } => {
             let filename = pool_path(pool, file);
+            observe(Effect::Destructive, delete_confirmed, filename.clone());
             let result = os.dna_delete(&filename)?;
             steps.push(format!(
                 "delete from {}: removed '{}' ({} strands)",
@@ -183,6 +264,8 @@ pub fn execute_program(
     base_dir: &Path,
 ) -> Result<ExecutionReport, String> {
     let mut steps = Vec::new();
+    RUN_TRACE.with(|t| *t.borrow_mut() = RunTrace::default());
+    CEILINGS.with(|c| c.borrow_mut().clear());
     let funcs = function_table(&plan.program);
     let pools: HashMap<String, PoolDecl> = plan
         .program
@@ -204,14 +287,16 @@ pub fn execute_program(
     // duplicating pool-lookup/pipeline-lowering logic here.
     let mut calls = plan.calls.iter();
 
-    for declaration in &plan.program.declarations {
+    for (index, declaration) in plan.program.declarations.iter().enumerate() {
+        CURRENT_DECLARATION.with(|d| d.set(index));
         match declaration {
             Declaration::Operation(Operation::Store(_))
             | Declaration::Operation(Operation::Retrieve(_))
             | Declaration::Operation(Operation::Delete(_))
             | Declaration::Pipeline(_) => {
+                let delete_confirmed = matches!(declaration, Declaration::Operation(Operation::Delete(op)) if op.confirmed);
                 if let Some(call) = calls.next() {
-                    execute_vfs_call(call, os, base_dir, &mut steps)?;
+                    execute_vfs_call(call, delete_confirmed, os, base_dir, &mut steps)?;
                 }
             }
             Declaration::Let(binding) if is_result_producing(&binding.expr, &funcs) => {
@@ -229,7 +314,9 @@ pub fn execute_program(
                 // discarded.
                 let mut calling = HashSet::new();
                 let outcome = eval_expr(&binding.expr, &env, &funcs, &pools, os, base_dir, &mut steps, &mut calling);
-                env.insert(binding.name.clone(), outcome.into_value()?);
+                let value = outcome.into_value()?;
+                check_conforms(&value, &binding.annotation, || format!("'{}'", binding.name));
+                env.insert(binding.name.clone(), bound_into(value, &binding.annotation));
             }
             _ => {}
         }
@@ -307,7 +394,12 @@ fn eval_expr(
             // Unreachable for a program that passed type-checking (`?`'s
             // operand is guaranteed Result-shaped by `check_try`) --
             // passed through defensively rather than panicking.
-            other => other,
+            other => {
+                if let EvalOutcome::Value(value) = &other {
+                    fault(format!("`?` applied to {:?}, which is not a Result", value));
+                }
+                other
+            }
         },
         Expr::StoreExpr(op) => eval_store_expr(op, env, pools, os, base_dir, steps),
         Expr::DeleteExpr(op) => eval_delete_expr(op, env, os, steps),
@@ -317,8 +409,9 @@ fn eval_expr(
         },
         Expr::Err(inner) => match eval_expr(inner, env, funcs, pools, os, base_dir, steps, calling) {
             EvalOutcome::Value(Value::Str(message)) => EvalOutcome::Value(Value::Result(Err(message))),
-            EvalOutcome::Value(_) => {
+            EvalOutcome::Value(value) => {
                 // Unreachable for a program that passed type-checking.
+                fault(format!("Err(...) built from {:?}, which is not a Str", value));
                 EvalOutcome::Err("internal error: Err(...)'s payload was not a Str value".to_string())
             }
             err @ EvalOutcome::Err(_) => err,
@@ -341,7 +434,12 @@ fn eval_expr(
             // (`check_match` guarantees the scrutinee is Result- or
             // enum-shaped) -- passed through defensively rather than
             // panicking.
-            other => other,
+            other => {
+                if let EvalOutcome::Value(value) = &other {
+                    fault(format!("`match` on {:?}, which is neither a Result nor an enum", value));
+                }
+                other
+            }
         },
         // Constructs a user enum instance -- mirrors `Expr::Ok`'s own
         // construction exactly: the payload (if any) is evaluated for
@@ -389,6 +487,7 @@ fn eval_expr(
             return_type: return_type.clone(),
             body: body.clone(),
             captured_env: env.clone(),
+            ceilings: Vec::new(),
         }),
         // `explicit_type_args` is purely a typeck-time hint (which
         // concrete profile a `PoolState::Var` unifies to) -- by the time
@@ -410,7 +509,7 @@ fn eval_expr(
             // already validated the program against (a closure-bound
             // name shadows a same-named global function) -- see
             // `infer_expr`'s own `FunctionCall` arm comment for why.
-            if let Some(Value::Closure { params, return_type, body, captured_env }) = env.get(name).cloned() {
+            if let Some(Value::Closure { params, return_type, body, captured_env, ceilings }) = env.get(name).cloned() {
                 let mut arg_values = Vec::with_capacity(args.len());
                 for arg in args {
                     match eval_expr(arg, env, funcs, pools, os, base_dir, steps, calling) {
@@ -418,9 +517,10 @@ fn eval_expr(
                         err @ EvalOutcome::Err(_) => return err,
                     }
                 }
-                return call_closure(name, &params, &return_type, &body, &captured_env, arg_values, funcs, pools, os, base_dir, steps, calling);
+                return call_closure(name, &params, &return_type, &body, &captured_env, &ceilings, arg_values, funcs, pools, os, base_dir, steps, calling);
             }
             let Some(func) = funcs.get(name).cloned() else {
+                fault(format!("call to '{}', which names no function or closure in scope", name));
                 return EvalOutcome::Err(format!("internal error: undeclared function '{}' reached execution", name));
             };
             let mut arg_values = Vec::with_capacity(args.len());
@@ -482,6 +582,7 @@ fn run_match_arm(
         // runtime error string rather than a panic, matching this
         // codebase's existing "defensive, not a panic" convention for
         // post-typecheck invariants.
+        fault(format!("`match` has no arm for variant '{}'", variant));
         return EvalOutcome::Err(format!("internal error: no match arm for variant '{}' reached execution", variant));
     };
     let mut arm_env = env.clone();
@@ -619,6 +720,7 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
         // Unreachable for a program that passed type-checking
         // (`E-STORE-POOL-UNDECLARED` would already have fired) --
         // defensive only.
+        fault(format!("store into '{}', which is not a declared pool", op.pool));
         let msg = format!("pool '{}' is not declared", op.pool);
         steps.push(format!("✗ store into {}: {}", op.pool, msg));
         return EvalOutcome::Value(Value::Result(Err(msg)));
@@ -644,6 +746,7 @@ fn eval_store_expr(op: &StoreOp, env: &HashMap<String, Value>, pools: &HashMap<S
     }
 
     let codec_kind = codec_to_vfs_kind(pool.codec);
+    observe(if op.simulate { Effect::Pure } else { Effect::Synthesis }, true, filename.clone());
 
     match os.dna_write_with_codec(&filename, &data, redundancy, codec_kind) {
         Ok(result) => {
@@ -669,6 +772,7 @@ fn eval_delete_expr(op: &DeleteOp, env: &HashMap<String, Value>, os: &mut NucleO
     let op = &DeleteOp { pool: resolve_pool_arg(&op.pool, env).to_string(), ..op.clone() };
     let file = resolve_file_arg(&op.file, env);
     let filename = pool_path(&op.pool, file);
+    observe(Effect::Destructive, op.confirmed, filename.clone());
     match os.dna_delete(&filename) {
         Ok(result) => {
             steps.push(format!("delete from {}: removed '{}' ({} strands)", op.pool, result.filename, result.strands_removed));
@@ -741,7 +845,8 @@ fn call_user_function(
     };
     let mut env: HashMap<String, Value> = HashMap::new();
     for (param, arg) in func.params.iter().zip(args) {
-        env.insert(param.name.clone(), arg);
+        check_conforms(&arg, &param.ty, || format!("argument '{}' of '{}'", param.name, func.name));
+        env.insert(param.name.clone(), bound_into(arg, &param.ty));
     }
     let outcome = exec_function_body(&func.body, &mut env, funcs, pools, os, base_dir, steps, calling);
 
@@ -755,17 +860,24 @@ fn call_user_function(
     // T = <fallible>?`) needs its plain `T` value wrapped into `Ok(T)`
     // here, at the boundary, matching `typeck::TypeChecker::
     // check_function`'s doc comment for exactly this function.
-    match outcome {
+    let returned = match outcome {
         EvalOutcome::Err(msg) if matches!(func.return_type, TypeExpr::Result(_, _)) => EvalOutcome::Value(Value::Result(Err(msg))),
         // Not reachable for a program that passed type-checking (`?` is
         // only valid inside a `Result`-returning function) -- passed
         // through as a genuine short-circuit rather than silently
         // swallowed, if it ever is.
         EvalOutcome::Err(msg) => EvalOutcome::Err(msg),
+        // The checker lets a `Void` function's body end on any binding,
+        // so its last value is not what it returns: `Void` is.
+        EvalOutcome::Value(_) if func.return_type == TypeExpr::Void => EvalOutcome::Value(Value::Unit),
         EvalOutcome::Value(Value::Result(r)) => EvalOutcome::Value(Value::Result(r)),
         EvalOutcome::Value(v) if matches!(func.return_type, TypeExpr::Result(_, _)) => EvalOutcome::Value(Value::Result(Ok(Box::new(v)))),
         EvalOutcome::Value(v) => EvalOutcome::Value(v),
+    };
+    if let EvalOutcome::Value(value) = &returned {
+        check_conforms(value, &func.return_type, || format!("the value '{}' returned", func.name));
     }
+    returned
 }
 
 /// Calls a closure -- a close mirror of `call_user_function`, except it
@@ -804,6 +916,7 @@ fn call_closure(
     return_type: &TypeExpr,
     body: &[Declaration],
     captured_env: &HashMap<String, Value>,
+    ceilings: &[FnEffectAnnotation],
     args: Vec<Value>,
     funcs: &FunctionTable,
     pools: &HashMap<String, PoolDecl>,
@@ -821,21 +934,39 @@ fn call_closure(
     let mut env = captured_env.clone();
     env.insert(
         name.to_string(),
-        Value::Closure { params: params.to_vec(), return_type: return_type.clone(), body: body.to_vec(), captured_env: captured_env.clone() },
+        Value::Closure {
+            params: params.to_vec(),
+            return_type: return_type.clone(),
+            body: body.to_vec(),
+            captured_env: captured_env.clone(),
+            ceilings: ceilings.to_vec(),
+        },
     );
     for (param, arg) in params.iter().zip(args) {
-        env.insert(param.name.clone(), arg);
+        check_conforms(&arg, &param.ty, || format!("argument '{}' of closure '{}'", param.name, name));
+        env.insert(param.name.clone(), bound_into(arg, &param.ty));
     }
+    CEILINGS.with(|c| c.borrow_mut().extend_from_slice(ceilings));
     let outcome = exec_function_body(body, &mut env, funcs, pools, os, base_dir, steps, calling);
+    CEILINGS.with(|c| {
+        let mut stack = c.borrow_mut();
+        let keep = stack.len() - ceilings.len();
+        stack.truncate(keep);
+    });
     // Same tail-wrapping logic as `call_user_function`'s own boundary --
     // see its doc comment for the full rationale.
-    match outcome {
+    let returned = match outcome {
         EvalOutcome::Err(msg) if matches!(return_type, TypeExpr::Result(_, _)) => EvalOutcome::Value(Value::Result(Err(msg))),
         EvalOutcome::Err(msg) => EvalOutcome::Err(msg),
+        EvalOutcome::Value(_) if *return_type == TypeExpr::Void => EvalOutcome::Value(Value::Unit),
         EvalOutcome::Value(Value::Result(r)) => EvalOutcome::Value(Value::Result(r)),
         EvalOutcome::Value(v) if matches!(return_type, TypeExpr::Result(_, _)) => EvalOutcome::Value(Value::Result(Ok(Box::new(v)))),
         EvalOutcome::Value(v) => EvalOutcome::Value(v),
+    };
+    if let EvalOutcome::Value(value) = &returned {
+        check_conforms(value, return_type, || format!("the value closure '{}' returned", name));
     }
+    returned
 }
 
 /// `retrieve from <pool> where ...` in *statement* position inside a
@@ -902,6 +1033,8 @@ fn exec_function_body(
             Declaration::Let(binding) => match eval_expr(&binding.expr, env, funcs, pools, os, base_dir, steps, calling) {
                 EvalOutcome::Err(msg) => return EvalOutcome::Err(msg),
                 EvalOutcome::Value(value) => {
+                    check_conforms(&value, &binding.annotation, || format!("'{}'", binding.name));
+                    let value = bound_into(value, &binding.annotation);
                     env.insert(binding.name.clone(), value.clone());
                     last = EvalOutcome::Value(value);
                 }

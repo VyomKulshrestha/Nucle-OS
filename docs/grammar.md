@@ -925,7 +925,7 @@ fn run_cleanup() returns Void {
   stores and deletes needs both `confirm hardware` and `confirm
   physical_key`, so it fits neither ceiling, and the check sees through
   the functions a closure calls, including the closures those functions
-  bind themselves.
+  bind themselves. See [docs/soundness.md](soundness.md).
 - **Still a ceiling, not full hardware-request precision** — `Synthesis`
   and `Sequencing` are deliberately not distinguished at the annotation
   level (the language's own `confirm hardware` doesn't distinguish them

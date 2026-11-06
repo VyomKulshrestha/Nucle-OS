@@ -1,5 +1,5 @@
-//! Defects in the effect rules, each pinned as the smallest program that
-//! showed it.
+//! The broken promises `tests/soundness.rs`'s runtime monitor found, each
+//! pinned as the smallest program that showed it.
 
 use nucle_lang::ast::*;
 use nucle_lang::effects::effect_summary;

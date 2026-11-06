@@ -81,7 +81,8 @@ a function, so a function that deletes through its own closure is
 An effect ceiling (`Fn(...) -> T confirm hardware`) is checked against
 every kind of effect a closure may have, not just the worst one: a closure
 that stores and deletes needs both confirmations, so it fits neither
-ceiling.
+ceiling. See [docs/soundness.md](soundness.md) for the rules in full and
+how they are checked by running programs.
 
 ## What surfaces this
 

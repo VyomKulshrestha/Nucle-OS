@@ -8,7 +8,7 @@
 //! execution path) and `sim_backend.rs` (its narrating counterpart)
 //! consume this -- every other pipeline stage is unaffected.
 
-use crate::ast::{Declaration, FnParam, TypeExpr};
+use crate::ast::{Declaration, FnEffectAnnotation, FnParam, TypeExpr};
 use std::collections::HashMap;
 
 /// A value NucleScript code can bind and pass around at runtime. Never
@@ -55,6 +55,11 @@ pub enum Value {
         return_type: TypeExpr,
         body: Vec<Declaration>,
         captured_env: HashMap<String, Value>,
+        /// The effect ceilings (`Fn(...) -> T confirm hardware`) of every
+        /// slot this value was bound into on its way here. The checker
+        /// promised the body stays within each; the interpreter holds it
+        /// to them while it runs (see `codegen::observe`).
+        ceilings: Vec<FnEffectAnnotation>,
     },
     /// A user-declared `enum`'s runtime instance. Deliberately
     /// NOT how `Result` itself is represented (see `Value::Result` above)
@@ -68,6 +73,37 @@ pub enum Value {
         variant: String,
         payload: Option<Box<Value>>,
     },
+}
+
+impl Value {
+    /// Whether this value is one the type checker allows for `ty`. The
+    /// interpreter checks every argument, annotated binding and return
+    /// value against it while a program runs (see `docs/soundness.md`),
+    /// so a value of the wrong shape shows up as a fault instead of
+    /// flowing on. `Strand`, `Sequence` and `Recovery` have no runtime
+    /// shape and accept anything that is not a `Result`, closure or enum
+    /// instance.
+    pub fn conforms_to(&self, ty: &TypeExpr) -> bool {
+        match (ty, self) {
+            (TypeExpr::Result(ok, _), Value::Result(Ok(inner))) => inner.conforms_to(ok),
+            (TypeExpr::Result(_, err), Value::Result(Err(_))) => **err == TypeExpr::Str,
+            (TypeExpr::Fn(params, _, _), Value::Closure { params: actual, .. }) => params.len() == actual.len(),
+            (TypeExpr::Enum(name), Value::EnumInstance { enum_name, .. }) => name == enum_name,
+            (TypeExpr::Result(..) | TypeExpr::Fn(..) | TypeExpr::Enum(_), _) => false,
+            (_, Value::Result(_) | Value::Closure { .. } | Value::EnumInstance { .. }) => false,
+            (TypeExpr::Void, value) => matches!(value, Value::Unit | Value::Deleted { .. }),
+            (TypeExpr::Str, value) => matches!(value, Value::Str(_)),
+            // A file is named by a string until it is stored; `protect`
+            // hands its argument back unchanged, so a `DnaFile` can still
+            // be one.
+            (TypeExpr::File, value) => matches!(value, Value::Str(_) | Value::DnaFile { .. }),
+            (TypeExpr::DnaFile, value) => matches!(value, Value::Str(_) | Value::DnaFile { .. }),
+            // A declared pool passed by name, or a simulated pool, which
+            // exists only at compile time.
+            (TypeExpr::Pool(_), value) => matches!(value, Value::PoolRef(_) | Value::Unit),
+            (TypeExpr::Strand | TypeExpr::Sequence | TypeExpr::Recovery, _) => true,
+        }
+    }
 }
 
 /// What evaluating one `Expr` produces: an ordinary value, or a signal to

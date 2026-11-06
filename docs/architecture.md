@@ -621,7 +621,7 @@ through `eval_expr` except one returning a compile-time-only type
 `value::Value` has a runtime representation for at all, so `eval_expr`
 has nothing to produce for them anyway).
 
-**Two holes found later.** The induction above holds
+**Two holes the runtime monitor found later.** The induction above holds
 only if the effect computed at each binding site is right, and it was
 wrong in two ways that let a closure past its ceiling. The walk saw a
 `let`-bound closure only where the checker was standing, so a function
@@ -632,7 +632,8 @@ as Destructive and fit `confirm physical_key`, store and all. The walk now
 carries the closures in scope through every block (`effects::
 block_effect`, also used by `effect_summary` and MIR lowering), and keeps
 every kind of effect in an `EffectSet`; `effect_satisfies_annotation`
-applies to each kind and a ceiling holds only if all fit.
+applies to each kind and a ceiling holds only if all fit. The monitor
+itself is described in [soundness.md](soundness.md).
 
 See the "Effect-Annotated Function Types" section of
 [docs/grammar.md](grammar.md) for the full surface semantics, and
