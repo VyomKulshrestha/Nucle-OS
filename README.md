@@ -1465,6 +1465,7 @@ editors/vscode/nuclescript/ — VS Code extension: TextMate grammar, language se
 docs/            — Architecture notes, paper references, and runnable examples/fixtures
 packages/        — NucleScript package registry (packages/registry.json) and package releases (presets, profiles, benchmarks, recovery)
 proofs/          — Lean 4 proof that the effect and confirmation rules keep their promises for a core of NucleScript
+paper/           — LaTeX technical report on NucleScript and its built PDF
 ```
 
 ---
@@ -1477,6 +1478,13 @@ also read the [Code of Conduct](CODE_OF_CONDUCT.md). Found a security
 issue? See [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
 ## Citing
+
+[paper/nuclescript.pdf](paper/nuclescript.pdf) is a 14-page technical
+report on NucleScript: the language, its type and effect rules, the
+runtime monitor and the eight defects it found, the Lean proof, and
+decoding of real MinION and Illumina reads. Its source is
+`paper/nuclescript.tex`; rebuild it with `cd paper && tectonic
+nuclescript.tex`.
 
 [CITATION.cff](CITATION.cff) gives the citation; GitHub shows it under
 "Cite this repository". [.zenodo.json](.zenodo.json) describes the
