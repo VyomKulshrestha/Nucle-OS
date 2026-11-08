@@ -650,6 +650,20 @@ every kind of effect in an `EffectSet`; `effect_satisfies_annotation`
 applies to each kind and a ceiling holds only if all fit. The monitor
 itself is described in [soundness.md](soundness.md).
 
+A third hole was the induction's own premise: that the walk sees every
+closure that can reach a call. A closure returned by a function, or taken
+out of an enum, is a value it never sees the body of, and a call through
+one counted as Pure, so it fit every ceiling. Such a call now has every
+effect (`EffectSet::all`), and so fits no ceiling unless the `Fn` type it
+comes through declares one, which the checker enforced where the value
+was bound. An unannotated `Fn` parameter is still `Pure` inside its
+function, because each call site joins in the closure it passes; to keep
+that distinction, unannotated parameters now enter `fn_param_effects` as
+`Pure`, and a name found nowhere is the untraceable case.
+`effects::bind_callable` also resolves `let again = wipe` to `wipe` and an
+annotated binding to its ceiling, and `function_table` includes imported
+functions, so calls into packages resolve to their bodies.
+
 See the "Effect-Annotated Function Types" section of
 [docs/grammar.md](grammar.md) for the full surface semantics, and
 [`docs/examples/effect_annotated_closure.nsl`](examples/effect_annotated_closure.nsl)

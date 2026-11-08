@@ -77,7 +77,13 @@ corresponding tests (`test_calling_destructive_function_requires_confirmation`,
 A call to a closure resolves to the closure's own body wherever the
 closure was `let`-bound earlier in the same block, at top level or inside
 a function, so a function that deletes through its own closure is
-`Destructive` to its callers and in `nucle explain`.
+`Destructive` to its callers and in `nucle explain`. Another name for a
+closure (`let again: Fn() -> Void = wipe`) resolves to the same closure.
+
+A closure the analysis cannot trace, one returned by a function or taken
+out of an enum, may do anything: a call through it has every effect, and
+it fits no ceiling unless the `Fn` type it comes through names one
+(`returns Fn() -> Void confirm hardware`).
 
 An effect ceiling (`Fn(...) -> T confirm hardware`) is checked against
 every kind of effect a closure may have, not just the worst one: a closure

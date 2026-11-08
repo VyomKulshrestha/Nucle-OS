@@ -64,6 +64,12 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **8 November 2026, NucleOS v0.1.66:** soundness fix. A closure returned
+  from a function, or bound to one through an unannotated `Fn` type, no
+  longer fits an effect ceiling, since the checker cannot see what it
+  does; programs that passed one into a `confirm ...` slot are now
+  rejected. `nucle explain` reports calls through such a closure with every
+  effect. None of the 33 programs in the 1.0 corpus changed.
 - **1.0** (7 November 2026): declared at NucleOS v0.1.61, with `decode
   reads`, per-instantiation checks of generic bodies, effect ceilings held
   to every kind of effect, and the effect rules in

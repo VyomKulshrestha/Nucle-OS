@@ -10,9 +10,11 @@
 //!
 //! The programs are the shipped examples plus several hundred generated
 //! from a fixed seed: functions, closures held in `let`s and passed to
-//! higher-order functions with and without effect ceilings, `Result`
-//! functions with `?` and `match`, loops, branches and pipelines, with an
-//! occasional missing confirmation or wrong ceiling the checker has to
+//! higher-order functions with and without effect ceilings, closures
+//! returned from functions and passed on under other names, generic
+//! functions over a pool's profile, recursion, `Result` functions with `?`
+//! and `match`, loops, branches, pipelines and `retain` requirements, with
+//! an occasional missing confirmation or wrong ceiling the checker has to
 //! reject.
 
 use nucle_codec::stable_rng::StableRng;
@@ -115,6 +117,12 @@ struct Gen {
     result_fns: Vec<String>,
     /// Higher-order functions and the ceiling on their `Fn()` parameter.
     hofs: Vec<(String, Ceiling)>,
+    /// Functions returning a closure the caller cannot see into.
+    makers: Vec<String>,
+    /// Functions taking a pool: generic over its profile, or `Pool<Illumina>`.
+    generic_fns: Vec<String>,
+    /// Functions that call themselves until the call-depth limit stops them.
+    recursive_fns: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -144,7 +152,17 @@ struct BodyEffects {
 
 impl Gen {
     fn new(seed: u64) -> Self {
-        Gen { rng: StableRng::seed_from_u64(seed), next_name: 0, void_fns: vec![], file_fns: vec![], result_fns: vec![], hofs: vec![] }
+        Gen {
+            rng: StableRng::seed_from_u64(seed),
+            next_name: 0,
+            void_fns: vec![],
+            file_fns: vec![],
+            result_fns: vec![],
+            hofs: vec![],
+            makers: vec![],
+            generic_fns: vec![],
+            recursive_fns: vec![],
+        }
     }
 
     fn name(&mut self, prefix: &str) -> String {
@@ -158,6 +176,15 @@ impl Gen {
 
     fn pick<'a>(&mut self, items: &'a [String]) -> &'a str {
         &items[self.rng.gen_range(0..items.len())]
+    }
+
+    /// Half the time, a higher-order function to pass a closure to.
+    fn some_hof(&mut self) -> Option<String> {
+        if self.hofs.is_empty() || !self.chance(0.5) {
+            return None;
+        }
+        let i = self.rng.gen_range(0..self.hofs.len());
+        Some(self.hofs[i].0.clone())
     }
 
     fn file(&mut self) -> String {
@@ -264,7 +291,7 @@ impl Gen {
     fn statement(&mut self, indent: &str, in_result_fn: bool, result_vars: &mut Vec<String>) -> String {
         loop {
             let (file, pool) = (self.file(), self.pool());
-            match self.rng.gen_range(0..14) {
+            match self.rng.gen_range(0..18) {
                 0 | 1 => return format!("{indent}store {file} into {pool}\n"),
                 2 => return format!("{indent}simulate store {file} into {pool}\n"),
                 3 | 4 => {
@@ -320,6 +347,38 @@ impl Gen {
                     result_vars.push(v.clone());
                     return format!("{indent}let {v}: Result<DnaFile, Str> = {f}()\n");
                 }
+                14 if !self.makers.is_empty() => {
+                    // A closure out of a function: called, or handed to a
+                    // higher-order function, whose ceiling it cannot meet.
+                    let maker = self.pick(&self.makers.clone()).to_string();
+                    let (g, v) = (self.name("made"), self.name("done"));
+                    let call = match self.some_hof() {
+                        Some(hof) => format!("{hof}({g})"),
+                        None => format!("{g}()"),
+                    };
+                    return format!("{indent}let {g}: Fn() -> Void = {maker}()\n{indent}let {v}: Void = {call}\n");
+                }
+                15 => {
+                    // A closure under a second name.
+                    let mut effects = BodyEffects::default();
+                    let literal = self.closure_literal(Ceiling::None, indent, &mut effects);
+                    let (c, h, v) = (self.name("step"), self.name("alias"), self.name("done"));
+                    let call = match self.some_hof() {
+                        Some(hof) => format!("{hof}({h})"),
+                        None => format!("{h}()"),
+                    };
+                    return format!("{indent}let {c}: Fn() -> Void = {literal}\n{indent}let {h}: Fn() -> Void = {c}\n{indent}let {v}: Void = {call}\n");
+                }
+                16 if !self.generic_fns.is_empty() => {
+                    let f = self.pick(&self.generic_fns.clone()).to_string();
+                    let v = self.name("done");
+                    return format!("{indent}let {v}: Void = {f}({pool})\n");
+                }
+                17 if !self.recursive_fns.is_empty() && self.chance(0.3) => {
+                    let f = self.pick(&self.recursive_fns.clone()).to_string();
+                    let v = self.name("done");
+                    return format!("{indent}let {v}: Void = {f}()\n");
+                }
                 13 if in_result_fn && !result_vars.is_empty() => {
                     let r = self.pick(&result_vars.clone()).to_string();
                     let v = self.name("saved");
@@ -334,7 +393,42 @@ impl Gen {
 
     fn function(&mut self) -> String {
         let mut result_vars = Vec::new();
-        match self.rng.gen_range(0..4) {
+        match self.rng.gen_range(0..8) {
+            7 => {
+                // A concrete profile: called with the Twist pool, the
+                // checker must refuse; with the Illumina pool, the run
+                // checks the pool it got.
+                let (name, file) = (self.name("into"), self.file());
+                self.generic_fns.push(name.clone());
+                format!("fn {name}(target: Pool<Illumina>) returns Void {{
+    store {file} into target
+}}
+")
+            }
+            4 => {
+                let name = self.name("make");
+                let mut effects = BodyEffects::default();
+                let literal = self.closure_literal(Ceiling::None, "    ", &mut effects);
+                self.makers.push(name.clone());
+                format!("fn {name}() returns Fn() -> Void {{\n    let made: Fn() -> Void = {literal}\n}}\n")
+            }
+            5 => {
+                let name = self.name("put");
+                let file = self.file();
+                let mut body = format!("    store {file} into target\n");
+                if self.chance(0.4) {
+                    let confirm = self.delete_confirm();
+                    body.push_str(&format!("    delete {file} from target{confirm}\n"));
+                }
+                self.generic_fns.push(name.clone());
+                format!("fn {name}<P>(target: Pool<P>) returns Void {{\n{body}}}\n")
+            }
+            6 => {
+                let (name, file, pool) = (self.name("spin"), self.file(), self.pool());
+                let v = self.name("again");
+                self.recursive_fns.push(name.clone());
+                format!("fn {name}() returns Void {{\n    store {file} into {pool}\n    let {v}: Void = {name}()\n}}\n")
+            }
             0 => {
                 let name = self.name("task");
                 let mut body = String::new();
@@ -383,7 +477,8 @@ impl Gen {
 
     fn program(&mut self) -> String {
         let mut out = String::from(
-            "pool p0: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }\npool p1: DnaPool { codec: Ternary, redundancy: 2x, profile: Twist }\n",
+            "pool p0: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }\npool p1: DnaPool { codec: Ternary, redundancy: 2x, profile: Twist }\n\
+             pool p2: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist, storage: encapsulated at 4C }\n",
         );
         for pool in ["p0", "p1"] {
             for file in 0..4 {
@@ -395,7 +490,11 @@ impl Gen {
         }
         let mut result_vars = Vec::new();
         for _ in 0..3 + self.rng.gen_range(0..6) {
-            match self.rng.gen_range(0..8) {
+            match self.rng.gen_range(0..9) {
+                8 => {
+                    let (file, years) = (self.file(), [100, 10_000, 1_000_000_000][self.rng.gen_range(0..3)]);
+                    out.push_str(&format!("store {file} into p2 {{ retain: {years}y }}\n"));
+                }
                 0 => {
                     let (a, b, pool) = (self.file(), self.file(), self.pool());
                     out.push_str(&format!("for target in [{a}, {b}] {{\n    store target into {pool}\n}}\n"));

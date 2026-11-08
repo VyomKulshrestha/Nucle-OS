@@ -5,7 +5,8 @@ use nucle_lang::ast::*;
 use nucle_lang::effects::effect_summary;
 use nucle_lang::lexer::Lexer;
 use nucle_lang::parser::Parser;
-use nucle_lang::check_source;
+use nucle_lang::{check_source, compile, execute_program};
+use nucle_vfs::syscall::NucleOS;
 
 fn parse(src: &str) -> Program {
     let tokens = Lexer::new(src).tokenize().unwrap_or_else(|e| panic!("lex error: {}", e));
@@ -71,4 +72,49 @@ fn a_closure_that_stores_and_deletes_fits_no_single_ceiling() {
          let ran: Void = with_key(fn() -> Void {{\n    let inner: Void = mixed()\n}})\n"
     );
     assert!(diagnostic_codes(&src).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()), "{:?}", diagnostic_codes(&src));
+}
+
+const MAKER: &str = "fn make() returns Fn() -> Void {\n    let wipe: Fn() -> Void = fn() -> Void {\n        delete \"a.txt\" from archive confirm physical_key\n    }\n}\n";
+
+/// A closure returned from a function is out of the checker's sight: it
+/// must fit no ceiling, rather than every one.
+#[test]
+fn a_closure_returned_from_a_function_fits_no_ceiling() {
+    let src = format!(
+        "{POOL}{MAKER}fn with_hardware(action: Fn() -> Void confirm hardware) returns Void {{\n    let done: Void = action()\n}}\n\
+         let made: Fn() -> Void = make()\nlet ran: Void = with_hardware(made)\n"
+    );
+    let report = check_source(&src);
+    let mismatch = report.diagnostics.iter().find(|d| d.code == "E-FN-EFFECT-ARG-MISMATCH").unwrap_or_else(|| panic!("{:?}", report.diagnostics));
+    assert!(mismatch.message.contains("cannot see"), "{}", mismatch.message);
+}
+
+/// ...and a call through it is reported with every effect, not as Pure.
+#[test]
+fn a_call_through_a_returned_closure_has_every_effect() {
+    let src = format!("{POOL}{MAKER}let made: Fn() -> Void = make()\nlet ran: Void = made()\n");
+    assert_eq!(effect_of(&src, "ran"), Effect::Destructive);
+}
+
+const ALIAS: &str = "let wipe: Fn() -> Void = fn() -> Void {\n    delete \"a.txt\" from archive confirm physical_key\n}\nlet again: Fn() -> Void = wipe\nlet ran: Void = again()\n";
+
+/// Another name for a closure resolves to that closure, exactly.
+#[test]
+fn an_alias_of_a_closure_has_that_closures_effect() {
+    let summary = effect_summary(&parse(&format!("{POOL}{ALIAS}")));
+    let ran = summary.declarations.iter().find(|d| d.name == "ran").unwrap();
+    assert_eq!(ran.effects, nucle_lang::effects::EffectSet::of(Effect::Destructive));
+}
+
+/// The alias also exists when the program runs: calling it used to find
+/// nothing to call.
+#[test]
+fn an_alias_of_a_closure_is_bound_at_run_time() {
+    let dir = std::env::temp_dir().join(format!("nsl_alias_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "x").unwrap();
+    let mut plan = compile(&format!("{POOL}store \"a.txt\" into archive\n{ALIAS}")).unwrap();
+    let report = execute_program(&mut NucleOS::new(10), &mut plan, &dir).unwrap();
+    assert!(report.steps.iter().any(|s| s.starts_with("delete from archive: removed 'archive/a.txt'")), "{:?}", report.steps);
+    let _ = std::fs::remove_dir_all(&dir);
 }

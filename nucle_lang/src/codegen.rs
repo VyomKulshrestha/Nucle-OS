@@ -150,9 +150,16 @@ fn fault(message: String) {
 }
 
 /// Records a fault when `value` is not one `ty` allows; `what` names where
-/// it was found.
-fn check_conforms(value: &Value, ty: &TypeExpr, what: impl FnOnce() -> String) {
-    if !value.conforms_to(ty) {
+/// it was found. A declared pool must also have the profile a concrete
+/// `Pool<Profile>` names.
+fn check_conforms(value: &Value, ty: &TypeExpr, pools: &HashMap<String, PoolDecl>, what: impl FnOnce() -> String) {
+    let wrong_profile = match (value, ty) {
+        (Value::PoolRef(name), TypeExpr::Pool(PoolType { state: PoolState::Profile(profile), .. })) => {
+            pools.get(name).is_some_and(|pool| pool.profile != *profile)
+        }
+        _ => false,
+    };
+    if wrong_profile || !value.conforms_to(ty) {
         fault(format!("{} is {:?}, which {:?} does not allow", what(), value, ty));
     }
 }
@@ -316,7 +323,7 @@ pub fn execute_program(
                 let mut calling = HashSet::new();
                 let outcome = eval_expr(&binding.expr, &env, &funcs, &pools, os, base_dir, &mut steps, &mut calling);
                 let value = outcome.into_value()?;
-                check_conforms(&value, &binding.annotation, || format!("'{}'", binding.name));
+                check_conforms(&value, &binding.annotation, &pools, || format!("'{}'", binding.name));
                 env.insert(binding.name.clone(), bound_into(value, &binding.annotation));
             }
             _ => {}
@@ -355,9 +362,15 @@ pub fn execute_program(
 /// routing *any* function call through `eval_expr` except a call to one
 /// of the five compile-time-only return types above, which `eval_expr`
 /// has no `Value` shape to produce for anyway.
+///
+/// A plain name or string literal is evaluated too, so `let h: Fn() -> Void
+/// = c` or `let name: File = "a.txt"` at top level binds a real value: left
+/// out, a later call through `h` found nothing to call, and `name` reached a
+/// function as an empty placeholder instead of its text.
 fn is_result_producing(expr: &Expr, funcs: &FunctionTable) -> bool {
     match expr {
         Expr::StoreExpr(_) | Expr::DeleteExpr(_) | Expr::Try(_) | Expr::Match { .. } | Expr::EnumConstruct { .. } => true,
+        Expr::Variable(_) | Expr::StringLiteral(_) => true,
         // A closure literal's own scrutinee is always `Result`-shaped in
         // the sense that it always needs real evaluation: capture is a
         // real `env.clone()` at the exact point of the literal, which
@@ -846,7 +859,7 @@ fn call_user_function(
     };
     let mut env: HashMap<String, Value> = HashMap::new();
     for (param, arg) in func.params.iter().zip(args) {
-        check_conforms(&arg, &param.ty, || format!("argument '{}' of '{}'", param.name, func.name));
+        check_conforms(&arg, &param.ty, pools, || format!("argument '{}' of '{}'", param.name, func.name));
         env.insert(param.name.clone(), bound_into(arg, &param.ty));
     }
     let outcome = exec_function_body(&func.body, &mut env, funcs, pools, os, base_dir, steps, calling);
@@ -876,7 +889,7 @@ fn call_user_function(
         EvalOutcome::Value(v) => EvalOutcome::Value(v),
     };
     if let EvalOutcome::Value(value) = &returned {
-        check_conforms(value, &func.return_type, || format!("the value '{}' returned", func.name));
+        check_conforms(value, &func.return_type, pools, || format!("the value '{}' returned", func.name));
     }
     returned
 }
@@ -944,7 +957,7 @@ fn call_closure(
         },
     );
     for (param, arg) in params.iter().zip(args) {
-        check_conforms(&arg, &param.ty, || format!("argument '{}' of closure '{}'", param.name, name));
+        check_conforms(&arg, &param.ty, pools, || format!("argument '{}' of closure '{}'", param.name, name));
         env.insert(param.name.clone(), bound_into(arg, &param.ty));
     }
     CEILINGS.with(|c| c.borrow_mut().extend_from_slice(ceilings));
@@ -965,7 +978,7 @@ fn call_closure(
         EvalOutcome::Value(v) => EvalOutcome::Value(v),
     };
     if let EvalOutcome::Value(value) = &returned {
-        check_conforms(value, return_type, || format!("the value closure '{}' returned", name));
+        check_conforms(value, return_type, pools, || format!("the value closure '{}' returned", name));
     }
     returned
 }
@@ -1034,7 +1047,7 @@ fn exec_function_body(
             Declaration::Let(binding) => match eval_expr(&binding.expr, env, funcs, pools, os, base_dir, steps, calling) {
                 EvalOutcome::Err(msg) => return EvalOutcome::Err(msg),
                 EvalOutcome::Value(value) => {
-                    check_conforms(&value, &binding.annotation, || format!("'{}'", binding.name));
+                    check_conforms(&value, &binding.annotation, pools, || format!("'{}'", binding.name));
                     let value = bound_into(value, &binding.annotation);
                     env.insert(binding.name.clone(), value.clone());
                     last = EvalOutcome::Value(value);

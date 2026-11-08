@@ -965,10 +965,24 @@ impl TypeChecker {
             // make_f()`) or another binding is callable through `f()` the
             // same way an `Fn`-typed parameter is: its signature comes
             // from the type, its effect from the type's declared ceiling.
+            // Without a ceiling the value's effect is known only when it
+            // names a closure or parameter already in scope; otherwise a
+            // call through it has every effect (`effects::bind_callable`).
             if let TypeExpr::Fn(param_types, ret, effect) = &binding.annotation {
                 self.closures.insert(binding.name.clone(), (Vec::new(), param_types.clone(), (**ret).clone()));
-                if let Some(effect) = effect {
-                    self.fn_param_effects.insert(binding.name.clone(), effect.to_effect());
+                match (effect, &binding.expr) {
+                    (Some(effect), _) => {
+                        self.fn_param_effects.insert(binding.name.clone(), effect.to_effect());
+                    }
+                    (None, Expr::Variable(other)) if self.closure_decls.contains_key(other) => {
+                        let aliased = self.closure_decls[other].clone();
+                        self.closure_decls.insert(binding.name.clone(), aliased);
+                    }
+                    (None, Expr::Variable(other)) if self.fn_param_effects.contains_key(other) => {
+                        let ceiling = self.fn_param_effects[other];
+                        self.fn_param_effects.insert(binding.name.clone(), ceiling);
+                    }
+                    _ => {}
                 }
             }
             self.bindings.insert(binding.name.clone(), binding.clone());
@@ -1848,7 +1862,15 @@ impl TypeChecker {
         let confirmed_enough = actual_effect == Effect::Pure || actual_confirmed;
         // Every kind of effect the closure may have must fit, not just its
         // worst: one that stores and deletes fits neither ceiling.
-        if !actual.within(expected) {
+        let untraceable = matches!(expr, Expr::Variable(name) if !self.closure_decls.contains_key(name) && !self.fn_param_effects.contains_key(name) && !self.functions.contains_key(name));
+        if untraceable {
+            let Expr::Variable(name) = expr else { unreachable!() };
+            self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
+                "'{}' holds a closure whose body the checker cannot see (a function's return value, an enum payload, or a binding of either), so it may do anything; give the `Fn` type it comes through a `confirm {}` ceiling",
+                name,
+                match expected { FnEffectAnnotation::Hardware => "hardware", FnEffectAnnotation::PhysicalKey => "physical_key" },
+            ));
+        } else if !actual.within(expected) {
             self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
                 "this closure's real effect is {}, which doesn't fall within the parameter's declared {}",
                 actual,
@@ -2172,11 +2194,11 @@ impl TypeChecker {
             // inside the body, resolved through `infer_expr`/
             // `infer_result_expr`'s closures-first `FunctionCall`
             // lookup exactly like a `let`-bound closure already is.
+            // An unannotated one is `Pure` inside the body: each call site
+            // adds the closure it passes (see `effects::scoped_fn_param_effects`).
             TypeExpr::Fn(param_types, return_type, effect) => {
                 self.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**return_type).clone()));
-                if let Some(effect) = effect {
-                    self.fn_param_effects.insert(param.name.clone(), effect.to_effect());
-                }
+                self.fn_param_effects.insert(param.name.clone(), effect.map_or(Effect::Pure, |e| e.to_effect()));
             }
             // A user-enum-typed parameter -- see
             // `TypeChecker::enum_bindings`'s own doc comment.

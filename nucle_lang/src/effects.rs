@@ -38,6 +38,12 @@ impl EffectSet {
         }
     }
 
+    /// Every effect: what a call through a closure the analysis cannot see
+    /// into may do.
+    pub fn all() -> Self {
+        EffectSet { synthesis: true, sequencing: true, destructive: true }
+    }
+
     pub fn union(self, other: Self) -> Self {
         EffectSet {
             synthesis: self.synthesis || other.synthesis,
@@ -88,7 +94,10 @@ impl std::fmt::Display for EffectSet {
 /// it, the same precedence an ordinary language stdlib gives user code.
 pub fn function_table(program: &Program) -> FunctionTable {
     let mut table = crate::stdlib::builtin_functions();
-    table.extend(program.declarations.iter().filter_map(|decl| match decl {
+    // Imported functions too, spliced in as the checker splices them, so a
+    // call to one resolves to its body instead of an untraceable callable.
+    let expanded = crate::imports::expand_imports(program);
+    table.extend(expanded.declarations.iter().filter_map(|decl| match decl {
         Declaration::Function(func) => Some((func.name.clone(), func.clone())),
         _ => None,
     }));
@@ -215,11 +224,18 @@ pub fn effect_satisfies_annotation(actual: Effect, declared: FnEffectAnnotation)
 /// really does capture lexically; harmless-but-unreachable for a named
 /// function, which never captures anything, so nothing in `outer` could
 /// ever be referenced by its body regardless).
+///
+/// An unannotated `Fn(...)` parameter is entered as `Pure`: inside the
+/// callee its call adds nothing, because every call site joins the effect
+/// of the closure it passes (`closure_args_effect`). A callable name found
+/// nowhere, neither here nor among functions and `let`-bound closures, is
+/// a closure value the analysis cannot trace, and has every effect (see
+/// `function_call_effects`).
 pub fn scoped_fn_param_effects(params: &[FnParam], outer: &HashMap<String, Effect>) -> HashMap<String, Effect> {
     let mut scoped = outer.clone();
     for param in params {
-        if let TypeExpr::Fn(_, _, Some(annotation)) = &param.ty {
-            scoped.insert(param.name.clone(), annotation.to_effect());
+        if let TypeExpr::Fn(_, _, annotation) = &param.ty {
+            scoped.insert(param.name.clone(), annotation.map_or(Effect::Pure, |a| a.to_effect()));
         }
     }
     scoped
@@ -343,7 +359,12 @@ pub fn function_call_effects(name: &str, funcs: &FunctionTable, closures: &Funct
         // comment.
         return match fn_param_effects.get(name) {
             Some(&effect) => (EffectSet::of(effect), true),
-            None => (EffectSet::default(), true),
+            // A closure value from somewhere the analysis cannot see into:
+            // returned by a function, taken out of an enum, or bound
+            // through an unannotated `Fn` type to any of those. It may do
+            // anything, so it fits no effect ceiling. Its own operations
+            // still carried their confirmations where they were written.
+            None => (EffectSet::all(), true),
         };
     };
     if !resolving.insert(name.to_string()) {
@@ -382,31 +403,53 @@ pub fn body_effects(body: &[Declaration], funcs: &FunctionTable, closures: &Func
 /// and whether everything that does has it.
 fn block_effect(block: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (EffectSet, bool, bool) {
     let mut scope = closures.clone();
+    let mut ceilings = fn_param_effects.clone();
     let (mut effect, mut required, mut confirmed) = (EffectSet::default(), false, true);
     for decl in block {
-        let info = decl_effect_info(decl, funcs, &scope, fn_param_effects, resolving);
+        let info = decl_effect_info(decl, funcs, &scope, &ceilings, resolving);
         effect = effect.union(info.effects);
         if info.confirmation_required {
             required = true;
             confirmed &= info.confirmed;
         }
-        bind_closure(&mut scope, decl);
+        bind_callable(&mut scope, &mut ceilings, decl);
     }
     (effect, required, confirmed)
 }
 
-/// Adds the closure `decl` binds, if it binds one, to `scope`.
-pub fn bind_closure(scope: &mut FunctionTable, decl: &Declaration) {
-    if let Declaration::Let(LetDecl { name, expr: Expr::Closure { type_params, params, return_type, body, span }, .. }) = decl {
-        scope.insert(name.clone(), FunctionDecl {
-            name: name.clone(),
-            type_params: type_params.clone(),
-            params: params.clone(),
-            return_type: return_type.clone(),
-            body: body.clone(),
-            span: *span,
-            doc: None,
-        });
+/// Adds what a `let` makes callable to the scope of the declarations after
+/// it: a closure literal by its body; another name for a closure or
+/// parameter already in scope, as that one; any other value of an
+/// annotated `Fn(...) -> T confirm ...` type, by its ceiling, which the
+/// checker enforced where the value was bound. Anything else stays
+/// unknown, so a call through it has every effect.
+pub fn bind_callable(scope: &mut FunctionTable, ceilings: &mut HashMap<String, Effect>, decl: &Declaration) {
+    let Declaration::Let(LetDecl { name, annotation, expr, .. }) = decl else { return };
+    match expr {
+        Expr::Closure { type_params, params, return_type, body, span } => {
+            scope.insert(name.clone(), FunctionDecl {
+                name: name.clone(),
+                type_params: type_params.clone(),
+                params: params.clone(),
+                return_type: return_type.clone(),
+                body: body.clone(),
+                span: *span,
+                doc: None,
+            });
+        }
+        Expr::Variable(other) if scope.contains_key(other) => {
+            let aliased = scope[other].clone();
+            scope.insert(name.clone(), aliased);
+        }
+        Expr::Variable(other) if ceilings.contains_key(other) => {
+            let ceiling = ceilings[other];
+            ceilings.insert(name.clone(), ceiling);
+        }
+        _ => {
+            if let TypeExpr::Fn(_, _, Some(ceiling)) = annotation {
+                ceilings.insert(name.clone(), ceiling.to_effect());
+            }
+        }
     }
 }
 
@@ -606,11 +649,11 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, closures: &Fu
 
 pub fn effect_summary(program: &Program) -> EffectSummary {
     let funcs = function_table(program);
-    let mut closures = FunctionTable::new();
+    let (mut closures, mut ceilings) = (FunctionTable::new(), HashMap::new());
     let mut declarations = Vec::new();
     for decl in &program.declarations {
-        declarations.push(decl_effect_info(decl, &funcs, &closures, &HashMap::new(), &mut ResolvingSet::new()));
-        bind_closure(&mut closures, decl);
+        declarations.push(decl_effect_info(decl, &funcs, &closures, &ceilings, &mut ResolvingSet::new()));
+        bind_callable(&mut closures, &mut ceilings, decl);
     }
     EffectSummary { declarations }
 }
@@ -675,9 +718,11 @@ mod tests {
 
     #[test]
     fn undeclared_function_call_does_not_panic() {
+        // The checker reports the name itself (E-FUNCTION-UNDECLARED); the
+        // effect walk assumes the worst of it and asks for no confirmation.
         let funcs = FunctionTable::new();
         let call = Expr::FunctionCall { name: "missing".into(), args: vec![], explicit_type_args: vec![] };
-        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()), Effect::Pure);
+        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()), Effect::Destructive);
         assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()));
     }
 
@@ -746,13 +791,23 @@ mod tests {
     // -------------------------------------------------------------
 
     #[test]
-    fn an_unresolvable_call_with_no_fn_param_effects_entry_is_still_pure() {
+    fn an_untraceable_call_has_every_effect() {
+        // A closure value from a function's return or an enum: the walk
+        // cannot see its body, so it may do anything.
         let funcs = FunctionTable::new();
+        let call = Expr::FunctionCall { name: "made".into(), args: vec![], explicit_type_args: vec![] };
+        let effects = expr_effects(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new());
+        assert_eq!(effects, EffectSet::all());
+        assert!(!effects.within(FnEffectAnnotation::Hardware) && !effects.within(FnEffectAnnotation::PhysicalKey));
+    }
+
+    #[test]
+    fn an_unannotated_fn_parameter_is_pure_inside_its_function() {
+        // Its closures count where the function is called, not here.
+        let params = [FnParam { name: "attempt_fn".into(), ty: TypeExpr::Fn(vec![], Box::new(TypeExpr::Void), None) }];
+        let scoped = scoped_fn_param_effects(&params, &HashMap::new());
         let call = Expr::FunctionCall { name: "attempt_fn".into(), args: vec![], explicit_type_args: vec![] };
-        // The pre-existing, unchanged, still-accepted fallback for an
-        // *unannotated* `Fn(...)`-typed parameter's call.
-        assert_eq!(expr_effect(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()), Effect::Pure);
-        assert!(expr_has_required_confirmation(&call, &funcs, &FunctionTable::new(), &HashMap::new(), &mut ResolvingSet::new()));
+        assert_eq!(expr_effect(&call, &FunctionTable::new(), &FunctionTable::new(), &scoped, &mut ResolvingSet::new()), Effect::Pure);
     }
 
     #[test]

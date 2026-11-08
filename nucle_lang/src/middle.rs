@@ -64,6 +64,7 @@ pub fn lower_program(program: &Program) -> MirProgram {
 
     let mut bindings: HashMap<String, (PoolState, f64)> = HashMap::new();
     let mut closures = crate::effects::FunctionTable::new();
+    let mut ceilings = HashMap::new();
     let mut ops = Vec::new();
     let notes = Vec::new();
 
@@ -78,7 +79,7 @@ pub fn lower_program(program: &Program) -> MirProgram {
                 });
             }
             Declaration::Let(binding) => {
-                crate::effects::bind_closure(&mut closures, declaration);
+                crate::effects::bind_callable(&mut closures, &mut ceilings, declaration);
                 let Some((state, error_rate_percent)) = infer_binding(&binding.expr, &bindings) else {
                     continue;
                 };
@@ -87,7 +88,7 @@ pub fn lower_program(program: &Program) -> MirProgram {
                     name: binding.name.clone(),
                     state,
                     error_rate_percent,
-                    effect: expr_effect(&binding.expr, &funcs, &closures, &std::collections::HashMap::new(), &mut std::collections::HashSet::new()),
+                    effect: expr_effect(&binding.expr, &funcs, &closures, &ceilings, &mut std::collections::HashSet::new()),
                 });
             }
             Declaration::Operation(Operation::Store(store)) => {

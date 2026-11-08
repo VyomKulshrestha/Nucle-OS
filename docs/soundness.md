@@ -48,10 +48,11 @@ enclosing blocks, and the ceilings of any annotated `Fn(...)` parameters.
 | `p()`, `p` a parameter typed `Fn(...) -> T confirm hardware` | {Synthesis} |
 | `p()`, `p` a parameter typed `Fn(...) -> T confirm physical_key` | {Destructive} |
 | `p()`, `p` an unannotated `Fn` parameter | ∅; the call that passed the closure adds its effects (row above) |
+| `g()`, `g` a closure the analysis cannot trace: returned by a function, taken out of an enum, or bound to either through an unannotated `Fn` type | every effect |
 | `?`, `Ok`, `Err`, enum constructors, `!`, binary operators | the effects of their operands |
 | `match`, `if` | the union over the scrutinee and every arm or branch, taken or not |
 | `for` | the effects of its body |
-| a block `d₁ ... dₙ` | the union of E(dᵢ), where `let x = fn ...` in dᵢ puts `x` in Γ for dᵢ₊₁ ... dₙ |
+| a block `d₁ ... dₙ` | the union of E(dᵢ), where `let x = fn ...` in dᵢ puts `x` in Γ for dᵢ₊₁ ... dₙ, `let x = y` puts `x` in Γ as whatever `y` is, and `let x: Fn(...) -> T confirm k = e` puts `x` in Γ with ceiling `k` |
 
 A recursive call contributes ∅ to its own component, which gives the least
 fixed point: a recursive function that deletes is still Destructive, and a
@@ -104,8 +105,9 @@ declared `returns Void` returns nothing, whatever its last binding holds.
   source carried its confirmation, and which top-level declaration was
   running;
 - a fault whenever a value fails its declared type (`Value::conforms_to`)
-  at a binding, argument or return, and whenever `?` or `match` meets a
-  value it should not;
+  at a binding, argument or return, including a declared pool whose profile
+  is not the one a `Pool<Profile>` names, and whenever `?` or `match` meets
+  a value it should not;
 - a fault whenever an operation runs inside a closure call whose ceiling it
   exceeds. A closure takes on the ceiling of every slot it is bound into,
   and the interpreter keeps the ceilings of the closure calls in progress.
@@ -117,20 +119,30 @@ reported effect, and no fault was recorded. It runs two sets of programs:
 - every shipped example in `docs/examples` that compiles: 30 of the 31,
   which ran 48 stores and deletes between them;
 - 300 programs generated from seeds 0 to 299 in CI, from a generator
-  (`Gen` in the same file) that writes functions, closures held in `let`s,
-  higher-order functions with and without ceilings, closures passed to them
-  inline or by name that call other functions, `Result` functions using
-  `?` and `match`, `if`, `for` and pipelines. About one delete in
-  twenty-five drops its confirmation, and about one closure in twenty is
-  given a ceiling its body does not fit, so the checker's rejections are
-  exercised too. Of the 300, 241 were accepted; they ran 2,898 stores and
-  405 deletes.
+  (`Gen` in the same file) that writes:
+  - functions, closures held in `let`s, and higher-order functions with
+    and without ceilings, passed closures inline or by name that call other
+    functions;
+  - closures returned from functions, and closures passed on under a
+    second name, both called directly and handed to higher-order
+    functions;
+  - functions generic over a pool's profile, functions taking a
+    `Pool<Illumina>` that are also called with a Twist pool, and functions
+    that recurse until the call-depth limit stops them;
+  - `Result` functions using `?` and `match`, `if`, `for`, pipelines and
+    stores with `retain` requirements.
 
-A longer run of 5,000 programs (`NSL_SOUNDNESS_PROGRAMS=5000`) on 7
-November 2026 accepted 3,844, ran 47,068 stores and 6,625 deletes, and broke
-no promise. The reports are also close to exact: of the 51,910 top-level
-declarations that ran an operation, 29 were reported with a worse effect
-than they performed. The rules allow that: every arm and branch counts
+  About one delete in twenty-five drops its confirmation, and about one
+  closure in twenty is given a ceiling its body does not fit, so the
+  checker's rejections are exercised too. Of the 300, 222 were accepted;
+  they ran 3,086 stores and 333 deletes.
+
+A longer run of 5,000 programs (`NSL_SOUNDNESS_PROGRAMS=5000`) on 8
+November 2026 accepted 3,816, ran 52,695 stores and 5,373 deletes, and broke
+no promise. The reports are also close to exact: of the 49,565 top-level
+declarations that ran an operation, 127 were reported with a worse effect
+than they performed, most of them calls through a closure the analysis
+cannot trace. The rules allow that: every arm and branch counts
 whether it runs or not, and a run that stops early never reaches its later
 operations.
 
@@ -157,25 +169,47 @@ all five tests fail on the code before the fixes.
   `returns Void` whose body ended on a `Result` binding handed that
   `Result` to its caller at run time. It returns nothing now.
 
+Two more turned up later, the first while writing down the core calculus
+for the proof below, which made plain that a closure can leave the scope
+the analysis watches. The generator was then extended to make such
+programs, and on the code before the fixes it flagged 70 of its 300.
+
+- **A closure returned from a function could do anything unnoticed.** A
+  call through a closure the analysis could not trace (one returned by a
+  function, or bound through an unannotated `Fn` type to one) counted as
+  Pure. `nucle explain` reported such calls as Pure, and the closure fit
+  every ceiling, so a function could hand back a deleting closure that
+  then ran inside a `confirm hardware` slot. Such a call now has every
+  effect and fits no ceiling unless its `Fn` type names one. Another name
+  for a known closure resolves to that closure, and calls to imported
+  functions resolve to their bodies.
+- **A closure under a second name was missing at run time.** At top
+  level, `let again: Fn() -> Void = wipe` (or `let name: File =
+  "a.txt"`) was never evaluated, so calling `again()` found nothing to
+  call. It is evaluated now.
+
+Each is pinned in `soundness_regressions.rs` too, and those tests also
+fail on the code before the fixes.
+
 ## What this does not show
 
 - **It is not a proof.** The rules above are stated precisely, but nothing
   derives the promises from them; the evidence is that every program run
   so far kept them.
-- **The generator leaves parts of the language out:** enums, generic
-  functions, package imports, `test` blocks, recursion, `retain`
-  requirements, and pool expressions (`simulate`, `consensus_vote`,
-  `synthesise`, `sequence`), which never run: they exist only while
-  checking. Their rules are covered by the ordinary tests, not by the
-  monitor.
+- **The generator leaves parts of the language out:** enums, package
+  imports, `test` blocks, and pool expressions (`simulate`,
+  `consensus_vote`, `synthesise`, `sequence`), which never run: they exist
+  only while checking. Their rules are covered by the ordinary tests, not
+  by the monitor.
 - **Error-rate types are estimates.** A pool's type carries an error rate
   (`Pool<Illumina, 0.35%>`) that the checker computes from published
   profiles; the runtime has no pool values to compare it with. Whether
   those rates match real reads is a question for the channel measurements
   in [architecture.md](architecture.md#measured-array-pool-channels), not
   for this monitor.
-- **The monitor checks shapes, not full types.** At run time
-  `Pool<Illumina>` and `Pool<Nanopore>` are both just a pool, and `Strand`,
+- **The monitor checks shapes and pool profiles, not every type.** A
+  declared pool is checked against a concrete `Pool<Profile>`, but a
+  generic `Pool<P>` is erased by the time a program runs, and `Strand`,
   `Sequence` and `Recovery` have no values at all.
 - **Synthesis and Sequencing share a ceiling**, and `store` needs no
   confirmation, by design (see [effects.md](effects.md)).
