@@ -1842,6 +1842,10 @@ impl TypeChecker {
     /// no special-casing for any of them.
     fn check_fn_effect_compatibility(&mut self, expected: Option<FnEffectAnnotation>, expr: &Expr, span: Span) {
         let Some(expected) = expected else { return };
+        // A parameter without a ceiling of its own may hold any closure,
+        // and that closure runs under this ceiling: so it counts as every
+        // effect here, though reporting leaves it to its call sites.
+        let visible = crate::effects::ceiling_view(&self.fn_param_effects);
         let (actual, actual_confirmed) = match expr {
             Expr::Closure { params, body, .. } => {
                 // The literal's own annotated `Fn(...)`-typed parameters
@@ -1850,11 +1854,12 @@ impl TypeChecker {
                 // function/closure -- so a closure literal that itself
                 // takes an effect-annotated parameter resolves calls to
                 // it correctly, not just calls to whatever it captures.
-                let scoped = crate::effects::scoped_fn_param_effects(params, &self.fn_param_effects);
+                // Its unannotated ones count as every effect, as above.
+                let scoped = crate::effects::ceiling_view(&crate::effects::scoped_fn_param_effects(params, &visible));
                 crate::effects::body_effects(body, &self.functions, &self.closure_decls, &scoped, &mut HashSet::new())
             }
             Expr::Variable(name) => {
-                crate::effects::function_call_effects(name, &self.functions, &self.closure_decls, &self.fn_param_effects, &mut HashSet::new())
+                crate::effects::function_call_effects(name, &self.functions, &self.closure_decls, &visible, &mut HashSet::new())
             }
             _ => return,
         };
@@ -1862,11 +1867,11 @@ impl TypeChecker {
         let confirmed_enough = actual_effect == Effect::Pure || actual_confirmed;
         // Every kind of effect the closure may have must fit, not just its
         // worst: one that stores and deletes fits neither ceiling.
-        let untraceable = matches!(expr, Expr::Variable(name) if !self.closure_decls.contains_key(name) && !self.fn_param_effects.contains_key(name) && !self.functions.contains_key(name));
+        let untraceable = matches!(expr, Expr::Variable(name) if !self.closure_decls.contains_key(name) && !visible.contains_key(name) && !self.functions.contains_key(name));
         if untraceable {
             let Expr::Variable(name) = expr else { unreachable!() };
             self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
-                "'{}' holds a closure whose body the checker cannot see (a function's return value, an enum payload, or a binding of either), so it may do anything; give the `Fn` type it comes through a `confirm {}` ceiling",
+                "'{}' holds a closure whose body the checker cannot see (a parameter without a ceiling, a function's return value, an enum payload, or a binding of one of these), so it may do anything; give the `Fn` type it comes through a `confirm {}` ceiling",
                 name,
                 match expected { FnEffectAnnotation::Hardware => "hardware", FnEffectAnnotation::PhysicalKey => "physical_key" },
             ));

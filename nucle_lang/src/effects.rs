@@ -241,6 +241,15 @@ pub fn scoped_fn_param_effects(params: &[FnParam], outer: &HashMap<String, Effec
     scoped
 }
 
+/// `fn_param_effects` as an effect ceiling must see it: without the
+/// parameters that have no ceiling of their own (entered as `Pure`), so a
+/// call through one counts as every effect. Reporting can leave such a
+/// parameter's closure to the call site that passed it; a ceiling cannot,
+/// because whatever closure the parameter holds runs under the ceiling.
+pub fn ceiling_view(fn_param_effects: &HashMap<String, Effect>) -> HashMap<String, Effect> {
+    fn_param_effects.iter().filter(|(_, effect)| **effect != Effect::Pure).map(|(name, effect)| (name.clone(), *effect)).collect()
+}
+
 pub fn operation_effect(operation: &Operation) -> Effect {
     match operation {
         Operation::Store(store) if store.simulate => Effect::Pure,

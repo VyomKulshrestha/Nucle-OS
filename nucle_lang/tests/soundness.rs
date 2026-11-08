@@ -393,7 +393,26 @@ impl Gen {
 
     fn function(&mut self) -> String {
         let mut result_vars = Vec::new();
-        match self.rng.gen_range(0..8) {
+        match self.rng.gen_range(0..9) {
+            8 if !self.hofs.is_empty() => {
+                // A parameter without a ceiling, forwarded to another
+                // higher-order function, by name or inside a closure.
+                let (name, v) = (self.name("relay"), self.name("done"));
+                let (target, _) = self.hofs[self.rng.gen_range(0..self.hofs.len())].clone();
+                let call = if self.chance(0.5) {
+                    format!("{target}(action)")
+                } else {
+                    let inner = self.name("inner");
+                    format!("{target}(fn() -> Void {{
+        let {inner}: Void = action()
+    }})")
+                };
+                self.hofs.push((name.clone(), Ceiling::None));
+                format!("fn {name}(action: Fn() -> Void) returns Void {{
+    let {v}: Void = {call}
+}}
+")
+            }
             7 => {
                 // A concrete profile: called with the Twist pool, the
                 // checker must refuse; with the Illumina pool, the run

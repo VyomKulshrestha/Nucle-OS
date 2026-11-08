@@ -118,3 +118,17 @@ fn an_alias_of_a_closure_is_bound_at_run_time() {
     assert!(report.steps.iter().any(|s| s.starts_with("delete from archive: removed 'archive/a.txt'")), "{:?}", report.steps);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A parameter without a ceiling may hold any closure, so forwarding it
+/// into a `confirm hardware` slot must not pass: the closure the caller
+/// gave runs under that ceiling.
+#[test]
+fn a_parameter_without_a_ceiling_fits_no_ceiling() {
+    let src = format!(
+        "{POOL}fn with_hardware(action: Fn() -> Void confirm hardware) returns Void {{\n    let done: Void = action()\n}}\n\
+         fn relay(action: Fn() -> Void) returns Void {{\n    let done: Void = with_hardware(action)\n}}\n\
+         fn relay_inline(action: Fn() -> Void) returns Void {{\n    let done: Void = with_hardware(fn() -> Void {{\n        let inner: Void = action()\n    }})\n}}\n"
+    );
+    let codes = diagnostic_codes(&src);
+    assert_eq!(codes.iter().filter(|c| *c == "E-FN-EFFECT-ARG-MISMATCH").count(), 2, "{codes:?}");
+}
