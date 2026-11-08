@@ -3,8 +3,9 @@
 The NucleScript checker makes four promises about any program it accepts.
 This page states them, gives the rules they rest on, and describes how they
 are checked: by running programs under a monitor that compares what each
-one did with what the checker said it would do. That is evidence from
-testing, not a proof, and the last section says where the evidence stops.
+one did with what the checker said it would do, and by a proof, checked by
+Lean, that the rules keep the first three promises for a core of the
+language. The last section says where each stops.
 
 ## The promises
 
@@ -205,11 +206,54 @@ a ceiling may do inside one.
 Each is pinned in `soundness_regressions.rs` too, and those tests also
 fail on the code before the fixes.
 
+## The machine-checked core
+
+[proofs/NucleScriptCore.lean](../proofs/NucleScriptCore.lean) writes the
+effect rules above down in Lean 4 for a core of the language and proves
+that a program they accept keeps promises 1 to 3. The core has:
+
+- operations, each with its effect and whether its confirmation was
+  written;
+- sequencing, and branches of which either side may run (`if`, `match`);
+- closures bound by `let`, with or without a ceiling, and other names for
+  them;
+- closures the rules cannot see into, such as one returned by a function,
+  with or without a ceiling on the type they come through;
+- calls to closures, and named functions that take closures as arguments,
+  with or without ceilings, recursion included.
+
+Running a statement gives the list of operations it performed, each with
+its effect, whether it carried its confirmation, and the ceilings of the
+closure calls in progress: what the monitor's trace records. The rules give
+each statement two things: R, the effects it may have itself, and U, the
+parameters without a ceiling whose closures it may call. R is what `nucle
+explain` reports. A call adds the effects of the closures it passes for U,
+and a closure fits a ceiling only when its U is empty and its R is allowed,
+the rule the last defect above broke. A function's effect may be any set
+its body's R fits in; the least fixed point the checker computes is one.
+
+| Theorem | Promise |
+|---|---|
+| `program_confirmed` | 1: every operation that ran carried its confirmation |
+| `program_effects_sound` | 2: every operation's effect is in R |
+| `program_ceilings_sound` | 3: every operation is allowed by the ceiling of each closure call it ran inside |
+
+The proof needs one invariant the rules do not state: a closure value does
+at most what the binding holding it says, given what the enclosing
+function's parameters hold (`ValOk` and `EnvOk`). Lean checks the file in
+a few seconds, the theorems rest on no axiom but `propext`, and CI
+rebuilds the proof and fails if any step rests on `sorry`.
+[proofs/README.md](../proofs/README.md) says how to check it.
+
 ## What this does not show
 
-- **It is not a proof.** The rules above are stated precisely, but nothing
-  derives the promises from them; the evidence is that every program run
-  so far kept them.
+- **The proof covers a core, not the implementation.** Its rules were
+  written by hand from `effects.rs` and `typeck.rs`, and nothing ties the
+  two together, so a slip in the Rust that the Lean rules do not share is
+  caught only by the monitor and the tests. The core leaves out closures
+  that take arguments of their own, generics, `Result` and `?`, enums other
+  than as a source of closures it cannot see into, and value shapes:
+  promise 4 rests on testing alone.
 - **The generator leaves parts of the language out:** enums, package
   imports, `test` blocks, and pool expressions (`simulate`,
   `consensus_vote`, `synthesise`, `sequence`), which never run: they exist

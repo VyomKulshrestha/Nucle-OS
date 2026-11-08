@@ -48,3 +48,20 @@ jobs:
       - name: Test VS Code extension
         working-directory: editors/vscode/nuclescript
         run: npm ci && npm test
+
+  proofs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Check the Lean proofs
+        working-directory: proofs
+        run: lake build
+      - name: Refuse unproved steps
+        working-directory: proofs
+        run: |
+          lake env lean Axioms.lean | tee axioms.txt
+          if grep -q sorryAx axioms.txt; then echo "a theorem rests on sorry"; exit 1; fi

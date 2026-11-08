@@ -1027,9 +1027,12 @@ hardware` ceiling and a store a `confirm physical_key` one, a `Void`
 function returned its last binding, a closure returned from a function
 counted as Pure and so fit any ceiling, a closure under a second name was
 missing at run time, and a function could pass a parameter without a
-ceiling into one. All eight are fixed.
-[docs/soundness.md](docs/soundness.md) states the rules and what this
-testing does not establish (it is not a proof):
+ceiling into one. All eight are fixed. A proof in
+[proofs/NucleScriptCore.lean](proofs/NucleScriptCore.lean), checked by Lean
+in CI, shows that the rules keep the confirmation, effect-report and
+ceiling promises for a core of the language.
+[docs/soundness.md](docs/soundness.md) states the rules, what the proof
+covers, and what neither the proof nor the testing establishes:
 
 ```bash
 $ nucle explain docs/examples/critical_redundancy_warning.nsl
@@ -1430,6 +1433,10 @@ nucle agent "pool status"
 | `nucle_demo_core` | 8 | Interactive benchmark/pipeline demo engine: end-to-end recovery estimation, unknown-codec/oversized-input rejection, the pipeline visualizer recovering its default message through Illumina and Nanopore noise with 10 reads per strand (and replaying the same run for the same message), and the shelf-life calculator (published half-life, monotone recovery curve, temperature ordering, input validation and defaults) |
 | **Total** | **952 discovered tests (951 runnable, 1 ignored; includes 3 doctests)** | **All 951 runnable tests passed with `cargo test --workspace --no-fail-fast` on 8 November 2026.** |
 
+CI also checks the Lean proof in `proofs/`: three theorems about the effect
+rules, with no step left unproved (see
+[docs/soundness.md](docs/soundness.md#the-machine-checked-core)).
+
 ---
 
 ## Project Structure
@@ -1451,6 +1458,7 @@ nucle_wasm/      — Same playground compiled to WebAssembly; live at nuclescrip
 editors/vscode/nuclescript/ — VS Code extension: TextMate grammar, language server client, formatter/run commands, native Test Explorer
 docs/            — Architecture notes, paper references, and runnable examples/fixtures
 packages/        — NucleScript package registry (packages/registry.json) and package releases (presets, profiles, benchmarks, recovery)
+proofs/          — Lean 4 proof that the effect and confirmation rules keep their promises for a core of NucleScript
 ```
 
 ---

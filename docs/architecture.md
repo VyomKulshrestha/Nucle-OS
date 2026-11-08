@@ -672,6 +672,10 @@ caller's choice is checked against no ceiling at all. So
 drops the `Pure` entries: there, a call through such a parameter is
 untraceable and has every effect.
 
+[soundness.md](soundness.md#the-machine-checked-core) proves in Lean that
+these rules, `ceiling_view` included, keep the confirmation, effect-report
+and ceiling promises for a core of the language.
+
 See the "Effect-Annotated Function Types" section of
 [docs/grammar.md](grammar.md) for the full surface semantics, and
 [`docs/examples/effect_annotated_closure.nsl`](examples/effect_annotated_closure.nsl)

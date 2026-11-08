@@ -118,8 +118,10 @@ As far as this survey found, the following are not in the work above:
 - No NucleScript program has driven a real synthesis or sequencing run.
   The order sheets have not been submitted, and the real-read decoding
   uses public datasets made by others.
-- The type and effect rules are tested, not proved
-  ([soundness.md](soundness.md)).
+- The effect and confirmation rules are proved, in Lean, only for a core
+  of the language whose rules were written by hand from the implementation;
+  value shapes and the rest of the language are tested, not proved
+  ([soundness.md](soundness.md#what-this-does-not-show)).
 - The error rates in pool types come from published profiles and the
   measured channels of one study, and say nothing about a lab's own
   instruments.
