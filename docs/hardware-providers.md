@@ -102,8 +102,9 @@ written if the vendor would refuse it:
 
 Every sequence must be plain A/C/G/T and every name unique. For IDT the
 command lists the scales that take a pool of that size. The IDT figures are
-from its oPools entry page, which accepts Excel uploads only and does not
-publish its template's column names, hence the CSV to paste. The Twist
+from its oPools entry page, and still matched it on 8 November 2026. The
+page takes Excel files only (`.xlsx`, `.xls`) and, without an IDT account,
+shows neither a template nor its column names, hence the CSV to paste. The Twist
 figures are its oligo-pool requirements as university core facilities pass
 them on (a sequence file with one oligo per line). Nothing is ordered;
 check the sheet against the vendor's current page before uploading it.
