@@ -64,23 +64,24 @@
 \newcommand{\app}{\mathbin{+\!\!+}}
 \newcommand{\nsl}[1]{\texttt{#1}}
 
-\title{NucleScript: Effects, Confirmations and Channel-Typed Pools\\
-for DNA Data Storage Programs}
+\title{NucleScript: A Programming Language for DNA Data Storage\\
+with Checked Effects and Channel-Typed Pools}
 \author{Vyom Kulshrestha\\
 \small Independent Researcher, India\\
 \small ORCID \href{https://orcid.org/0009-0009-1434-7148}{0009-0009-1434-7148}}
-\date{Technical report, 8 November 2026\\
+\date{Technical report, version 2, 9 November 2026\\
 \small NucleScript 1.0, NucleOS v0.1.70\\
-\small \href{https://doi.org/10.5281/zenodo.24057685}{doi:10.5281/zenodo.24057685}}
+\small \href{https://doi.org/10.5281/zenodo.24059497}{doi:10.5281/zenodo.24059497}}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Storing data in DNA means paying for synthesis and sequencing, destroying
-material when data is deleted, and reading it back through noisy channels
-whose error rates depend on the instrument. NucleScript is a small
-language for writing such storage programs. A pool's type names the
+Programs that store data in DNA order costly synthesis and sequencing,
+destroy material when they delete, and read through noisy channels whose
+error rates depend on the instrument, yet they are written as scripts
+that nothing checks before they run. NucleScript is a programming
+language for these programs. A pool's type names the
 sequencer profile it was read through and an error rate that consensus
 lowers. Operations that synthesise, sequence or delete have effects, each
 needs a confirmation written at the operation, and a function type can
@@ -122,7 +123,8 @@ the chosen sequencer cannot recover from, or ask for a retention period
 the storage medium cannot reach. In ordinary programs such mistakes cost
 a rerun. Here they cost a synthesis order or a pool of molecules.
 
-NucleScript makes these properties part of a program's types. This
+NucleScript is a programming language that makes these properties part
+of a program's types. This
 report describes the language and its implementation, and then asks how
 far its checker can be trusted. Its contributions are:
 
