@@ -17,9 +17,11 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // whenever a newer `v*` release ships with an updated nucle-cli, or a
 // fresh install downloading it will fail to parse -- or silently
 // mis-execute -- any .nsl file using syntax added since the pinned tag.
-// v0.1.65 is the NucleOS release paired with extension v0.1.20. It
-// implements NucleScript 1.0: `decode reads`, generic bodies checked per
-// profile, and effect ceilings held to every kind of effect, on top of
+// v0.1.70 is the NucleOS release paired with extension v0.1.21. It
+// counts a closure the checker cannot see into, or a `Fn` parameter
+// without a ceiling, as every effect under an effect ceiling, on top of
+// v0.1.65's NucleScript 1.0: `decode reads`, generic bodies checked per
+// profile, and effect ceilings held to every kind of effect, and
 // v0.1.53's closures passed to `Fn(...)` parameters and data-length parity
 // strands, v0.1.46's `codec: Hedges` and `storage: silica`, v0.1.35's real
 // package imports, pool and recovery-profile arguments and recursion, and
@@ -29,7 +31,7 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // grammar and language server accept. Publish that runtime release before
 // publishing this VSIX. This stays independent of nucle-lsp's
 // extension-versioned release tag.
-const CLI_RELEASE_TAG = "v0.1.65";
+const CLI_RELEASE_TAG = "v0.1.70";
 
 /** The release asset name published for this platform, or `undefined` if
  * none exists (arm64 Linux/Windows) -- caller falls back to asking the

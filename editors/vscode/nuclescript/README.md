@@ -103,7 +103,10 @@ NucleScript 1.0, the declarative DNA-storage operations language for
   pre-existing behavior — purely additive, opt-in syntax reusing the same
   `confirm hardware`/`confirm physical_key` tokens already used
   elsewhere. Every kind of effect a closure has must fit the ceiling, so
-  one that both stores and deletes fits neither. Diagnostics
+  one that both stores and deletes fits neither. A closure the checker
+  cannot see into, such as one returned by a function, fits a ceiling only
+  if its type declares one, and a `Fn` parameter without a ceiling fits
+  none. Diagnostics
   (`E-FN-EFFECT-ARG-MISMATCH`), hover, formatting, and `nucle doc` all
   understand the new syntax.
 - **`Ok(...)`/`Err(...)` constructors, explicit `::<Illumina>()` type

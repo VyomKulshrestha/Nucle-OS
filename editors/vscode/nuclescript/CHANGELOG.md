@@ -4,6 +4,24 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.21]
+
+- A closure the checker cannot see into, one returned by a function,
+  taken out of an enum, or bound to one through a `Fn` type without a
+  ceiling, now counts as doing anything. Calls through it show every
+  effect, and it fits a `confirm hardware` or `confirm physical_key`
+  ceiling only if the type it comes through declares one.
+- A `Fn` parameter without a ceiling no longer fits one. Passing it on to
+  a `confirm hardware` parameter, or calling it inside a closure passed
+  there, is reported as `E-FN-EFFECT-ARG-MISMATCH`, since a caller may
+  give it a closure that deletes.
+- Another name for a closure (`let again: Fn() -> Void = wipe`) has that
+  closure's effect, and `nucle run` can call it at top level.
+- Calls into functions imported from a package show the effects of their
+  bodies.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.70 runtime, which contains all of the above.
+
 ## [0.1.20]
 
 - 0.1.19 was tagged but never released: its build stopped on a macOS
