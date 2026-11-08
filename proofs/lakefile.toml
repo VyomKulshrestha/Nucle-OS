@@ -1,0 +1,5 @@
+name = "nucle_proofs"
+defaultTargets = ["NucleScriptCore"]
+
+[[lean_lib]]
+name = "NucleScriptCore"
