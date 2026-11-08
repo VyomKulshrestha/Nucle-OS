@@ -984,7 +984,9 @@ fn run_cleanup() returns Void {
   the functions a closure calls, including the closures those functions
   bind themselves. A closure returned by a function, or bound to one
   through an unannotated `Fn` type, cannot be seen into, so it fits a
-  ceiling only if the type it comes through declares one. See
+  ceiling only if the type it comes through declares one. A `Fn`
+  parameter without a ceiling fits none either, passed on by name or
+  called inside a closure, since a caller may pass any closure for it. See
   [docs/soundness.md](soundness.md).
 - **Still a ceiling, not full hardware-request precision** — `Synthesis`
   and `Sequencing` are deliberately not distinguished at the annotation

@@ -81,7 +81,9 @@ synthesis and sequencing, which NucleOS has not.
 The evidence in [soundness.md](soundness.md) comes from runtime checks on
 generated programs, in the tradition of QuickCheck's random testing [19]
 and of Csmith, which found compiler bugs with randomly generated programs
-[20]. Like Csmith, the generator found real defects: five, all now fixed.
+[20]. Like Csmith, the generator found real defects. With the shipped
+examples, and the work of writing the rules down for the proof, the
+monitor has found eight, all now fixed.
 
 ## What NucleScript adds
 

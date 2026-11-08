@@ -64,6 +64,11 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **8 November 2026, NucleOS v0.1.67:** soundness fix. A `Fn` parameter
+  without a ceiling no longer fits one: a function that passes it on to a
+  `confirm ...` parameter, or calls it inside a closure it passes there, is
+  now rejected, since its caller may hand it any closure. None of the 33
+  programs in the 1.0 corpus changed.
 - **8 November 2026, NucleOS v0.1.66:** soundness fix. A closure returned
   from a function, or bound to one through an unannotated `Fn` type, no
   longer fits an effect ceiling, since the checker cannot see what it

@@ -664,6 +664,14 @@ that distinction, unannotated parameters now enter `fn_param_effects` as
 annotated binding to its ceiling, and `function_table` includes imported
 functions, so calls into packages resolve to their bodies.
 
+That `Pure` is right for reporting and wrong under a ceiling. A function
+that passes its unannotated parameter on to a `confirm hardware` slot
+runs whatever closure its own caller chose under that ceiling, and the
+caller's choice is checked against no ceiling at all. So
+`check_fn_effect_compatibility` looks at `effects::ceiling_view`, which
+drops the `Pure` entries: there, a call through such a parameter is
+untraceable and has every effect.
+
 See the "Effect-Annotated Function Types" section of
 [docs/grammar.md](grammar.md) for the full surface semantics, and
 [`docs/examples/effect_annotated_closure.nsl`](examples/effect_annotated_closure.nsl)

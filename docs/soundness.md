@@ -68,10 +68,12 @@ about real (not simulated) stores instead.
 it to an annotated parameter, or `let`-binding it with an annotated type)
 requires E(c) ⊆ allowed(k), where allowed(`hardware`) = {Synthesis,
 Sequencing} and allowed(`physical_key`) = {Destructive}, and requires every
-operation in `c` to be confirmed. The checker reports `E-FN-EFFECT-ARG-
-MISMATCH` otherwise. Calling the parameter can then be trusted to stay
-within `k` without seeing the closure, because every closure that can
-reach it was checked where it was bound.
+operation in `c` to be confirmed. Here a call through an unannotated `Fn`
+parameter counts as every effect, not ∅: whatever closure a caller passes
+for it would run under `k`, so `c` fits only if it calls none. The checker
+reports `E-FN-EFFECT-ARG-MISMATCH` otherwise. Calling the parameter can
+then be trusted to stay within `k` without seeing the closure, because
+every closure that can reach it was checked where it was bound.
 
 The rules live in `nucle_lang/src/effects.rs` (`expr_effects`,
 `block_effect`, `EffectSet`) and in `typeck::check_fn_effect_compatibility`.
@@ -134,13 +136,15 @@ reported effect, and no fault was recorded. It runs two sets of programs:
 
   About one delete in twenty-five drops its confirmation, and about one
   closure in twenty is given a ceiling its body does not fit, so the
-  checker's rejections are exercised too. Of the 300, 222 were accepted;
-  they ran 3,086 stores and 333 deletes.
+  checker's rejections are exercised too. Some functions take a closure
+  without a ceiling and pass it on to one that has a ceiling, by name or
+  inside a closure of their own. Of the 300, 215 were accepted; they ran
+  2,871 stores and 313 deletes.
 
 A longer run of 5,000 programs (`NSL_SOUNDNESS_PROGRAMS=5000`) on 8
-November 2026 accepted 3,816, ran 52,695 stores and 5,373 deletes, and broke
-no promise. The reports are also close to exact: of the 49,565 top-level
-declarations that ran an operation, 127 were reported with a worse effect
+November 2026 accepted 3,540, ran 48,086 stores and 4,900 deletes, and broke
+no promise. The reports are also close to exact: of the 45,903 top-level
+declarations that ran an operation, 131 were reported with a worse effect
 than they performed, most of them calls through a closure the analysis
 cannot trace. The rules allow that: every arm and branch counts
 whether it runs or not, and a run that stops early never reaches its later
@@ -169,10 +173,12 @@ all five tests fail on the code before the fixes.
   `returns Void` whose body ended on a `Result` binding handed that
   `Result` to its caller at run time. It returns nothing now.
 
-Two more turned up later, the first while writing down the core calculus
-for the proof below, which made plain that a closure can leave the scope
-the analysis watches. The generator was then extended to make such
-programs, and on the code before the fixes it flagged 70 of its 300.
+Three more turned up later, while writing down the core calculus for the
+proof below. Two came from seeing that a closure can leave the scope the
+analysis watches; the generator was then extended to make such programs,
+and on the code before those fixes it flagged 70 of its 300. The third is
+a case the calculus's ceiling rule has to settle: what a parameter without
+a ceiling may do inside one.
 
 - **A closure returned from a function could do anything unnoticed.** A
   call through a closure the analysis could not trace (one returned by a
@@ -187,6 +193,14 @@ programs, and on the code before the fixes it flagged 70 of its 300.
   level, `let again: Fn() -> Void = wipe` (or `let name: File =
   "a.txt"`) was never evaluated, so calling `again()` found nothing to
   call. It is evaluated now.
+- **A parameter without a ceiling could be passed into one.** Inside `fn
+  relay(action: Fn() -> Void)`, handing `action` to a `confirm hardware`
+  parameter, or calling it inside a closure handed there, was accepted,
+  because a call through `action` counted as ∅. A caller could then give
+  `relay` a deleting closure, and it ran under the hardware ceiling. Where
+  a ceiling is checked, such a parameter now counts as every effect; the
+  generator, once it learned to write `relay`, found one program of its
+  300 that broke the ceiling on the code before the fix.
 
 Each is pinned in `soundness_regressions.rs` too, and those tests also
 fail on the code before the fixes.
