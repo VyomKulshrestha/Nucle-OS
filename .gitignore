@@ -27,5 +27,8 @@ Thumbs.db
 # Private design documents
 /report.md
 /plan1.md
-/plan2.md# Lean build output
+/plan2.md
+# Lean build output
 /proofs/.lake/
+# Downloaded and prepared ERP173549 reads (GPL-3.0 references; see scripts/erp173549)
+/scripts/erp173549/data/

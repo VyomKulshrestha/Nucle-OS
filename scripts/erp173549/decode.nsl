@@ -1,0 +1,15 @@
+// Real Illumina reads of the high- and low-fidelity oligo pools of Gimpel et
+// al. 2026 (ENA ERP173549), decoded by a NucleScript program. Run
+// `python scripts/erp173549/prepare.py` first; it downloads the reads and
+// the designed references and writes the two pools under `data/`. Run this
+// from its own directory, since the paths below are relative to it.
+//
+// Each decode scores the consensus of every reference's reads against the
+// reference, then throws the labels away and decodes from the reads alone.
+decode reads "data/hifi/Clusters.txt" against "data/hifi/Centers.txt" {
+    blind
+}
+
+decode reads "data/lofi/Clusters.txt" against "data/lofi/Centers.txt" {
+    blind
+}
