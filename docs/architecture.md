@@ -1490,6 +1490,37 @@ less than over-merging but still loses strands whose reads end up in
 fragments too small to outvote their errors. `nucle reads --blind` uses the
 fitted threshold and prints it.
 
+#### The same pools, decoded by a NucleScript program
+
+The numbers above came from the Rust examples. To get them from the
+language itself, `scripts/erp173549/prepare.py` rebuilds both pools from
+the published data (read 1 of each run from ENA, and the references at a
+pinned commit of the notebooks repository; Python standard library only),
+and `scripts/erp173549/decode.nsl` decodes each pool with `decode reads`,
+once with the labels and once `blind`:
+
+```bash
+python scripts/erp173549/prepare.py
+cd scripts/erp173549 && nucle run decode.nsl
+```
+
+The script trims a little differently from the preparation above. In the
+low-fidelity pool only about two reads in three carry an exact copy of the
+adapter, since the adapter was synthesized with the oligo and carries its
+errors, so the script also finds it by its last ten bases, then by its
+first six near position 129, and failing both cuts the read at 129. It
+keeps slightly more reads, with slightly more error. Run with a release
+build on 8 November 2026, the two pools took 20 minutes:
+
+| | High fidelity | Low fidelity |
+|---|---:|---:|
+| Reads kept | 306,715 (0.22% raw error) | 292,942 (1.85% raw error) |
+| References with a read | 11,209 | 11,224 |
+| Labels kept | 99.73% (11,179 exact, 0.007% error left) | 96.94% (10,881 exact, 0.110% left) |
+| Labels discarded | 99.73% (threshold 0.030, 13,984 clusters, 100% pure) | 95.82% (threshold 0.050, 23,322 clusters, 99.84% pure) |
+
+Every recovery figure is within 0.13 points of the table above.
+
 ## Retrieval Architecture
 
 ```

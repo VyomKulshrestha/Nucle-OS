@@ -547,6 +547,12 @@ reference sequences are GPL-3.0, so no sample ships with the tests; the
 dataset and how the reads were prepared are described in
 [docs/architecture.md](docs/architecture.md#measured-on-real-illumina-reads).
 
+A NucleScript program gets the same numbers.
+`scripts/erp173549/prepare.py` downloads the reads from ENA and prepares
+both pools, and `scripts/erp173549/decode.nsl` decodes them with `decode
+reads`: 99.73% and 96.94% of strands exact with the labels, 99.73% and
+95.82% without, each within 0.13 points of the table above.
+
 ### Full Stack: Store with ECC + CRISPR
 
 ```
