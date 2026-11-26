@@ -13,9 +13,10 @@
 //! higher-order functions with and without effect ceilings, closures
 //! returned from functions and passed on under other names, generic
 //! functions over a pool's profile, recursion, `Result` functions with `?`
-//! and `match`, loops, branches, pipelines and `retain` requirements, with
-//! an occasional missing confirmation or wrong ceiling the checker has to
-//! reject.
+//! and `match`, enums (one of which carries a closure), a function imported
+//! from a package, `test` blocks, loops, branches, pipelines and `retain`
+//! requirements, with an occasional missing confirmation or wrong ceiling
+//! the checker has to reject.
 
 use nucle_codec::stable_rng::StableRng;
 use nucle_lang::effects::effect_summary;
@@ -291,7 +292,7 @@ impl Gen {
     fn statement(&mut self, indent: &str, in_result_fn: bool, result_vars: &mut Vec<String>) -> String {
         loop {
             let (file, pool) = (self.file(), self.pool());
-            match self.rng.gen_range(0..18) {
+            match self.rng.gen_range(0..22) {
                 0 | 1 => return format!("{indent}store {file} into {pool}\n"),
                 2 => return format!("{indent}simulate store {file} into {pool}\n"),
                 3 | 4 => {
@@ -378,6 +379,37 @@ impl Gen {
                     let f = self.pick(&self.recursive_fns.clone()).to_string();
                     let v = self.name("done");
                     return format!("{indent}let {v}: Void = {f}()\n");
+                }
+                18 if !self.void_fns.is_empty() => {
+                    // A plain enum, matched to pick which function runs.
+                    let f = self.pick(&self.void_fns.clone()).to_string();
+                    let g = self.pick(&self.void_fns.clone()).to_string();
+                    let (j, v) = (self.name("job"), self.name("done"));
+                    let variant = if self.chance(0.5) { "Job::Keep".to_string() } else { format!("Job::Wipe({file})") };
+                    return format!(
+                        "{indent}let {j}: Job = {variant}\n{indent}let {v}: Void = match {j} {{\n{indent}    Keep => {f}(),\n{indent}    Wipe(why) => {g}(),\n{indent}}}\n"
+                    );
+                }
+                19 => {
+                    // A closure carried by an enum and taken out by a match:
+                    // the checker cannot see into it, so handing it to a
+                    // higher-order function with a ceiling must be refused.
+                    let mut effects = BodyEffects::default();
+                    let literal = self.closure_literal(Ceiling::None, indent, &mut effects);
+                    let (t, v) = (self.name("task"), self.name("done"));
+                    let call = match self.some_hof() {
+                        Some(hof) => format!("{hof}(step)"),
+                        None => "step()".to_string(),
+                    };
+                    return format!(
+                        "{indent}let {t}: Task = Task::Run({literal})\n{indent}let {v}: Void = match {t} {{\n{indent}    Run(step) => {call},\n{indent}}}\n"
+                    );
+                }
+                20 => {
+                    // A function imported from a package stores into the
+                    // pool the package declares.
+                    let v = self.name("kept");
+                    return format!("{indent}let {v}: DnaFile = archive_with_guarantee({file}, medical_archive, illumina_recovery)\n");
                 }
                 13 if in_result_fn && !result_vars.is_empty() => {
                     let r = self.pick(&result_vars.clone()).to_string();
@@ -496,8 +528,12 @@ impl Gen {
 
     fn program(&mut self) -> String {
         let mut out = String::from(
-            "pool p0: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }\npool p1: DnaPool { codec: Ternary, redundancy: 2x, profile: Twist }\n\
-             pool p2: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist, storage: encapsulated at 4C }\n",
+            "import { archive_with_guarantee, medical_archive, illumina_recovery } from \"nuclescript/presets\"\n\
+             enum Job {\n    Keep,\n    Wipe(Str),\n}\n\
+             enum Task {\n    Run(Fn() -> Void),\n}\n\
+             pool p0: DnaPool { codec: Ternary, redundancy: 2x, profile: Illumina }\npool p1: DnaPool { codec: Ternary, redundancy: 2x, profile: Twist }\n\
+             pool p2: DnaPool { codec: Ternary, redundancy: 3x, profile: Twist, storage: encapsulated at 4C }\n\
+             let noisy: Pool<Illumina, 0.35%> = simulate p0 under Illumina\n",
         );
         for pool in ["p0", "p1"] {
             for file in 0..4 {
@@ -509,7 +545,14 @@ impl Gen {
         }
         let mut result_vars = Vec::new();
         for _ in 0..3 + self.rng.gen_range(0..6) {
-            match self.rng.gen_range(0..9) {
+            match self.rng.gen_range(0..10) {
+                9 => {
+                    // A test block: checked like any other code, never run.
+                    // Now and then the bound is wrong, which the checker must reject.
+                    let name = self.name("noise");
+                    let bound = if self.chance(0.1) { "0.01" } else { "0.5" };
+                    out.push_str(&format!("test \"{name}\" {{\n    assert noisy < {bound}, \"noise bound\"\n}}\n"));
+                }
                 8 => {
                     let (file, years) = (self.file(), [100, 10_000, 1_000_000_000][self.rng.gen_range(0..3)]);
                     out.push_str(&format!("store {file} into p2 {{ retain: {years}y }}\n"));
