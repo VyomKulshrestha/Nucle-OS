@@ -14,7 +14,8 @@
 //! returned from functions and passed on under other names, generic
 //! functions over a pool's profile, recursion, `Result` functions with `?`
 //! and `match`, enums (one of which carries a closure), a function imported
-//! from a package, `test` blocks, loops, branches, pipelines and `retain`
+//! from a package, `test` blocks, loops over literal lists and over the
+//! files a pool holds, branches, pipelines and `retain`
 //! requirements, with an occasional missing confirmation or wrong ceiling
 //! the checker has to reject.
 
@@ -292,7 +293,7 @@ impl Gen {
     fn statement(&mut self, indent: &str, in_result_fn: bool, result_vars: &mut Vec<String>) -> String {
         loop {
             let (file, pool) = (self.file(), self.pool());
-            match self.rng.gen_range(0..22) {
+            match self.rng.gen_range(0..23) {
                 0 | 1 => return format!("{indent}store {file} into {pool}\n"),
                 2 => return format!("{indent}simulate store {file} into {pool}\n"),
                 3 | 4 => {
@@ -410,6 +411,18 @@ impl Gen {
                     // pool the package declares.
                     let v = self.name("kept");
                     return format!("{indent}let {v}: DnaFile = archive_with_guarantee({file}, medical_archive, illumina_recovery)\n");
+                }
+                21 => {
+                    // A loop over the files a pool holds when the program
+                    // runs: it deletes each one, or copies each into a pool.
+                    let (from, to) = (self.pool(), self.pool());
+                    let body = if self.chance(0.5) {
+                        let confirm = self.delete_confirm();
+                        format!("delete f from {from}{confirm}")
+                    } else {
+                        format!("store f into {to}")
+                    };
+                    return format!("{indent}for f in files of {from} {{\n{indent}    {body}\n{indent}}}\n");
                 }
                 13 if in_result_fn && !result_vars.is_empty() => {
                     let r = self.pick(&result_vars.clone()).to_string();
