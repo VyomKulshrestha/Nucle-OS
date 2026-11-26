@@ -10,3 +10,5 @@ which would mean a step was left unproved. -/
 #print axioms NucleScript.accept_effects_sound
 #print axioms NucleScript.accept_ceilings_sound
 #print axioms NucleScript.accept_confirmed
+#print axioms NucleScript.program_shapes_sound
+#print axioms NucleScript.accept_shapes_sound

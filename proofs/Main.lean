@@ -11,7 +11,7 @@ compares these verdicts with the Rust checker's.
 A line is a list of functions followed by the program's statement, in
 prefix form:
 
-    fn <name> <n> <param> <ceiling> ... <stmt>   (repeated)
+    fn <name> <n> <param> <ceiling> <arity> ... <stmt>   (repeated)
     main <stmt>
 
     <ceiling> ::= none | hw | syn | sqn | key
@@ -90,19 +90,20 @@ partial def parseStmt : List String → Option (Stmt × List String)
     pure (.callFun f args, r)
   | _ => none
 
-def parseParams : Nat → List String → Option (List (Name × Option Ceiling) × List String)
-  | 0, rest => some ([], rest)
-  | n + 1, p :: c :: rest => do
+def parseParams : Nat → List String → Option (List (Name × Option Ceiling) × List Nat × List String)
+  | 0, rest => some ([], [], rest)
+  | n + 1, p :: c :: a :: rest => do
     let k ← parseCeiling c
-    let (ps, r) ← parseParams n rest
-    pure ((p, k) :: ps, r)
+    let arity ← a.toNat?
+    let (ps, ns, r) ← parseParams n rest
+    pure ((p, k) :: ps, arity :: ns, r)
   | _ + 1, _ => none
 
 partial def parseProgram (fs : List (Name × FunDecl)) : List String → Option (List (Name × FunDecl) × Stmt)
   | "fn" :: f :: n :: rest => do
-    let (params, r₁) ← parseParams (← n.toNat?) rest
+    let (params, arities, r₁) ← parseParams (← n.toNat?) rest
     let (body, r₂) ← parseStmt r₁
-    parseProgram (fs ++ [(f, { params, body })]) r₂
+    parseProgram (fs ++ [(f, { params, body, arities })]) r₂
   | "main" :: rest => do
     let (s, r) ← parseStmt rest
     if r.isEmpty then pure (fs, s) else none
@@ -115,7 +116,8 @@ def verdict (fs : List (Name × FunDecl)) (s : Stmt) : String :=
   let P : Program := fun f => (fs.find? (·.1 == f)).map (·.2)
   let names := fs.map (·.1)
   let Φ := signature P names
-  if programOkB P Φ names && programConfirmedB P names && confirmedB s then
+  if programOkB P Φ names && programConfirmedB P names && confirmedB s
+      && programShapedB P names && shapedB P [] s then
     match check P Φ [] s with
     | some (R, _) => "accept " ++ worst R
     | none => "reject"

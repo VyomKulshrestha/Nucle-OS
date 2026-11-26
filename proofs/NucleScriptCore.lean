@@ -142,6 +142,9 @@ ceiling, and its body. Named functions capture nothing. -/
 structure FunDecl where
   params : List (Name × Option Ceiling)
   body : Stmt
+  /-- How many closures the closure each parameter holds takes, in order;
+  zero where the list stops. Only the value-shape theorem reads it. -/
+  arities : List Nat := []
 
 abbrev Program := Name → Option FunDecl
 
@@ -978,5 +981,328 @@ confirmations performs only confirmed operations. -/
 theorem program_confirmed {P s t b} (hP : ProgramConfirmed P) (h : Eval P [] [] s t b)
     (hc : Confirmed s) : ∀ ev, ev ∈ t → ev.confirmed = true :=
   eval_confirmed hP h hc EnvConfirmed.nil
+
+/-! ## Value shapes
+
+In the core every value is a closure, and its shape is how many closures it
+takes. A program whose calls pass every closure the number of arguments it
+takes, built only from names in scope, never reaches a call it cannot make:
+the fourth promise, for the core. -/
+
+/-- How many closures each callable name takes. -/
+abbrev Shapes := List (Name × Nat)
+
+/-- A function's parameters with the number of closures each one's closure
+takes, zero where the declaration does not say. -/
+def paramShapes : List (Name × Option Ceiling) → List Nat → Shapes
+  | [], _ => []
+  | (p, _) :: ps, [] => (p, 0) :: paramShapes ps []
+  | (p, _) :: ps, n :: ns => (p, n) :: paramShapes ps ns
+
+/-- What a call must pass each parameter. -/
+def wantOf (ps : List (Name × Option Ceiling)) (ns : List Nat) : List Nat :=
+  (paramShapes ps ns).map Prod.snd
+
+/-- The closures a call passes have the shapes its callee wants. -/
+inductive ArgsShaped (Δ : Shapes) : List Nat → List Name → Prop
+  | nil : ArgsShaped Δ [] []
+  | cons {n ns a as} : lookup Δ a = some n → ArgsShaped Δ ns as → ArgsShaped Δ (n :: ns) (a :: as)
+
+/-- `Shaped P Δ s`: every call in `s` passes its callee the closures it
+takes. A closure's own parameters take none. -/
+inductive Shaped (P : Program) : Shapes → Stmt → Prop
+  | op {Δ o} : Shaped P Δ (.op o)
+  | stop {Δ} : Shaped P Δ .stop
+  | seq {Δ s₁ s₂} : Shaped P Δ s₁ → Shaped P Δ s₂ → Shaped P Δ (.seq s₁ s₂)
+  | choice {Δ s₁ s₂} : Shaped P Δ s₁ → Shaped P Δ s₂ → Shaped P Δ (.choice s₁ s₂)
+  | loop {Δ s} : Shaped P Δ s → Shaped P Δ (.loop s)
+  | letClosure {Δ x k ps body rest} : Shaped P (paramShapes (unann ps) [] ++ Δ) body →
+      Shaped P ((x, ps.length) :: Δ) rest → Shaped P Δ (.letClosure x k ps body rest)
+  | letOpaque {Δ x k ps body rest} : Shaped P (paramShapes (unann ps) [] ++ Δ) body →
+      Shaped P ((x, ps.length) :: Δ) rest → Shaped P Δ (.letOpaque x k ps body rest)
+  | letAlias {Δ x y rest n} : lookup Δ y = some n → Shaped P ((x, n) :: Δ) rest →
+      Shaped P Δ (.letAlias x y rest)
+  | callClosure {Δ x args} : lookup Δ x = some args.length →
+      ArgsShaped Δ (List.replicate args.length 0) args → Shaped P Δ (.callClosure x args)
+  | callFun {Δ f args d} : P f = some d → ArgsShaped Δ (wantOf d.params d.arities) args →
+      Shaped P Δ (.callFun f args)
+
+/-- Every function's body is shaped, with its parameters' shapes. -/
+def ShapeOk (P : Program) : Prop :=
+  ∀ f d, P f = some d → Shaped P (paramShapes d.params d.arities) d.body
+
+mutual
+/-- A closure value takes `n` closures, and its body is shaped in the
+environment it captured. -/
+inductive ValShaped (P : Program) : Nat → Val → Prop
+  | closure {Δ ps body env ks} : EnvShaped P Δ env →
+      Shaped P (paramShapes (unann ps) [] ++ Δ) body → ValShaped P ps.length (.closure ps body env ks)
+
+/-- Each name's value has the shape the context says. -/
+inductive EnvShaped (P : Program) : Shapes → Env → Prop
+  | nil : EnvShaped P [] []
+  | cons {x n v Δ ρ} : ValShaped P n v → EnvShaped P Δ ρ → EnvShaped P ((x, n) :: Δ) ((x, v) :: ρ)
+end
+
+/-- A run reaches a call it cannot make: a name with no value, a closure
+or function given the wrong number of arguments, or an unknown function. -/
+inductive Stuck (P : Program) : Env → Stmt → Prop
+  | callUnbound {ρ x args} : lookup ρ x = none → Stuck P ρ (.callClosure x args)
+  | callArity {ρ x args ps body ρ' ks} : lookup ρ x = some (.closure ps body ρ' ks) →
+      args.length ≠ ps.length → Stuck P ρ (.callClosure x args)
+  | callArgUnbound {ρ x args a} : a ∈ args → lookup ρ a = none → Stuck P ρ (.callClosure x args)
+  | callBody {ρ x args ps body ρ' ks ρa} : lookup ρ x = some (.closure ps body ρ' ks) →
+      BindArgs ρ (unann ps) args ρa → Stuck P (ρa ++ ρ') body → Stuck P ρ (.callClosure x args)
+  | funUnknown {ρ f args} : P f = none → Stuck P ρ (.callFun f args)
+  | funArity {ρ f args d} : P f = some d → args.length ≠ d.params.length → Stuck P ρ (.callFun f args)
+  | funArgUnbound {ρ f args a} : a ∈ args → lookup ρ a = none → Stuck P ρ (.callFun f args)
+  | funBody {ρ f args d ρf} : P f = some d → BindArgs ρ d.params args ρf → Stuck P ρf d.body →
+      Stuck P ρ (.callFun f args)
+  | aliasUnbound {ρ x y rest} : lookup ρ y = none → Stuck P ρ (.letAlias x y rest)
+  | aliasRest {ρ x y rest v} : lookup ρ y = some v → Stuck P ((x, v) :: ρ) rest →
+      Stuck P ρ (.letAlias x y rest)
+  | closureRest {ρ x k ps body rest} : Stuck P ((x, .closure ps body ρ k.toList) :: ρ) rest →
+      Stuck P ρ (.letClosure x k ps body rest)
+  | opaqueRest {ρ x k ps body rest} : Stuck P ((x, .closure ps body ρ k.toList) :: ρ) rest →
+      Stuck P ρ (.letOpaque x k ps body rest)
+  | seqLeft {ρ s₁ s₂} : Stuck P ρ s₁ → Stuck P ρ (.seq s₁ s₂)
+  | seqRight {ρ cs s₁ s₂ t} : Eval P ρ cs s₁ t false → Stuck P ρ s₂ → Stuck P ρ (.seq s₁ s₂)
+  | choiceLeft {ρ s₁ s₂} : Stuck P ρ s₁ → Stuck P ρ (.choice s₁ s₂)
+  | choiceRight {ρ s₁ s₂} : Stuck P ρ s₂ → Stuck P ρ (.choice s₁ s₂)
+  | loopBody {ρ body} : Stuck P ρ body → Stuck P ρ (.loop body)
+  | loopAgain {ρ cs body t} : Eval P ρ cs body t false → Stuck P ρ (.loop body) →
+      Stuck P ρ (.loop body)
+
+theorem EnvShaped.find {P x} : ∀ {Δ ρ}, EnvShaped P Δ ρ → ∀ {n}, lookup Δ x = some n →
+    ∃ v, lookup ρ x = some v ∧ ValShaped P n v := by
+  intro Δ ρ h
+  induction ρ generalizing Δ with
+  | nil =>
+    cases h
+    intro n hn
+    simp [lookup] at hn
+  | cons yv ρ ih =>
+    obtain ⟨y, v⟩ := yv
+    cases h with
+    | @cons _ m _ Δ' _ hv hr =>
+      intro n hn
+      by_cases hyx : y = x
+      · subst hyx
+        simp [lookup] at hn
+        subst hn
+        exact ⟨v, by simp [lookup], hv⟩
+      · simp [lookup, hyx] at hn
+        obtain ⟨w, hw, hws⟩ := ih hr hn
+        exact ⟨w, by simp [lookup, hyx, hw], hws⟩
+
+theorem EnvShaped.append {P Δ₂ ρ₂} (h₂ : EnvShaped P Δ₂ ρ₂) :
+    ∀ {ρ₁ Δ₁}, EnvShaped P Δ₁ ρ₁ → EnvShaped P (Δ₁ ++ Δ₂) (ρ₁ ++ ρ₂) := by
+  intro ρ₁
+  induction ρ₁ with
+  | nil =>
+    intro Δ₁ h₁
+    cases h₁
+    exact h₂
+  | cons xv ρ ih =>
+    intro Δ₁ h₁
+    cases h₁ with
+    | cons hv hr => exact EnvShaped.cons hv (ih hr)
+
+theorem ArgsShaped.length {Δ} : ∀ {ns as}, ArgsShaped Δ ns as → as.length = ns.length
+  | _, _, .nil => rfl
+  | _, _, .cons _ h => by simp [ArgsShaped.length h]
+
+theorem ArgsShaped.mem {Δ a} : ∀ {ns as}, ArgsShaped Δ ns as → a ∈ as → ∃ n, lookup Δ a = some n
+  | _, _, .nil, h => by cases h
+  | _, _, .cons hl hr, h => by
+    rcases List.mem_cons.mp h with rfl | h
+    · exact ⟨_, hl⟩
+    · exact ArgsShaped.mem hr h
+
+theorem paramShapes_length : ∀ (ps : List (Name × Option Ceiling)) (ns : List Nat),
+    (paramShapes ps ns).length = ps.length
+  | [], _ => rfl
+  | (_, _) :: ps, [] => by simp [paramShapes, paramShapes_length ps []]
+  | (_, _) :: ps, _ :: ns => by simp [paramShapes, paramShapes_length ps ns]
+
+theorem wantOf_length (ps : List (Name × Option Ceiling)) (ns : List Nat) :
+    (wantOf ps ns).length = ps.length := by
+  simp [wantOf, paramShapes_length]
+
+theorem wantOf_unann : ∀ (ps : List Name), wantOf (unann ps) [] = List.replicate ps.length 0
+  | [] => rfl
+  | p :: ps => by
+    have h := wantOf_unann ps
+    unfold wantOf unann at h ⊢
+    simp only [List.map_cons, paramShapes, List.length_cons, List.replicate_succ]
+    rw [h]
+
+theorem ValShaped.arity {P n ps body env ks} (h : ValShaped P n (.closure ps body env ks)) :
+    ps.length = n := by
+  cases h
+  rfl
+
+theorem ValShaped.body {P n ps body env ks} (h : ValShaped P n (.closure ps body env ks)) :
+    ∃ Δ', EnvShaped P Δ' env ∧ Shaped P (paramShapes (unann ps) [] ++ Δ') body := by
+  cases h with
+  | closure he hb => exact ⟨_, he, hb⟩
+
+theorem ValShaped.underCeiling {P n v} (h : ValShaped P n v) (k : Option Ceiling) :
+    ValShaped P n (v.underCeiling k) := by
+  cases h with
+  | closure he hb =>
+    cases k with
+    | none => exact ValShaped.closure he hb
+    | some c => exact ValShaped.closure he hb
+
+/-- The callee's parameters hold closures of the shapes they want. -/
+theorem bindArgs_shaped {P Δ ρ} (h : EnvShaped P Δ ρ) :
+    ∀ {ps as ρf}, BindArgs ρ ps as ρf → ∀ {ns}, ArgsShaped Δ (wantOf ps ns) as →
+    EnvShaped P (paramShapes ps ns) ρf := by
+  intro ps as ρf hbind
+  induction hbind with
+  | nil => intro _ _; exact EnvShaped.nil
+  | @cons p k a ps as v ρf hl _ ih =>
+    intro ns ha
+    cases ns with
+    | nil =>
+      simp only [wantOf, paramShapes, List.map_cons] at ha
+      cases ha with
+      | cons hla hr =>
+        obtain ⟨w, hw, hws⟩ := h.find hla
+        rw [hl] at hw
+        cases hw
+        exact EnvShaped.cons (hws.underCeiling k) (ih (ns := []) hr)
+    | cons n ns =>
+      simp only [wantOf, paramShapes, List.map_cons] at ha
+      cases ha with
+      | cons hla hr =>
+        obtain ⟨w, hw, hws⟩ := h.find hla
+        rw [hl] at hw
+        cases hw
+        exact EnvShaped.cons (hws.underCeiling k) (ih (ns := ns) hr)
+
+/-- A shaped statement, run where every name has the shape the context
+says, never reaches a call it cannot make. -/
+theorem shaped_not_stuck {P} (hP : ShapeOk P) :
+    ∀ {ρ s}, Stuck P ρ s → ∀ {Δ}, Shaped P Δ s → EnvShaped P Δ ρ → False := by
+  intro ρ s h
+  induction h with
+  | callUnbound hl =>
+    intro Δ hs he
+    cases hs with
+    | callClosure hx _ =>
+      obtain ⟨v, hv, _⟩ := he.find hx
+      rw [hl] at hv
+      cases hv
+  | callArity hl hne =>
+    intro Δ hs he
+    cases hs with
+    | callClosure hx _ =>
+      obtain ⟨v, hv, hvs⟩ := he.find hx
+      rw [hl] at hv
+      cases hv
+      exact hne hvs.arity.symm
+  | callArgUnbound ha hl =>
+    intro Δ hs he
+    cases hs with
+    | callClosure _ hargs =>
+      obtain ⟨n, hn⟩ := hargs.mem ha
+      obtain ⟨v, hv, _⟩ := he.find hn
+      rw [hl] at hv
+      cases hv
+  | @callBody ρ x args ps body ρ' ks ρa hl hbind _ ih =>
+    intro Δ hs he
+    cases hs with
+    | callClosure hx hargs =>
+      obtain ⟨v, hv, hvs⟩ := he.find hx
+      rw [hl] at hv
+      cases hv
+      obtain ⟨Δ', hec, hbody⟩ := hvs.body
+      have hlen : args.length = ps.length := hvs.arity.symm
+      have hwant : ArgsShaped Δ (wantOf (unann ps) []) args := by
+        rw [wantOf_unann, ← hlen]
+        exact hargs
+      exact ih hbody (EnvShaped.append hec (bindArgs_shaped he hbind hwant))
+  | funUnknown hf =>
+    intro Δ hs _
+    cases hs with
+    | callFun hf' _ =>
+      rw [hf] at hf'
+      cases hf'
+  | funArity hf hne =>
+    intro Δ hs _
+    cases hs with
+    | callFun hf' hargs =>
+      rw [hf] at hf'
+      cases hf'
+      exact hne (by rw [hargs.length, wantOf_length])
+  | funArgUnbound ha hl =>
+    intro Δ hs he
+    cases hs with
+    | callFun _ hargs =>
+      obtain ⟨n, hn⟩ := hargs.mem ha
+      obtain ⟨v, hv, _⟩ := he.find hn
+      rw [hl] at hv
+      cases hv
+  | @funBody ρ f args d ρf hf hbind _ ih =>
+    intro Δ hs he
+    cases hs with
+    | callFun hf' hargs =>
+      rw [hf] at hf'
+      cases hf'
+      exact ih (hP f d hf) (bindArgs_shaped he hbind hargs)
+  | aliasUnbound hl =>
+    intro Δ hs he
+    cases hs with
+    | letAlias hy _ =>
+      obtain ⟨v, hv, _⟩ := he.find hy
+      rw [hl] at hv
+      cases hv
+  | aliasRest hl _ ih =>
+    intro Δ hs he
+    cases hs with
+    | letAlias hy hr =>
+      obtain ⟨v, hv, hvs⟩ := he.find hy
+      rw [hl] at hv
+      cases hv
+      exact ih hr (EnvShaped.cons hvs he)
+  | closureRest _ ih =>
+    intro Δ hs he
+    cases hs with
+    | letClosure hb hr => exact ih hr (EnvShaped.cons (ValShaped.closure he hb) he)
+  | opaqueRest _ ih =>
+    intro Δ hs he
+    cases hs with
+    | letOpaque hb hr => exact ih hr (EnvShaped.cons (ValShaped.closure he hb) he)
+  | seqLeft _ ih =>
+    intro Δ hs he
+    cases hs with
+    | seq h₁ _ => exact ih h₁ he
+  | seqRight _ _ ih =>
+    intro Δ hs he
+    cases hs with
+    | seq _ h₂ => exact ih h₂ he
+  | choiceLeft _ ih =>
+    intro Δ hs he
+    cases hs with
+    | choice h₁ _ => exact ih h₁ he
+  | choiceRight _ ih =>
+    intro Δ hs he
+    cases hs with
+    | choice _ h₂ => exact ih h₂ he
+  | loopBody _ ih =>
+    intro Δ hs he
+    cases hs with
+    | loop hb => exact ih hb he
+  | loopAgain _ _ ih =>
+    intro Δ hs he
+    exact ih hs he
+
+/-- A whole shaped program, run from nothing, never reaches a call it
+cannot make. -/
+theorem program_shapes_sound {P s} (hP : ShapeOk P) (hs : Shaped P [] s) : ¬ Stuck P [] s :=
+  fun h => shaped_not_stuck hP h hs EnvShaped.nil
+
 
 end NucleScript

@@ -555,6 +555,107 @@ theorem accept_confirmed {P : Program} {fs : List Name} {s t b}
     ∀ ev, ev ∈ t → ev.confirmed = true :=
   program_confirmed (programConfirmedB_sound hcover hok) h (confirmedB_sound hc)
 
+
+/-! ## Value shapes, computed -/
+
+def argsShapedB (Δ : Shapes) : List Nat → List Name → Bool
+  | [], [] => true
+  | n :: ns, a :: as => lookup Δ a == some n && argsShapedB Δ ns as
+  | _, _ => false
+
+theorem argsShapedB_sound {Δ : Shapes} :
+    ∀ {ns as}, argsShapedB Δ ns as = true → ArgsShaped Δ ns as
+  | [], [], _ => ArgsShaped.nil
+  | n :: ns, a :: as, h => by
+    simp only [argsShapedB, Bool.and_eq_true, beq_iff_eq] at h
+    exact ArgsShaped.cons h.1 (argsShapedB_sound h.2)
+  | [], _ :: _, h => by simp [argsShapedB] at h
+  | _ :: _, [], h => by simp [argsShapedB] at h
+
+/-- The shape rule, as a function. -/
+def shapedB (P : Program) : Shapes → Stmt → Bool
+  | _, .op _ => true
+  | _, .stop => true
+  | Δ, .seq s₁ s₂ => shapedB P Δ s₁ && shapedB P Δ s₂
+  | Δ, .choice s₁ s₂ => shapedB P Δ s₁ && shapedB P Δ s₂
+  | Δ, .loop s => shapedB P Δ s
+  | Δ, .letClosure x _ ps body rest =>
+    shapedB P (paramShapes (unann ps) [] ++ Δ) body && shapedB P ((x, ps.length) :: Δ) rest
+  | Δ, .letOpaque x _ ps body rest =>
+    shapedB P (paramShapes (unann ps) [] ++ Δ) body && shapedB P ((x, ps.length) :: Δ) rest
+  | Δ, .letAlias x y rest =>
+    match lookup Δ y with
+    | some n => shapedB P ((x, n) :: Δ) rest
+    | none => false
+  | Δ, .callClosure x args =>
+    lookup Δ x == some args.length && argsShapedB Δ (List.replicate args.length 0) args
+  | Δ, .callFun f args =>
+    match P f with
+    | some d => argsShapedB Δ (wantOf d.params d.arities) args
+    | none => false
+
+theorem shapedB_sound {P : Program} : ∀ {s Δ}, shapedB P Δ s = true → Shaped P Δ s := by
+  intro s
+  induction s with
+  | op o => intro _ _; exact Shaped.op
+  | stop => intro _ _; exact Shaped.stop
+  | seq s₁ s₂ ih₁ ih₂ =>
+    intro Δ h
+    simp only [shapedB, Bool.and_eq_true] at h
+    exact Shaped.seq (ih₁ h.1) (ih₂ h.2)
+  | choice s₁ s₂ ih₁ ih₂ =>
+    intro Δ h
+    simp only [shapedB, Bool.and_eq_true] at h
+    exact Shaped.choice (ih₁ h.1) (ih₂ h.2)
+  | loop body ih =>
+    intro Δ h
+    exact Shaped.loop (ih h)
+  | letClosure x k ps body rest ihb ihr =>
+    intro Δ h
+    simp only [shapedB, Bool.and_eq_true] at h
+    exact Shaped.letClosure (ihb h.1) (ihr h.2)
+  | letOpaque x k ps body rest ihb ihr =>
+    intro Δ h
+    simp only [shapedB, Bool.and_eq_true] at h
+    exact Shaped.letOpaque (ihb h.1) (ihr h.2)
+  | letAlias x y rest ih =>
+    intro Δ h
+    simp only [shapedB] at h
+    split at h
+    · rename_i n hn
+      exact Shaped.letAlias hn (ih h)
+    · cases h
+  | callClosure x args =>
+    intro Δ h
+    simp only [shapedB, Bool.and_eq_true, beq_iff_eq] at h
+    exact Shaped.callClosure h.1 (argsShapedB_sound h.2)
+  | callFun f args =>
+    intro Δ h
+    simp only [shapedB] at h
+    split at h
+    · rename_i d hd
+      exact Shaped.callFun hd (argsShapedB_sound h)
+    · cases h
+
+/-- Every function body in `fs` is shaped. -/
+def programShapedB (P : Program) (fs : List Name) : Bool :=
+  fs.all fun f =>
+    match P f with
+    | some d => shapedB P (paramShapes d.params d.arities) d.body
+    | none => true
+
+theorem programShapedB_sound {P : Program} {fs : List Name}
+    (hcover : ∀ f d, P f = some d → f ∈ fs) (h : programShapedB P fs = true) : ShapeOk P := by
+  intro f d hd
+  have hf := List.all_eq_true.mp h f (hcover f d hd)
+  simp only [hd] at hf
+  exact shapedB_sound hf
+
+theorem accept_shapes_sound {P : Program} {fs : List Name} {s : Stmt}
+    (hcover : ∀ f d, P f = some d → f ∈ fs) (hok : programShapedB P fs = true)
+    (hs : shapedB P [] s = true) : ¬ Stuck P [] s :=
+  program_shapes_sound (programShapedB_sound hcover hok) (shapedB_sound hs)
+
 /-! ## Signatures -/
 
 /-- One round of computing each function's effect from its body. -/
