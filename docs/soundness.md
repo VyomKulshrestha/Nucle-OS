@@ -225,6 +225,14 @@ a ceiling may do inside one.
   now counts every closure passed to it. This one was found by writing the
   Lean rules for closures with arguments of their own, which said the call
   must count them.
+- **A closure bound by `let` that called its argument fit a ceiling.** Held
+  to a ceiling, a closure literal's own parameters without one count as
+  every effect, since whatever it is passed runs under the ceiling. Bound
+  to a name first, `let relay: Fn(Fn() -> Void) -> Void = fn(k: Fn() ->
+  Void) -> Void { k() }`, the same closure had them counted as ∅ and fit
+  `confirm sequencing`, so a function holding it there could hand it a
+  delete. Both paths now count them. The comparison with the Lean rules
+  found this one (below).
 
 Each is pinned in `soundness_regressions.rs` too, and those tests also
 fail on the code before the fixes.
@@ -238,12 +246,12 @@ that a program they accept keeps promises 1 to 3. The core has:
 - operations, each with its effect and whether its confirmation was
   written;
 - sequencing, and branches of which either side may run (`if`, `match`);
-- closures bound by `let`, with or without a ceiling, and other names for
-  them;
+- closures bound by `let`, with or without a ceiling, taking closures as
+  arguments of their own, and other names for them;
 - closures the rules cannot see into, such as one returned by a function,
   with or without a ceiling on the type they come through;
-- calls to closures, and named functions that take closures as arguments,
-  with or without ceilings, recursion included;
+- calls to closures, passing them closures, and named functions that take
+  closures as arguments, with or without ceilings, recursion included;
 - loops over a pool's files, which run their body zero or more times;
 - an early return through `?`, which ends the function or closure it is in,
   so nothing after it there runs.
@@ -255,7 +263,14 @@ each statement two things: R, the effects it may have itself, and U, the
 parameters without a ceiling whose closures it may call. R is what `nucle
 explain` reports. A call adds the effects of the closures it passes for U,
 and a closure fits a ceiling only when its U is empty and its R is allowed,
-the rule the last defect above broke. A function's effect may be any set
+the rule the parameter defect above broke. A closure's own parameters are
+in its U when it calls them, so one that calls its arguments fits no
+ceiling. A call to a closure adds what the closures it passes do when the
+closure may call them: one with parameters of its own, or a parameter's
+closure, may; a closure held to a ceiling may not. A closure's parameters
+are named apart from the parameters the closures in scope may run, the
+usual convention, which the generator below follows; the Rust checker also
+allows reusing a name, which the core leaves out. A function's effect may be any set
 its body's R fits in; the least fixed point the checker computes is one.
 
 | Theorem | Promise |
@@ -266,9 +281,11 @@ its body's R fits in; the least fixed point the checker computes is one.
 
 The proof needs one invariant the rules do not state: a closure value does
 at most what the binding holding it says, given what the enclosing
-function's parameters hold (`ValOk` and `EnvOk`). Lean checks the file in
-a few seconds, the theorems rest on no axiom but `propext`, and CI
-rebuilds the proof and fails if any step rests on `sorry`.
+function's parameters hold and, when it is called, what it is passed, and
+calls none of its arguments if its binding says so (`ValOk` and `EnvOk`).
+Lean checks the file in a few seconds, the theorems rest on Lean's
+standard axioms `propext` and `Quot.sound` (function extensionality), and
+CI rebuilds the proof and fails if any step rests on `sorry`.
 [proofs/README.md](../proofs/README.md) says how to check it.
 
 ### Checking the Rust checker against the rules
@@ -283,14 +300,16 @@ so the three theorems hold for every program it accepts
 per line.
 
 `nucle_lang/tests/lean_differential.rs` generates programs in the core
-(functions taking closures with and without each ceiling, closures,
-second names for them, closures returned from functions, branches, loops
-over a pool's files, and every operation with and without its
-confirmation), writes each as
-NucleScript and for `nsl-check`, and fails if the two checkers differ on
-whether a program is accepted or on its worst effect. CI runs 1,000 on
-every push; a run of 20,000 with loops on 26 November 2026 accepted 9,982 and
-found no disagreement.
+(functions taking closures with and without each ceiling, some of them
+closures that are passed a closure, closures with and without arguments
+of their own, second names for them, closures returned from functions,
+branches, loops over a pool's files, and every operation with and without
+its confirmation), writes each as NucleScript and for `nsl-check`, and
+fails if the two checkers differ on whether a program is accepted or on
+its worst effect. CI runs 1,000 on every push. A run of 20,000 on 26
+November 2026 accepted 9,639 and found no disagreement; the same 20,000
+against the Rust checker as it was at v0.1.85, before the two closure
+fixes above, give 6, each a program it accepted and the rules reject.
 
 Its first run found 40 disagreements, all programs the Lean rules accept
 and the Rust checker rejected. Beyond mistakes in how the test wrote
@@ -307,19 +326,29 @@ the rules and from `effects.rs`, neither of them unsound:
   its second name. It now stands for exactly the closure it names, as it
   always did in `effects.rs`.
 
+Once the generator wrote closures that take arguments, it found two more,
+one on each side:
+
+- **A closure bound by `let` that called its argument fit a ceiling**, the
+  unsound acceptance above.
+- **The Lean rule counted too much.** It added the closures passed to a
+  call through a slot with a ceiling, which cannot run them, since a
+  closure that calls its arguments fits no ceiling. The Rust checker had
+  this right, and the rule now matches it.
+
 ## What this does not show
 
 - **The proof covers a core, not the implementation.** Its rules were
   written by hand from `effects.rs` and `typeck.rs`. The two are tied by
   testing, not by proof: the differential test checks that the Rust
   checker gives the rules' verdict on generated core programs, which
-  catches a slip only where the generator reaches. The core leaves out
-  closures that take arguments of their own: what such a closure may do
-  depends on the arguments each call passes, so its binding would have to
-  mean a function of them, a different proof from this one. It also leaves
-  out generics, whose instantiations change no effect, enums other than as
-  a source of closures it cannot see into, and value shapes: promise 4
-  rests on testing alone.
+  catches a slip only where the generator reaches. The core's closures
+  take closures without ceilings as arguments; a closure parameter with a
+  ceiling of its own (`fn(k: Fn() -> Void confirm hardware)`) is left out,
+  as is a closure parameter reusing a name in scope. It also leaves out
+  generics, whose instantiations change no effect, enums other than as a
+  source of closures it cannot see into, and value shapes: promise 4 rests
+  on testing alone.
 - **The generator leaves pool expressions out** (`consensus_vote`,
   `synthesise`, `sequence`): they never run, existing only while
   checking, so the monitor has nothing to watch. Their rules are covered

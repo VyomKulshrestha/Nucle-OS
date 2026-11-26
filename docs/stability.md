@@ -64,6 +64,13 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.87:** soundness fix. A closure bound
+  by `let` that calls one of its own arguments no longer fits an effect
+  ceiling, as a closure literal that does already did not; a program 1.0
+  accepted that passed one into a `confirm ...` slot is now rejected. A
+  call through a parameter or closure held to a ceiling no longer counts
+  the closures passed to it, which v0.1.86 began counting: what it holds
+  cannot call them. None of the 33 programs in the 1.0 corpus changed.
 - **26 November 2026, NucleOS v0.1.86:** soundness fix. A call through a
   `Fn` parameter, or through a closure the checker cannot see into, now
   counts the effects of every closure passed to it, since the closure it
