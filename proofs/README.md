@@ -2,7 +2,7 @@
 
 `NucleScriptCore.lean` writes NucleScript's effect and confirmation rules
 down in Lean 4 for a core of the language, and proves that a program they
-accept keeps three of the checker's promises.
+accept keeps the checker's four promises there.
 [docs/soundness.md](../docs/soundness.md#the-machine-checked-core) says what
 the core holds and what it leaves out.
 
@@ -11,7 +11,7 @@ the core holds and what it leaves out.
 | `program_confirmed` | no operation runs without the confirmation it needs |
 | `program_effects_sound` | no operation has an effect the rules did not report |
 | `program_ceilings_sound` | no operation runs inside a closure call whose ceiling it exceeds |
-| `program_shapes_sound` | a shaped program never reaches a call it cannot make (an unbound name, the wrong number of closures, or a closure of another type) |
+| `program_shapes_sound` | a shaped program never reaches a call it cannot make, a value that breaks its declared type, or a `?` or `match` that meets a value it cannot take |
 
 `Checker.lean` turns the rules into a checker Lean can run. `check`
 computes a statement's effects, or rejects it, and `check_sound` proves its
@@ -39,6 +39,6 @@ NSL_LEAN_CHECKER=proofs/.lake/build/bin/nsl-check cargo test -p nucle_lang --tes
 `lake build` fetches the toolchain named in `lean-toolchain` (Lean 4.35.0)
 and needs no other package. `Axioms.lean` prints the axioms each theorem
 rests on: `propext`, and `Quot.sound` (through function extensionality)
-for all but `program_confirmed` and `program_shapes_sound`. CI fails if `sorryAx` ever appears.
+for all but `program_confirmed`. CI fails if `sorryAx` ever appears.
 `NSL_DIFFERENTIAL_PROGRAMS` sets how many programs the comparison runs
 (1,000 by default).
