@@ -82,10 +82,14 @@ guarantee: outer Reed–Solomon has the hard
 `2*errors + erasures <= parity_count` bound, while any recovery beyond that
 bound depends on the surviving Fountain equations having full rank.
 
-`if`/`for` are resolved entirely inside `typeck::check_and_desugar`, before
-any of that MIR/optimizer/backend machinery runs — before `Result<T, E>`/`?`
-(below) existed, NucleScript's execution model was "compile a static plan, then run it,"
-with no runtime branch or loop anywhere in a compiled program.
+`if` and a `for` over a list are resolved entirely inside
+`typeck::check_and_desugar`, before any of that MIR/optimizer/backend
+machinery runs — before `Result<T, E>`/`?` (below) existed, NucleScript's
+execution model was "compile a static plan, then run it," with no runtime
+branch or loop anywhere in a compiled program. `for f in files of pool` is
+the exception: the checker keeps it, and `codegen::run_files_loop` walks
+the pool's files when the program reaches it, running the body like a
+function body once per file.
 `check_and_desugar` evaluates each `if` condition once and keeps only the
 taken branch (closer to `#[cfg(...)]` than a real conditional; the untaken
 branch is checked on a copy of the checker and its errors become

@@ -64,6 +64,11 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.79:** addition. `for f in files of
+  pool { ... }` runs its body once for each file a pool holds while the
+  program runs. The EBNF gains it, so the grammar digest changed. A loop
+  over a pool that happens to be called `files` still unrolls, and none
+  of the 33 programs in the 1.0 corpus changed.
 - **26 November 2026, NucleOS v0.1.78:** two programs 1.0 rejected are
   accepted. A `Fn` parameter can be given a second name (`let again:
   Fn() -> Void = action`), which must repeat its type; and a second name

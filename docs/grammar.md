@@ -111,16 +111,15 @@ PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'IDT' | 'Amplified' 
                       // parse error ("unknown pool profile or state"),
                       // unchanged from before generics existed.
 
-// `if`/`for` are resolved at COMPILE TIME, not runtime: NucleScript's
-// execution model is "compile a static plan, then run it," so there is no
-// runtime branch or loop anywhere in a compiled program. The type checker
-// evaluates `Condition` once, keeps only the taken branch (the untaken
-// branch is checked for warnings only, much like `#[cfg(...)]`), and unrolls a
-// `for` by textual substitution of `Binding` with each item -- the
-// compiled output never contains an `IfDecl`/`ForDecl` node. See
+// `if` and a `for` over a list are resolved at COMPILE TIME: the type
+// checker evaluates `Condition` once, keeps only the taken branch (the
+// untaken branch is checked for warnings only, much like `#[cfg(...)]`),
+// and unrolls a `for` by textual substitution of `Binding` with each item.
+// `for f in files of <pool>` is the one loop that runs: it walks the files
+// the pool holds when the program reaches it. See
 // `nucle_lang::ast::IfDecl`/`ForDecl` for the full rationale.
 IfDecl              ::= 'if' Condition '{' Declaration* '}' ( 'else' '{' Declaration* '}' )?
-ForDecl             ::= 'for' Identifier 'in' IdentOrStringList '{' Declaration* '}'
+ForDecl             ::= 'for' Identifier 'in' ( IdentOrStringList | 'files' 'of' Identifier ) '{' Declaration* '}'
 IdentOrStringList   ::= ( Identifier | StringLiteral )
                       | '[' ( Identifier | StringLiteral ) ( ',' ( Identifier | StringLiteral ) )* ','? ']'
 
@@ -434,8 +433,25 @@ for target in [archive] {
   `for f in ["a.txt", "b.txt"]` passes each file name); an identifier item
   (a pool name) stays a name. A `let` in the body is rebound on every
   iteration, and the last iteration's value is visible after the loop.
-- Both are fully resolved away during type checking; `codegen`/the
-  simulation backend only ever see a plain, control-flow-free program.
+- **`for f in files of pool`** is the one loop that runs. It visits the
+  files `pool` holds when the program reaches it, in name order, with `f`
+  bound to each file's name (a `File`); the list is read before the first
+  pass, so deleting or storing in the body does not change which files it
+  visits. The body is checked once, and its effects are the loop's,
+  whether it runs zero times or many. Names the body binds end with the
+  loop. It works inside a function too, over a pool the function is
+  passed:
+
+  ```nsl
+  fn clear(target: Pool<Illumina>) returns Void {
+      for f in files of target {
+          delete f from target confirm physical_key
+      }
+  }
+  ```
+- `if` and a list `for` are resolved away during type checking;
+  `codegen`/the simulation backend only see a runtime `for` over a pool's
+  files.
 
 ---
 

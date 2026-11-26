@@ -142,19 +142,21 @@ reported effect, and no fault was recorded. It runs two sets of programs:
     a closure (called from its arm, or handed to a higher-order function
     whose ceiling it cannot meet), a function imported from the
     `nuclescript/presets` package, and `test` blocks, one in ten of which
-    asserts a bound that does not hold.
+    asserts a bound that does not hold;
+  - loops over the files a pool holds while the program runs, deleting
+    each one or copying it into a pool.
 
   About one delete in twenty-five drops its confirmation, and about one
   closure in twenty is given a ceiling its body does not fit, so the
   checker's rejections are exercised too. Some functions take a closure
   without a ceiling and pass it on to one that has a ceiling, by name or
-  inside a closure of their own. Of the 300, 201 were accepted; they ran
-  2,427 stores and 235 deletes.
+  inside a closure of their own. Of the 300, 209 were accepted; they ran
+  2,637 stores and 369 deletes.
 
 A longer run of 5,000 programs (`NSL_SOUNDNESS_PROGRAMS=5000`) on 26
-November 2026 accepted 3,356, ran 43,292 stores and 4,209 deletes, and broke
-no promise. The reports are also close to exact: of the 42,220 top-level
-declarations that ran an operation, 315 were reported with a worse effect
+November 2026 accepted 3,384, ran 44,988 stores and 5,325 deletes, and broke
+no promise. The reports are also close to exact: of the 42,711 top-level
+declarations that ran an operation, 322 were reported with a worse effect
 than they performed, most of them calls through a closure the analysis
 cannot trace. The rules allow that: every arm and branch counts
 whether it runs or not, and a run that stops early never reaches its later

@@ -31,6 +31,9 @@ Source: `nucle_lang/src/ast.rs`'s `Effect` enum; classification logic lives in
 - `retrieve` is always `Pure`, and so is `decode reads`, which reads two
   local files of sequencing reads and references.
 - `delete` is always `Destructive` and requires `confirm physical_key`.
+- A `for` loop's effect is its body's, whether it runs zero times or
+  many: a `for f in files of pool` that deletes is `Destructive` even when
+  the pool turns out to be empty.
 - A **function's** effect is the *join* of every declaration in its body
   (`join_effects` in `effects.rs`): if any statement in the body is
   `Destructive`, the whole function is `Destructive`, and so on down the
