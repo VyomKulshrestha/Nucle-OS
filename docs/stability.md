@@ -39,9 +39,9 @@ can change their APIs between releases; the language does not. `nucle
   fix is logged below.
 - **Wording:** diagnostic messages, `nucle explain` prose and CLI text
   other than `--json` output.
-- **Numbers that come from measurement:** the simulator's noise profiles
-  and the recovery, decay and cost figures built on them, which follow new
-  data.
+- **Numbers that come from measurement:** the simulator's noise profiles,
+  the error rate `consensus_vote` gives its result, and the recovery,
+  decay and cost figures built on them, which follow new data.
 
 Anything else needs NucleScript 2.0.
 
@@ -64,6 +64,16 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.81:** measured numbers. The error rate
+  `consensus_vote` gives its result is now the source's rate times the
+  share of error the consensus decoder left on real reads at that
+  coverage. It was the source's rate divided by the coverage squared,
+  which promised less error than real reads leave: at 10x a Nanopore
+  pool's 5% became 0.05%, where the MinION reads kept 3.7% of their
+  error (0.18% of 5%). A program that wrote the old rate into a pool's
+  type (`Pool<Recovered, 0.05%>`) now gets
+  `E-BINDING-ERROR-RATE-MISMATCH`. None of the 33 programs in the 1.0
+  corpus changed.
 - **26 November 2026, NucleOS v0.1.79:** addition. `for f in files of
   pool { ... }` runs its body once for each file a pool holds while the
   program runs. The EBNF gains it, so the grammar digest changed. A loop

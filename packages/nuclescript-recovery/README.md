@@ -27,7 +27,9 @@ import {
 - Version: `0.1.0`
 - Source: `src/recovery.nsl`
 
-Consensus error-rate scaling follows
-`nucle_lang::probabilistic::consensus_error_rate_percent` — doubling coverage
-quarters the residual error rate (inverse-square scaling), matching how real
-sequencing consensus behaves.
+Consensus error rates follow
+`nucle_lang::probabilistic::consensus_error_rate_percent`: the source's rate
+times the share of error the consensus decoder left on real MinION and
+Illumina reads at that coverage. An Illumina source's 0.35% becomes
+0.013% at 10x and 0.0074% at 20x; see
+[docs/architecture.md](../../docs/architecture.md#measured-consensus-curve).

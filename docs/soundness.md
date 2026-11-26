@@ -314,12 +314,14 @@ the rules and from `effects.rs`, neither of them unsound:
   by the ordinary tests. `test` blocks are generated, but they never run
   either; the monitor only shows that the checker handles them alongside
   everything else.
-- **Error-rate types are estimates.** A pool's type carries an error rate
-  (`Pool<Illumina, 0.35%>`) that the checker computes from published
-  profiles; the runtime has no pool values to compare it with. Whether
-  those rates match real reads is a question for the channel measurements
-  in [architecture.md](architecture.md#measured-array-pool-channels), not
-  for this monitor.
+- **Error-rate types come from measurement, and the monitor cannot check
+  them.** A pool's type carries an error rate (`Pool<Illumina, 0.35%>`):
+  the profile's published rate, and after `consensus_vote` that rate times
+  the share of error the consensus decoder left on real reads at that
+  coverage ([architecture.md](architecture.md#measured-consensus-curve)).
+  The runtime has no pool values to compare them with. The consensus curve
+  is pinned by `nucle_lang/tests/consensus_curve.rs` instead, which reruns
+  the decoder on the MinION sample in the repository.
 - **The monitor checks shapes and pool profiles, not every type.** A
   declared pool is checked against a concrete `Pool<Profile>`, but a
   generic `Pool<P>` is erased by the time a program runs, and `Strand`,

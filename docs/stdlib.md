@@ -47,10 +47,14 @@ strand, correcting substitution/indel errors before the outer code. The
 current Reed-Solomon decoder can reconstruct known erasures and correct
 residual same-length wrong-but-present strands, but it cannot repair the
 length shifts introduced by indels; consensus alignment handles those first.
-See
-[`nucle_ecc::consensus`](../nucle_ecc/src/consensus.rs) for the real
-partial-order-alignment implementation this models the error-rate
-reduction of.
+The result's rate is the source's rate times the share of error the
+decoder in [`nucle_ecc::consensus`](../nucle_ecc/src/consensus.rs)
+(partial-order vote, then median polish to the strand length) left on real
+reads at that coverage: the worst of a MinION sample and two Illumina
+array pools, never rising with coverage, and held at its 30x value past
+30x. At 10x that is 3.7% of the source's rate. See
+[architecture.md](architecture.md#measured-consensus-curve) for the
+measurements.
 
 ```nuclescript
 pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }

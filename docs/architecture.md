@@ -1526,6 +1526,84 @@ build on 8 November 2026, the two pools took 20 minutes:
 
 Every recovery figure is within 0.13 points of the table above.
 
+### Measured consensus curve
+
+`consensus_vote(source, coverage: c)` gives its result the source's error
+rate times the share of error a consensus of `c` reads leaves. That share
+was 1/c², a guess the type system treated as a bound. Real reads leave
+more: at 10 reads per strand the MinION sample kept 3.7% of its error, not
+1%. The share is now measured.
+
+`nucle_ecc/examples/coverage_curve.rs` takes every strand with at least
+`c` reads, keeps its first `c`, decodes them with the published decoder
+(partial-order vote, then median polish to the strand length), and divides
+the per-base error left by the reads' own:
+
+```bash
+cargo run --release -p nucle_ecc --example coverage_curve -- Centers.txt Clusters.txt
+```
+
+It ran on 26 November 2026 on the MinION sample in the repository (50
+strands, 5.76% raw error) and on both ERP173549 pools as
+`scripts/erp173549/prepare.py` builds them (11,293 strands each, 0.22% and
+1.85% raw error). Each cell is the error left as a share of the raw
+error; a cell in parentheses rests on fewer than 30 strands and is not
+used:
+
+| Reads per strand | MinION, 50 strands | Illumina, high fidelity | Illumina, low fidelity | Type now | 1/c² before |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 0.9279 | 0.6282 | 0.7784 | **0.9279** | 0.2500 |
+| 3 | 0.2525 | 0.1827 | 0.1981 | **0.2525** | 0.1111 |
+| 4 | 0.1483 | 0.0792 | 0.1400 | **0.1483** | 0.0625 |
+| 5 | 0.0789 | 0.0357 | 0.0554 | **0.0789** | 0.0400 |
+| 6 | 0.0537 | 0.0341 | 0.0401 | **0.0537** | 0.0278 |
+| 8 | 0.0329 | 0.0251 | 0.0164 | **0.0367** | 0.0156 |
+| 10 | 0.0367 | 0.0183 | 0.0085 | **0.0367** | 0.0100 |
+| 12 | 0.0225 | 0.0155 | 0.0053 | **0.0225** | 0.0069 |
+| 15 | 0.0162 | 0.0158 | 0.0033 | **0.0210** | 0.0044 |
+| 20 | 0.0210 | 0.0167 | 0.0029 | **0.0210** | 0.0025 |
+| 25 | (0.0000) | 0.0091 | 0.0010 | **0.0210** | 0.0016 |
+| 30 | (0.0000) | 0.0004 | 0.0003 | **0.0210** | 0.0011 |
+
+`nucle_lang::probabilistic` keeps the three columns and builds the curve
+from them:
+
+- at each coverage, the worst of the three read sets;
+- a coverage between two measured ones takes the lower one's share, and a
+  coverage past a set's last measurement keeps its last share, so nothing
+  is extrapolated;
+- each share is the largest measured at that coverage or above, so more
+  reads never make the type worse;
+- a point measured on fewer than 30 strands is left out (the MinION
+  sample at 25 and 30 reads: 23 and 19 strands, with no error left);
+- one read leaves the rate unchanged, as before
+  (`E-CONSENSUS-NOOP-COVERAGE`).
+
+The MinION sample is the worst of the three at every coverage, so it alone
+sets the curve: an Illumina pool is typed with more error than its own
+reads left. Two reads barely help (0.93 of the error left): where they
+disagree there is no majority. The share falls fastest between 2 and 5
+reads.
+
+Each row uses the strands with at least `c` reads, so the deepest rows
+rest on the best-covered strands. The high-fidelity pool's residual falls
+24-fold between 25 and 30 reads, which looks like the selection rather
+than five more reads. The curve does not use it: the MinION share at 20
+reads holds past 20.
+
+What the types say now: a Nanopore pool's 5% becomes 0.18% at 10x
+(0.05% before) and 0.11% at 30x; an Illumina pool's 0.35% becomes
+0.013% at 10x (0.0035% before). `nucle_lang/tests/consensus_curve.rs`
+pins the curve: it never rises, it covers every measured point, the
+MinION column matches what the decoder does today on the sample in the
+repository, and the checker infers it.
+
+Three limits. The MinION column rests on 50 strands; the full Clustered
+Nanopore Reads set has 10,000 and would narrow it. No Twist or IDT reads
+were measured, so those pools get the same curve applied to their
+profile's rate. And the ERP173549 pools were prepared with at most 30
+reads per strand, so nothing past 30x was measured.
+
 ## Retrieval Architecture
 
 ```
