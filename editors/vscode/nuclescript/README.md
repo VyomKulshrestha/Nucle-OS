@@ -191,9 +191,9 @@ in the main repo — start with `store.nsl`, then `fountain_roundtrip.nsl`, then
 
 **Using the official packages:** imports like `from "nuclescript/presets"`
 (`@nuclescript/presets`, `@nuclescript/profiles`, `@nuclescript/benchmarks`,
-`@nuclescript/recovery` — see the
+`@nuclescript/recovery`, `@nuclescript/std` — see the
 [package registry](https://github.com/orgs/Nuclescript/packages))
-get full hover and diagnostics with no install step: those four packages
+get full hover and diagnostics with no install step: those five packages
 are compiled directly into both `nucle-lsp` and `nucle-cli`, not fetched
 over the network. `nucle-cli package install/lock/verify` is only for
 generating a `nucle.lock` for reproducible builds — the editor doesn't

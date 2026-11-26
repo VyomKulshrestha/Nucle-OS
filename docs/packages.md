@@ -7,8 +7,9 @@ recovery profiles, pipeline templates, and functions that can be imported by
 [package registry](https://github.com/orgs/Nuclescript/packages), independent
 of NucleOS's own release cadence.
 
-Four packages are bundled with this repository today: `presets`, `profiles`,
-`benchmarks`, and `recovery`.
+Five packages are bundled with this repository today: `presets`, `profiles`,
+`benchmarks`, `recovery`, and `std`, the standard library written in
+NucleScript.
 
 ## What an import does
 
@@ -106,6 +107,19 @@ recovered pool. See
 | `recovery_archive` | `pool_schema` | Illumina defaults at 4x redundancy |
 | `recovery_consensus_10x` / `recovery_consensus_20x` | `recovery_profile` | Consensus-recovered bindings at 10x/20x coverage |
 | `recover_with_consensus` | `function` | Simulate + consensus-vote a source pool at 10x coverage |
+
+## @nuclescript/std 0.1.0
+
+The standard library, written in NucleScript rather than built into the
+compiler. Each function is generic over the pool's profile and loops over
+the files the pool holds when the call runs. See
+[packages/nuclescript-std/README.md](../packages/nuclescript-std/README.md).
+
+| Export | Kind | Purpose |
+|---|---|---|
+| `clear` | `function` | Deletes every file a pool holds; the call is Destructive |
+| `each_file` | `function` | Runs a `Fn(File) -> Void` closure on each file; the call has the closure's effect |
+| `prune` | `function` | `each_file` with a `confirm physical_key` ceiling: the closure may delete and nothing worse |
 
 Inspect bundled packages:
 
