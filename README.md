@@ -1502,13 +1502,14 @@ issue? See [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
 [paper/nuclescript.pdf](paper/nuclescript.pdf), "NucleScript: A
 Programming Language for DNA Data Storage with Checked Effects and
-Channel-Typed Pools", is a 14-page technical report archived on Zenodo as
-[doi:10.5281/zenodo.24059497](https://doi.org/10.5281/zenodo.24059497)
+Channel-Typed Pools", is a 15-page technical report archived on Zenodo as
+version 3,
+[doi:10.5281/zenodo.24556406](https://doi.org/10.5281/zenodo.24556406)
 (all versions:
 [doi:10.5281/zenodo.24057684](https://doi.org/10.5281/zenodo.24057684)). It
-covers the language, its type and effect rules, the runtime monitor and the
-eight defects it found, the Lean proof, and decoding of real MinION and
-Illumina reads. Its source is
+covers the language, its type and effect rules, the runtime monitor, the
+Lean proof and its comparison with the Rust checker, the ten defects they
+found, and decoding of real MinION and Illumina reads. Its source is
 `paper/nuclescript.tex`; rebuild it with `cd paper && tectonic
 nuclescript.tex`.
 
