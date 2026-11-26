@@ -234,6 +234,7 @@ struct ScopedPattern {
     closure: Option<(Vec<String>, Vec<TypeExpr>, TypeExpr)>,
     ceiling: Option<crate::effects::EffectSet>,
     decl: Option<FunctionDecl>,
+    binding: Option<LetDecl>,
 }
 
 /// What `TypeChecker::infer_scrutinee_kind` resolves a `match`'s
@@ -1006,17 +1007,21 @@ impl TypeChecker {
             // call through it has every effect (`effects::bind_callable`).
             if let TypeExpr::Fn(param_types, ret, effect) = &binding.annotation {
                 self.closures.insert(binding.name.clone(), (Vec::new(), param_types.clone(), (**ret).clone()));
+                // Another name for a closure or parameter in scope stands
+                // for exactly what that one does, ceiling or not, as in
+                // `effects::bind_callable`; otherwise a declared ceiling is
+                // all that is known.
                 match (effect, &binding.expr) {
-                    (Some(effect), _) => {
-                        self.fn_param_effects.insert(binding.name.clone(), effect.allowed());
-                    }
-                    (None, Expr::Variable(other)) if self.closure_decls.contains_key(other) => {
+                    (_, Expr::Variable(other)) if self.closure_decls.contains_key(other) => {
                         let aliased = self.closure_decls[other].clone();
                         self.closure_decls.insert(binding.name.clone(), aliased);
                     }
-                    (None, Expr::Variable(other)) if self.fn_param_effects.contains_key(other) => {
+                    (_, Expr::Variable(other)) if self.fn_param_effects.contains_key(other) => {
                         let ceiling = self.fn_param_effects[other];
                         self.fn_param_effects.insert(binding.name.clone(), ceiling);
+                    }
+                    (Some(effect), _) => {
+                        self.fn_param_effects.insert(binding.name.clone(), effect.allowed());
                     }
                     _ => {}
                 }
@@ -1306,12 +1311,18 @@ impl TypeChecker {
     /// `check_enum_construct` enforced where the enum value was built.
     /// Returns what the arm's scope shadowed, for `unscope_closure_pattern`.
     fn scope_closure_pattern(&mut self, binding: Option<&str>, pattern_ty: Option<&TypeExpr>) -> Option<ScopedPattern> {
-        let (Some(name), Some(TypeExpr::Fn(params, ret, effect))) = (binding, pattern_ty) else { return None };
+        let (Some(name), Some(fn_ty @ TypeExpr::Fn(params, ret, effect))) = (binding, pattern_ty) else { return None };
         let saved = ScopedPattern {
             name: name.to_string(),
             closure: self.closures.insert(name.to_string(), (Vec::new(), params.clone(), (**ret).clone())),
             ceiling: self.fn_param_effects.remove(name),
             decl: self.closure_decls.remove(name),
+            binding: self.bindings.insert(name.to_string(), LetDecl {
+                name: name.to_string(),
+                annotation: fn_ty.clone(),
+                expr: Expr::Variable(name.to_string()),
+                span: Span::default(),
+            }),
         };
         if let Some(effect) = effect {
             self.fn_param_effects.insert(name.to_string(), effect.allowed());
@@ -1320,7 +1331,11 @@ impl TypeChecker {
     }
 
     fn unscope_closure_pattern(&mut self, saved: ScopedPattern) {
-        let ScopedPattern { name, closure, ceiling, decl } = saved;
+        let ScopedPattern { name, closure, ceiling, decl, binding } = saved;
+        match binding {
+            Some(previous) => { self.bindings.insert(name.clone(), previous); }
+            None => { self.bindings.remove(&name); }
+        }
         match closure {
             Some(previous) => { self.closures.insert(name.clone(), previous); }
             None => { self.closures.remove(&name); }
@@ -2290,6 +2305,15 @@ impl TypeChecker {
             TypeExpr::Fn(param_types, return_type, effect) => {
                 self.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**return_type).clone()));
                 self.fn_param_effects.insert(param.name.clone(), effect.map_or(crate::effects::EffectSet::default(), |e| e.allowed()));
+                // Its declared type, so `let again: Fn() -> Void = action`
+                // can give the parameter a second name, which must repeat
+                // its type, ceiling included.
+                self.bindings.insert(param.name.clone(), LetDecl {
+                    name: param.name.clone(),
+                    annotation: param.ty.clone(),
+                    expr: Expr::Variable(param.name.clone()),
+                    span,
+                });
             }
             // A user-enum-typed parameter -- see
             // `TypeChecker::enum_bindings`'s own doc comment.

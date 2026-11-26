@@ -710,3 +710,42 @@ fn narrower_ceilings_round_trip_through_the_formatter() {
     let formatted = nucle_lang::format_source(src).unwrap();
     assert!(formatted.contains("Fn() -> Void confirm sequencing"), "{formatted}");
 }
+
+// ---------------------------------------------------------------------
+// Found by checking the Rust checker against the Lean rules
+// (tests/lean_differential.rs)
+// ---------------------------------------------------------------------
+
+/// A `Fn` parameter can be given a second name, which must repeat its type,
+/// ceiling included. The checker used to report the parameter as an
+/// undeclared variable, since only `let`s were looked up.
+#[test]
+fn a_fn_parameter_can_be_given_a_second_name() {
+    let good = format!(
+        "{POOL}fn wipe_with(action: Fn() -> Void confirm physical_key) returns Void {{\n\
+         \x20   let again: Fn() -> Void confirm physical_key = action\n\
+         \x20   let x: Void = again()\n}}\n"
+    );
+    assert!(errors(&good).is_empty(), "{:?}", errors(&good));
+    let wrong_type = format!(
+        "{POOL}fn wipe_with(action: Fn() -> Void confirm physical_key) returns Void {{\n\
+         \x20   let again: Fn() -> Void = action\n}}\n"
+    );
+    assert!(errors(&wrong_type).contains(&"E-BINDING-TYPE-MISMATCH".to_string()), "{:?}", errors(&wrong_type));
+}
+
+/// Another name for a closure stands for exactly what that closure does,
+/// even when its type repeats a ceiling: a store-only closure fits
+/// `confirm synthesis` under either name. The type checker used to give the
+/// second name only the ceiling's whole set, which the effect analysis and
+/// the Lean rules do not.
+#[test]
+fn another_name_for_a_closure_keeps_what_it_does_under_a_ceiling() {
+    let src = format!(
+        "{POOL}fn only_synthesis(op: Fn() -> Void confirm synthesis) returns Void {{\n    let x: Void = op()\n}}\n\
+         let keep: Fn() -> Void confirm hardware = fn() -> Void {{\n    store \"sample_a.txt\" into archive\n}}\n\
+         let again: Fn() -> Void confirm hardware = keep\n\
+         let done: Void = only_synthesis(again)\n"
+    );
+    assert!(errors(&src).is_empty(), "{:?}", errors(&src));
+}
