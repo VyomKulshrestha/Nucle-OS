@@ -66,15 +66,20 @@ theorem union_sub {a b c : Effs} (h₁ : Sub a c) (h₂ : Sub b c) : Sub (union 
 
 end Effs
 
-/-- `confirm hardware` covers synthesis and sequencing; `confirm
+/-- `confirm hardware` covers synthesis and sequencing, `confirm
+synthesis` and `confirm sequencing` one of them each, and `confirm
 physical_key` covers deletion. -/
 inductive Ceiling where
   | hardware
+  | synthesis
+  | sequencing
   | physicalKey
   deriving DecidableEq, Repr
 
 def Ceiling.allows : Ceiling → Effs
   | .hardware => fun e => e = .synthesis ∨ e = .sequencing
+  | .synthesis => fun e => e = .synthesis
+  | .sequencing => fun e => e = .sequencing
   | .physicalKey => fun e => e = .destructive
 
 /-! ## Syntax -/
