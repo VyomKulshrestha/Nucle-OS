@@ -76,11 +76,11 @@
       ]
     },
     "confirmation-keywords": {
-      "comment": "confirm/hardware/physical_key gate every Synthesis/Sequencing/Destructive effect -- given a distinct scope so an editor theme can make them visually stand out from ordinary control flow, matching how load-bearing they are in the language's safety model. The parser matches keywords case-insensitively (eq_ignore_ascii_case), but every real example uses lowercase consistently -- matching that convention case-sensitively (rather than mirroring the parser's leniency) is what avoids 'strand' the keyword and 'Strand' the type name (and similarly seq/Sequence, recovery/Recovery) colliding on the exact same word.",
+      "comment": "confirm/hardware/synthesis/sequencing/physical_key gate every Synthesis/Sequencing/Destructive effect -- given a distinct scope so an editor theme can make them visually stand out from ordinary control flow, matching how load-bearing they are in the language's safety model. The parser matches keywords case-insensitively (eq_ignore_ascii_case), but every real example uses lowercase consistently -- matching that convention case-sensitively (rather than mirroring the parser's leniency) is what avoids 'strand' the keyword and 'Strand' the type name (and similarly seq/Sequence, recovery/Recovery) colliding on the exact same word.",
       "patterns": [
         {
           "name": "keyword.control.confirmation.nuclescript",
-          "match": "\\b(confirm|hardware|physical_key)\\b"
+          "match": "\\b(confirm|hardware|synthesis|sequencing|physical_key)\\b"
         }
       ]
     },
