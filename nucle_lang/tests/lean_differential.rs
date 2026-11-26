@@ -51,6 +51,60 @@ impl Ceil {
     }
 }
 
+/// A pool's profile, or a generic function's type parameter.
+#[derive(Clone, PartialEq)]
+enum PTy {
+    Prof(&'static str),
+    Var(&'static str),
+}
+
+/// A value's type: a closure's is the ceilings of the closures it takes.
+#[derive(Clone, PartialEq)]
+enum Ty {
+    Fn(Vec<Ceil>),
+    Pool(PTy),
+    /// `DnaFile`, `Void` or `Str`.
+    Base(&'static str),
+    Res(Box<Ty>, Box<Ty>),
+    /// The program's one enum, `Job { Keep, Wipe(Str) }`.
+    Job,
+}
+
+impl Ty {
+    fn result(ok: &'static str) -> Ty {
+        Ty::Res(Box::new(Ty::Base(ok)), Box::new(Ty::Base("Str")))
+    }
+
+    /// The NucleScript type, with `k` as the ceiling of a closure's.
+    fn nsl(&self, k: Ceil) -> String {
+        match self {
+            Ty::Fn(cs) => format!("Fn({}) -> Void{}", cs.iter().map(|c| format!("Fn() -> Void{}", c.nsl())).collect::<Vec<_>>().join(", "), k.nsl()),
+            Ty::Pool(PTy::Prof(p)) | Ty::Pool(PTy::Var(p)) => format!("Pool<{p}>"),
+            Ty::Base(b) => b.to_string(),
+            Ty::Res(t, e) => format!("Result<{}, {}>", t.nsl(Ceil::None), e.nsl(Ceil::None)),
+            Ty::Job => "Job".to_string(),
+        }
+    }
+
+    fn lean(&self, out: &mut Vec<String>) {
+        match self {
+            Ty::Fn(cs) => {
+                out.extend(["fn".to_string(), cs.len().to_string()]);
+                out.extend(cs.iter().map(|c| c.lean().to_string()));
+            }
+            Ty::Pool(PTy::Prof(p)) => out.extend(["pool".to_string(), p.to_string()]),
+            Ty::Pool(PTy::Var(v)) => out.extend(["poolv".to_string(), v.to_string()]),
+            Ty::Base(b) => out.extend(["base".to_string(), b.to_string()]),
+            Ty::Res(t, e) => {
+                out.push("res".to_string());
+                t.lean(out);
+                e.lean(out);
+            }
+            Ty::Job => out.extend(["enum".to_string(), "Job".to_string()]),
+        }
+    }
+}
+
 #[derive(Clone)]
 enum Op {
     Store,
@@ -61,10 +115,25 @@ enum Op {
     Sequence(bool),
 }
 
+/// The profiles a call gives a generic function's type parameters.
+type Inst = Vec<(&'static str, PTy)>;
+
+/// A value bound by `let` that is not a closure.
+#[derive(Clone)]
+enum Value {
+    /// What `store` (`Result<DnaFile, Str>`) or `delete` (`Result<Void,
+    /// Str>`) gives back.
+    Outcome(Op),
+    /// `Job::Keep` or `Job::Wipe("why")`.
+    Variant(&'static str),
+}
+
 /// A statement of the core calculus.
 #[derive(Clone)]
 enum St {
     Op(Op),
+    /// Nothing, written for Lean as an operation without an effect.
+    Skip,
     Seq(Box<St>, Box<St>),
     /// Either side may run: written in NucleScript as a `match` whose arms
     /// call one helper function each.
@@ -79,22 +148,41 @@ enum St {
     /// A call to a closure, passing it closures that take none, with the
     /// ceilings of the closure's parameters as its type gives them.
     Call(String, Vec<String>, Vec<Ceil>),
-    CallFn(String, Vec<String>),
+    /// A call to a function, with the profiles its type parameters take,
+    /// and, for a function returning a `Result`, the name that holds it
+    /// and what follows.
+    CallFn(String, Vec<String>, Inst, Option<(String, Box<St>)>),
     /// Runs zero or more times: written as a loop over a pool's files.
     Loop(Box<St>),
+    Let(String, Value, Box<St>),
+    /// `let x: T = y?`.
+    Try(String, Ty, String, Box<St>),
+    /// A `match` on an enum or a `Result`: each arm calls a helper
+    /// function, and a wildcard arm may end it.
+    Match(String, Vec<(&'static str, St)>, Option<Box<St>>),
 }
-
-/// The type of a closure, as far as calls go: the ceilings of the closures
-/// it takes, `Ceil::None` for one without.
-type Ty = Vec<Ceil>;
 
 struct Function {
     name: String,
-    /// Each parameter's name, ceiling, and the type of the closure it
-    /// takes.
+    /// Each parameter's name, ceiling (a closure's), and type.
     params: Vec<(String, Ceil, Ty)>,
+    /// Whether it returns `Result<DnaFile, Str>` rather than `Void`.
+    returns_result: bool,
     body: St,
 }
+
+impl Function {
+    fn generic(&self) -> bool {
+        self.params.iter().any(|(_, _, t)| matches!(t, Ty::Pool(PTy::Var(_))))
+    }
+}
+
+/// The pools the program declares, with their profiles.
+const POOLS: [(&str, &str); 2] = [("p0", "Illumina"), ("p1", "Twist")];
+
+/// The variants of `Job`, and of a `Result`.
+const JOB_TAGS: [&str; 2] = ["Keep", "Wipe"];
+const RESULT_TAGS: [&str; 2] = ["Ok", "Err"];
 
 struct Gen {
     rng: StableRng,
@@ -116,6 +204,10 @@ impl Gen {
         self.rng.gen_f64() < p
     }
 
+    fn pick<T: Clone>(&mut self, items: &[T]) -> T {
+        items[self.rng.gen_range(0..items.len())].clone()
+    }
+
     fn ceiling(&mut self) -> Ceil {
         match self.rng.gen_range(0..8) {
             0 => Ceil::Hardware,
@@ -126,9 +218,13 @@ impl Gen {
         }
     }
 
-    fn op(&mut self) -> Op {
+    fn confirmed(&mut self) -> bool {
         // Now and then a confirmation is missing, which both checkers must refuse.
-        let confirmed = !self.chance(0.05);
+        !self.chance(0.05)
+    }
+
+    fn op(&mut self) -> Op {
+        let confirmed = self.confirmed();
         match self.rng.gen_range(0..9) {
             0 | 1 => Op::Store,
             2 => Op::SimulateStore,
@@ -139,28 +235,30 @@ impl Gen {
         }
     }
 
-    /// A statement that names nothing local: the body of a branch or of a
-    /// closure returned by a function, both written as their own functions.
+    /// A statement that names nothing local: the body of a branch, a match
+    /// arm or a closure returned by a function, all written as functions
+    /// of their own.
     fn closed(&mut self, depth: u32) -> St {
-        let zero_arity: Vec<String> = self.functions.iter().filter(|f| f.params.is_empty()).map(|f| f.name.clone()).collect();
+        let zero_arity: Vec<String> = self.functions.iter().filter(|f| f.params.is_empty() && !f.returns_result).map(|f| f.name.clone()).collect();
         if depth > 0 && self.chance(0.3) {
             return St::Seq(Box::new(self.closed(depth - 1)), Box::new(self.closed(depth - 1)));
         }
         if !zero_arity.is_empty() && self.chance(0.2) {
-            let f = zero_arity[self.rng.gen_range(0..zero_arity.len())].clone();
-            return St::CallFn(f, vec![]);
+            let f = self.pick(&zero_arity);
+            return St::CallFn(f, vec![], vec![], None);
         }
         St::Op(self.op())
     }
 
     /// A closure's own parameters, sometimes none, each with a ceiling now
-    /// and then. When everything in `scope` is a parameter, one of those
-    /// names is now and then reused, so the closure's parameter hides it.
+    /// and then. When everything in `scope` is a closure parameter, one of
+    /// those names is now and then reused, so the closure's parameter
+    /// hides it.
     fn own_params(&mut self, scope: &[(String, Ty)]) -> Vec<(String, Ceil)> {
         if !self.chance(0.4) {
             return Vec::new();
         }
-        let only_params = !scope.is_empty() && scope.iter().all(|(x, _)| x.starts_with('q') || x.starts_with('k'));
+        let only_params = !scope.is_empty() && scope.iter().all(|(x, t)| (x.starts_with('q') || x.starts_with('k')) && matches!(t, Ty::Fn(_)));
         let mut params: Vec<(String, Ceil)> = Vec::new();
         for _ in 0..self.rng.gen_range(1..3) {
             let ceiling = if self.chance(0.5) { self.ceiling() } else { Ceil::None };
@@ -186,21 +284,56 @@ impl Gen {
                 if fitting.is_empty() {
                     None
                 } else {
-                    Some(fitting[self.rng.gen_range(0..fitting.len())].clone())
+                    Some(self.pick(&fitting))
                 }
             })
             .collect()
     }
 
-    /// A statement in a scope holding the callable names `scope`, each with
-    /// its type.
-    fn stmt(&mut self, scope: &[(String, Ty)], depth: u32) -> St {
+    /// Arguments for a call to `f` from `scope`, and the profiles its type
+    /// parameters take: the first pool passed for a `Pool<P>` fixes `P`,
+    /// as the Rust checker infers it. Now and then a pool of another
+    /// profile is passed, which both checkers must refuse.
+    fn fn_args(&mut self, scope: &[(String, Ty)], params: &[(String, Ceil, Ty)]) -> Option<(Vec<String>, Inst)> {
+        let mut inst: Inst = Vec::new();
+        let mut args = Vec::new();
+        for (_, _, want) in params {
+            let pools: Vec<(String, PTy)> = scope.iter().filter_map(|(x, t)| if let Ty::Pool(p) = t { Some((x.clone(), p.clone())) } else { None }).collect();
+            let arg = match want {
+                Ty::Pool(PTy::Var(v)) => match inst.iter().find(|(w, _)| w == v).map(|(_, p)| p.clone()) {
+                    Some(bound) => {
+                        let fitting: Vec<String> = pools.iter().filter(|(_, p)| *p == bound || self.chance(0.03)).map(|(x, _)| x.clone()).collect();
+                        if fitting.is_empty() {
+                            return None;
+                        }
+                        self.pick(&fitting)
+                    }
+                    None => {
+                        if pools.is_empty() {
+                            return None;
+                        }
+                        let (x, p) = self.pick(&pools);
+                        inst.push((v, p));
+                        x
+                    }
+                },
+                Ty::Pool(PTy::Prof(_)) if self.chance(0.03) && !pools.is_empty() => self.pick(&pools).0,
+                _ => self.args(scope, std::slice::from_ref(want))?.remove(0),
+            };
+            args.push(arg);
+        }
+        Some((args, inst))
+    }
+
+    /// A statement in a scope holding the names `scope`, each with its
+    /// type; `in_result` when a `?` may end the function it is in.
+    fn stmt(&mut self, scope: &[(String, Ty)], depth: u32, in_result: bool) -> St {
         loop {
-            match self.rng.gen_range(0..11) {
-                10 if depth > 0 => return St::Loop(Box::new(self.stmt(scope, depth - 1))),
+            match self.rng.gen_range(0..17) {
+                10 if depth > 0 => return St::Loop(Box::new(self.stmt(scope, depth - 1, false))),
                 0 | 1 => return St::Op(self.op()),
                 2 if depth > 0 => {
-                    return St::Seq(Box::new(self.stmt(scope, depth - 1)), Box::new(self.stmt(scope, depth - 1)));
+                    return St::Seq(Box::new(self.stmt(scope, depth - 1, in_result)), Box::new(self.stmt(scope, depth - 1, in_result)));
                 }
                 3 if depth > 0 => return St::Alt(Box::new(self.closed(1)), Box::new(self.closed(1))),
                 4 | 5 if depth > 0 => {
@@ -208,19 +341,24 @@ impl Gen {
                     let ceiling = self.ceiling();
                     let params = self.own_params(scope);
                     let mut body_scope: Vec<(String, Ty)> = scope.iter().filter(|(x, _)| !params.iter().any(|(p, _)| p == x)).cloned().collect();
-                    body_scope.extend(params.iter().map(|(p, _)| (p.clone(), Vec::new())));
-                    let body = self.stmt(&body_scope, depth - 1);
+                    body_scope.extend(params.iter().map(|(p, _)| (p.clone(), Ty::Fn(Vec::new()))));
+                    let body = self.stmt(&body_scope, depth - 1, false);
                     let mut inner = scope.to_vec();
-                    inner.push((x.clone(), params.iter().map(|(_, c)| *c).collect()));
-                    let rest = self.stmt(&inner, depth - 1);
+                    inner.push((x.clone(), Ty::Fn(params.iter().map(|(_, c)| *c).collect())));
+                    let rest = self.stmt(&inner, depth - 1, in_result);
                     return St::Closure(x, ceiling, params, Box::new(body), Box::new(rest));
                 }
-                6 if depth > 0 && !scope.is_empty() => {
+                6 if depth > 0 => {
+                    // Another name for a closure or an enum value.
+                    let named: Vec<(String, Ty)> = scope.iter().filter(|(_, t)| matches!(t, Ty::Fn(_) | Ty::Job)).cloned().collect();
+                    if named.is_empty() {
+                        continue;
+                    }
                     let x = self.name("a");
-                    let (y, ty) = scope[self.rng.gen_range(0..scope.len())].clone();
+                    let (y, ty) = self.pick(&named);
                     let mut inner = scope.to_vec();
                     inner.push((x.clone(), ty));
-                    let rest = self.stmt(&inner, depth - 1);
+                    let rest = self.stmt(&inner, depth - 1, in_result);
                     return St::Alias(x, y, Box::new(rest));
                 }
                 7 if depth > 0 => {
@@ -229,70 +367,154 @@ impl Gen {
                     let params = self.own_params(&[]);
                     // Written inside a function of its own, the body sees
                     // only its own parameters.
-                    let own: Vec<(String, Ty)> = params.iter().map(|(p, _)| (p.clone(), Vec::new())).collect();
-                    let body = if own.is_empty() { self.closed(1) } else { self.stmt(&own, 1) };
+                    let own: Vec<(String, Ty)> = params.iter().map(|(p, _)| (p.clone(), Ty::Fn(Vec::new()))).collect();
+                    let body = if own.is_empty() { self.closed(1) } else { self.stmt(&own, 1, false) };
                     let mut inner = scope.to_vec();
-                    inner.push((x.clone(), params.iter().map(|(_, c)| *c).collect()));
-                    let rest = self.stmt(&inner, depth - 1);
+                    inner.push((x.clone(), Ty::Fn(params.iter().map(|(_, c)| *c).collect())));
+                    let rest = self.stmt(&inner, depth - 1, in_result);
                     return St::Opaque(x, ceiling, params, Box::new(body), Box::new(rest));
                 }
-                8 if !scope.is_empty() => {
-                    let (x, ty) = scope[self.rng.gen_range(0..scope.len())].clone();
-                    let Some(mut args) = self.args(scope, &vec![Vec::new(); ty.len()]) else { continue };
+                8 => {
+                    let callable: Vec<(String, Vec<Ceil>)> = scope.iter().filter_map(|(x, t)| if let Ty::Fn(cs) = t { Some((x.clone(), cs.clone())) } else { None }).collect();
+                    if callable.is_empty() {
+                        continue;
+                    }
+                    let (x, ty) = self.pick(&callable);
+                    let Some(mut args) = self.args(scope, &vec![Ty::Fn(Vec::new()); ty.len()]) else { continue };
                     // Now and then a call passes one closure too many, which
                     // both checkers must refuse.
                     if self.chance(0.02) {
-                        if let Some(extra) = self.args(scope, &[Vec::new()]) {
+                        if let Some(extra) = self.args(scope, &[Ty::Fn(Vec::new())]) {
                             args.extend(extra);
                         }
                     }
                     return St::Call(x, args, ty);
                 }
                 9 if !self.functions.is_empty() => {
-                    let f = &self.functions[self.rng.gen_range(0..self.functions.len())];
-                    let (name, types): (String, Vec<Ty>) = (f.name.clone(), f.params.iter().map(|(_, _, t)| t.clone()).collect());
-                    let Some(args) = self.args(scope, &types) else { continue };
-                    return St::CallFn(name, args);
+                    let f = self.rng.gen_range(0..self.functions.len());
+                    let (name, params, returns_result) = (self.functions[f].name.clone(), self.functions[f].params.clone(), self.functions[f].returns_result);
+                    let Some((args, inst)) = self.fn_args(scope, &params) else { continue };
+                    let bound = if returns_result && depth > 0 {
+                        let v = self.name("got");
+                        let mut inner = scope.to_vec();
+                        inner.push((v.clone(), Ty::result("DnaFile")));
+                        Some((v, Box::new(self.stmt(&inner, depth - 1, in_result))))
+                    } else if returns_result {
+                        continue;
+                    } else {
+                        None
+                    };
+                    return St::CallFn(name, args, inst, bound);
+                }
+                11 if depth > 0 => {
+                    // What a store or a delete gives back.
+                    let x = self.name("r");
+                    let (op, ty) = if self.chance(0.5) { (Op::Store, Ty::result("DnaFile")) } else { (Op::Delete(self.confirmed()), Ty::result("Void")) };
+                    let mut inner = scope.to_vec();
+                    inner.push((x.clone(), ty));
+                    let rest = self.stmt(&inner, depth - 1, in_result);
+                    return St::Let(x, Value::Outcome(op), Box::new(rest));
+                }
+                12 if depth > 0 => {
+                    let x = self.name("j");
+                    let tag = self.pick(&JOB_TAGS);
+                    let mut inner = scope.to_vec();
+                    inner.push((x.clone(), Ty::Job));
+                    let rest = self.stmt(&inner, depth - 1, in_result);
+                    return St::Let(x, Value::Variant(tag), Box::new(rest));
+                }
+                13 | 16 if depth > 0 && in_result => {
+                    let results: Vec<(String, Ty)> = scope.iter().filter(|(_, t)| matches!(t, Ty::Res(..))).cloned().collect();
+                    if results.is_empty() {
+                        // Store or delete first, and unwrap what it gives back.
+                        let r = self.name("r");
+                        let (op, ty) = if self.chance(0.5) { (Op::Store, Ty::result("DnaFile")) } else { (Op::Delete(self.confirmed()), Ty::result("Void")) };
+                        let mut inner = scope.to_vec();
+                        inner.push((r.clone(), ty));
+                        let rest = self.stmt(&inner, depth, in_result);
+                        return St::Let(r, Value::Outcome(op), Box::new(rest));
+                    }
+                    let (y, ty) = self.pick(&results);
+                    let Ty::Res(ok, _) = ty else { unreachable!() };
+                    // Now and then the declared type is not what `?` gives,
+                    // which both checkers must refuse.
+                    let declared = if self.chance(0.03) { Ty::Base(if *ok == Ty::Base("Void") { "DnaFile" } else { "Void" }) } else { *ok };
+                    let x = self.name("u");
+                    let mut inner = scope.to_vec();
+                    inner.push((x.clone(), declared.clone()));
+                    let rest = self.stmt(&inner, depth - 1, in_result);
+                    return St::Try(x, declared, y, Box::new(rest));
+                }
+                14 | 15 if depth > 0 => {
+                    let matchable: Vec<(String, Ty)> = scope.iter().filter(|(_, t)| matches!(t, Ty::Job | Ty::Res(..))).cloned().collect();
+                    if matchable.is_empty() {
+                        continue;
+                    }
+                    let (y, ty) = self.pick(&matchable);
+                    let tags = if ty == Ty::Job { JOB_TAGS } else { RESULT_TAGS };
+                    let mut arms: Vec<(&'static str, St)> = tags.iter().map(|t| (*t, self.closed(1))).collect();
+                    let mut wildcard = None;
+                    if self.chance(0.25) {
+                        // A wildcard arm for the last variant.
+                        arms.pop();
+                        wildcard = Some(Box::new(self.closed(1)));
+                    } else if self.chance(0.05) {
+                        // An arm left out, which both checkers must refuse.
+                        let i = self.rng.gen_range(0..arms.len());
+                        arms.remove(i);
+                    }
+                    return St::Match(y, arms, wildcard);
                 }
                 _ => continue,
             }
         }
     }
 
+    fn param_type(&mut self) -> Ty {
+        match self.rng.gen_range(0..10) {
+            // A closure that is sometimes passed a closure itself, with or
+            // without a ceiling: `Fn(Fn() -> Void confirm synthesis) -> Void`.
+            0..=4 => Ty::Fn(if self.chance(0.3) { vec![if self.chance(0.5) { self.ceiling() } else { Ceil::None }] } else { Vec::new() }),
+            5 => Ty::Pool(PTy::Prof(self.pick(&POOLS).1)),
+            6 | 7 => Ty::Pool(PTy::Var("P")),
+            8 => Ty::result("DnaFile"),
+            _ => Ty::Job,
+        }
+    }
+
     fn program(&mut self) -> St {
         for _ in 0..self.rng.gen_range(0..4) {
             let name = self.name("f");
-            // A parameter sometimes takes a closure that is itself passed a
-            // closure: `g: Fn(Fn() -> Void) -> Void`, or with a ceiling,
-            // `g: Fn(Fn() -> Void confirm synthesis) -> Void`.
             let params: Vec<(String, Ceil, Ty)> = (0..self.rng.gen_range(0..3))
                 .map(|i| {
-                    let ceiling = self.ceiling();
-                    let ty = if self.chance(0.3) { vec![if self.chance(0.5) { self.ceiling() } else { Ceil::None }] } else { Vec::new() };
+                    let ty = self.param_type();
+                    let ceiling = if matches!(ty, Ty::Fn(_)) { self.ceiling() } else { Ceil::None };
                     (format!("q{i}"), ceiling, ty)
                 })
                 .collect();
+            let returns_result = self.chance(0.25);
             let scope: Vec<(String, Ty)> = params.iter().map(|(p, _, t)| (p.clone(), t.clone())).collect();
-            let body = self.stmt(&scope, 2);
-            self.functions.push(Function { name, params, body });
+            let mut body = self.stmt(&scope, 2, returns_result);
+            if returns_result {
+                // The value the function returns: its last binding.
+                let last = St::Let(self.name("last"), Value::Outcome(Op::Store), Box::new(St::Skip));
+                body = St::Seq(Box::new(body), Box::new(last));
+            }
+            self.functions.push(Function { name, params, returns_result, body });
         }
-        self.stmt(&[], 4)
+        let scope: Vec<(String, Ty)> = POOLS.iter().map(|(p, prof)| (p.to_string(), Ty::Pool(PTy::Prof(prof)))).collect();
+        self.stmt(&scope, 4, false)
     }
 }
 
 /// Writes a statement as NucleScript, collecting the helper functions that
-/// branches and returned closures need.
+/// branches, match arms and returned closures need.
 struct Writer {
     helpers: Vec<String>,
     next: usize,
-    /// The type of each callable name and its ceiling, so another name for
+    /// The type of each name and a closure's ceiling, so another name for
     /// it can repeat them.
     types: std::collections::HashMap<String, (Ty, Ceil)>,
-}
-
-/// The NucleScript type of a closure of type `ty` held to `k`.
-fn fn_type(ty: &[Ceil], k: Ceil) -> String {
-    format!("Fn({}) -> Void{}", ty.iter().map(|c| format!("Fn() -> Void{}", c.nsl())).collect::<Vec<_>>().join(", "), k.nsl())
 }
 
 /// A closure literal's parameter list.
@@ -302,7 +524,7 @@ fn param_list(params: &[(String, Ceil)]) -> String {
 
 /// A closure's type, from its own parameters.
 fn own_type(params: &[(String, Ceil)]) -> Ty {
-    params.iter().map(|(_, c)| *c).collect()
+    Ty::Fn(params.iter().map(|(_, c)| *c).collect())
 }
 
 impl Writer {
@@ -311,35 +533,45 @@ impl Writer {
         format!("{prefix}_{}", self.next)
     }
 
-    fn op(&mut self, op: &Op, indent: &str) -> String {
+    /// An operation, as a statement or, for `store` and `delete`, as the
+    /// expression a `let` binds.
+    fn op_text(&mut self, op: &Op) -> String {
         match op {
-            Op::Store => format!("{indent}store \"f.txt\" into p0\n"),
-            Op::SimulateStore => format!("{indent}simulate store \"f.txt\" into p0\n"),
-            Op::Retrieve => format!("{indent}retrieve from p0\n"),
-            Op::Delete(c) => format!("{indent}delete \"f.txt\" from p0{}\n", if *c { " confirm physical_key" } else { "" }),
+            Op::Store => "store \"f.txt\" into p0".to_string(),
+            Op::SimulateStore => "simulate store \"f.txt\" into p0".to_string(),
+            Op::Retrieve => "retrieve from p0".to_string(),
+            Op::Delete(c) => format!("delete \"f.txt\" from p0{}", if *c { " confirm physical_key" } else { "" }),
             Op::Synthesise(c) => {
                 let v = self.fresh("made");
                 let confirm = if *c { if self.next.is_multiple_of(2) { " confirm hardware" } else { " confirm synthesis" } } else { "" };
-                format!("{indent}let {v}: Pool<Twist, 0.03%> = synthesise p0 via Twist{confirm}\n")
+                format!("let {v}: Pool<Twist, 0.03%> = synthesise p0 via Twist{confirm}")
             }
             Op::Sequence(c) => {
                 let v = self.fresh("read");
                 let confirm = if *c { if self.next.is_multiple_of(2) { " confirm hardware" } else { " confirm sequencing" } } else { "" };
-                format!("{indent}let {v}: Pool<Illumina, 0.35%> = sequence noisy via Illumina{confirm}\n")
+                format!("let {v}: Pool<Illumina, 0.35%> = sequence noisy via Illumina{confirm}")
             }
         }
+    }
+
+    /// A helper function holding a closed statement, called from a branch
+    /// or a match arm.
+    fn helper(&mut self, body: &St) -> String {
+        let f = self.fresh("arm");
+        let b = self.stmt(body, "    ");
+        self.helpers.push(format!("fn {f}() returns Void {{\n{b}}}\n"));
+        f
     }
 
     fn stmt(&mut self, st: &St, indent: &str) -> String {
         let deeper = format!("{indent}    ");
         match st {
-            St::Op(op) => self.op(op, indent),
+            St::Op(op) => format!("{indent}{}\n", self.op_text(op)),
+            St::Skip => String::new(),
             St::Seq(a, b) => format!("{}{}", self.stmt(a, indent), self.stmt(b, indent)),
             St::Alt(a, b) => {
-                let (fa, fb, side, v) = (self.fresh("left"), self.fresh("right"), self.fresh("side"), self.fresh("done"));
-                let (ba, bb) = (self.stmt(a, "    "), self.stmt(b, "    "));
-                self.helpers.push(format!("fn {fa}() returns Void {{\n{ba}}}\n"));
-                self.helpers.push(format!("fn {fb}() returns Void {{\n{bb}}}\n"));
+                let (side, v) = (self.fresh("side"), self.fresh("done"));
+                let (fa, fb) = (self.helper(a), self.helper(b));
                 format!("{indent}let {side}: Side = Side::L\n{indent}let {v}: Void = match {side} {{\n{indent}    L => {fa}(),\n{indent}    R => {fb}(),\n{indent}}}\n")
             }
             St::Closure(x, k, params, body, rest) => {
@@ -347,7 +579,7 @@ impl Writer {
                 // A parameter may hide a name in scope; its type comes back after.
                 let hidden: Vec<(String, Option<(Ty, Ceil)>)> = params.iter().map(|(p, _)| (p.clone(), self.types.get(p).cloned())).collect();
                 for (p, c) in params {
-                    self.types.insert(p.clone(), (Vec::new(), *c));
+                    self.types.insert(p.clone(), (Ty::Fn(Vec::new()), *c));
                 }
                 let b = self.stmt(body, &deeper);
                 for (p, old) in hidden {
@@ -360,23 +592,23 @@ impl Writer {
                         }
                     }
                 }
-                let ty = fn_type(&own_type(params), *k);
+                let ty = own_type(params).nsl(*k);
                 format!("{indent}let {x}: {ty} = fn({}) -> Void {{\n{b}{indent}}}\n{}", param_list(params), self.stmt(rest, indent))
             }
             St::Alias(x, y, rest) => {
-                let (ty, k) = self.types.get(y).cloned().unwrap_or((Vec::new(), Ceil::None));
-                let written = fn_type(&ty, k);
+                let (ty, k) = self.types.get(y).cloned().unwrap_or((Ty::Fn(Vec::new()), Ceil::None));
+                let written = ty.nsl(k);
                 self.types.insert(x.clone(), (ty, k));
                 format!("{indent}let {x}: {written} = {y}\n{}", self.stmt(rest, indent))
             }
             St::Opaque(x, k, params, body, rest) => {
                 self.types.insert(x.clone(), (own_type(params), *k));
                 for (p, c) in params {
-                    self.types.insert(p.clone(), (Vec::new(), *c));
+                    self.types.insert(p.clone(), (Ty::Fn(Vec::new()), *c));
                 }
                 let maker = self.fresh("make");
                 let b = self.stmt(body, "        ");
-                let ty = fn_type(&own_type(params), *k);
+                let ty = own_type(params).nsl(*k);
                 self.helpers.push(format!("fn {maker}() returns {ty} {{\n    let made: {ty} = fn({}) -> Void {{\n{b}    }}\n}}\n", param_list(params)));
                 format!("{indent}let {x}: {ty} = {maker}()\n{}", self.stmt(rest, indent))
             }
@@ -384,14 +616,51 @@ impl Writer {
                 let v = self.fresh("done");
                 format!("{indent}let {v}: Void = {x}({})\n", args.join(", "))
             }
-            St::CallFn(f, args) => {
-                let v = self.fresh("done");
-                format!("{indent}let {v}: Void = {f}({})\n", args.join(", "))
-            }
+            St::CallFn(f, args, _, bound) => match bound {
+                None => {
+                    let v = self.fresh("done");
+                    format!("{indent}let {v}: Void = {f}({})\n", args.join(", "))
+                }
+                Some((v, rest)) => {
+                    self.types.insert(v.clone(), (Ty::result("DnaFile"), Ceil::None));
+                    format!("{indent}let {v}: Result<DnaFile, Str> = {f}({})\n{}", args.join(", "), self.stmt(rest, indent))
+                }
+            },
             St::Loop(body) => {
                 let file = self.fresh("file");
                 let b = self.stmt(body, &deeper);
                 format!("{indent}for {file} in files of p0 {{\n{b}{indent}}}\n")
+            }
+            St::Let(x, value, rest) => {
+                let line = match value {
+                    Value::Outcome(op) => {
+                        let ty = if matches!(op, Op::Store) { Ty::result("DnaFile") } else { Ty::result("Void") };
+                        let text = format!("{indent}let {x}: {} = {}\n", ty.nsl(Ceil::None), self.op_text(op));
+                        self.types.insert(x.clone(), (ty, Ceil::None));
+                        text
+                    }
+                    Value::Variant(tag) => {
+                        self.types.insert(x.clone(), (Ty::Job, Ceil::None));
+                        let value = if *tag == "Wipe" { "Job::Wipe(\"why\")".to_string() } else { format!("Job::{tag}") };
+                        format!("{indent}let {x}: Job = {value}\n")
+                    }
+                };
+                format!("{line}{}", self.stmt(rest, indent))
+            }
+            St::Try(x, ty, y, rest) => format!("{indent}let {x}: {} = {y}?\n{}", ty.nsl(Ceil::None), self.stmt(rest, indent)),
+            St::Match(y, arms, wildcard) => {
+                let v = self.fresh("done");
+                let mut lines = String::new();
+                for (tag, body) in arms {
+                    let f = self.helper(body);
+                    let pattern = if *tag == "Keep" { tag.to_string() } else { format!("{tag}({})", self.fresh("held")) };
+                    lines.push_str(&format!("{indent}    {pattern} => {f}(),\n"));
+                }
+                if let Some(body) = wildcard {
+                    let f = self.helper(body);
+                    lines.push_str(&format!("{indent}    _ => {f}(),\n"));
+                }
+                format!("{indent}let {v}: Void = match {y} {{\n{lines}{indent}}}\n")
             }
         }
     }
@@ -411,71 +680,125 @@ fn lean_op(op: &Op) -> &'static str {
     }
 }
 
-fn lean_stmt(st: &St, out: &mut Vec<String>) {
+fn lean_stmt(st: &St, out: &mut Vec<String>, next: &mut usize) {
     match st {
         St::Op(op) => out.extend(["op".to_string(), lean_op(op).to_string()]),
+        St::Skip => out.extend(["op".to_string(), "get".to_string()]),
         St::Seq(a, b) | St::Alt(a, b) => {
             out.push(if matches!(st, St::Seq(..)) { "seq" } else { "alt" }.to_string());
-            lean_stmt(a, out);
-            lean_stmt(b, out);
+            lean_stmt(a, out, next);
+            lean_stmt(b, out, next);
         }
         St::Closure(x, k, params, body, rest) | St::Opaque(x, k, params, body, rest) => {
             out.extend([if matches!(st, St::Closure(..)) { "clo" } else { "opq" }.to_string(), x.clone(), k.lean().to_string(), params.len().to_string()]);
             for (p, c) in params {
                 out.extend([p.clone(), c.lean().to_string()]);
             }
-            lean_stmt(body, out);
-            lean_stmt(rest, out);
+            lean_stmt(body, out, next);
+            lean_stmt(rest, out, next);
         }
         St::Alias(x, y, rest) => {
             out.extend(["alias".to_string(), x.clone(), y.clone()]);
-            lean_stmt(rest, out);
+            lean_stmt(rest, out, next);
         }
         St::Call(x, args, ty) => {
             out.extend(["call".to_string(), x.clone(), args.len().to_string()]);
             out.extend(args.iter().cloned());
-            lean_type(ty, out);
+            out.push(ty.len().to_string());
+            out.extend(ty.iter().map(|c| c.lean().to_string()));
+        }
+        St::CallFn(f, args, inst, bound) => {
+            let mut call = vec!["callf".to_string(), f.clone(), args.len().to_string()];
+            call.extend(args.iter().cloned());
+            call.push(inst.len().to_string());
+            for (v, p) in inst {
+                match p {
+                    PTy::Prof(p) => call.extend([v.to_string(), "prof".to_string(), p.to_string()]),
+                    PTy::Var(q) => call.extend([v.to_string(), "var".to_string(), q.to_string()]),
+                }
+            }
+            match bound {
+                None => out.extend(call),
+                Some((v, rest)) => {
+                    // The value the function returns is a `Result` of its
+                    // declared type, which the core does not follow.
+                    out.push("seq".to_string());
+                    out.extend(call);
+                    out.extend(["val".to_string(), v.clone(), "out".to_string(), "DnaFile".to_string()]);
+                    lean_stmt(rest, out, next);
+                }
+            }
         }
         St::Loop(body) => {
             out.push("loop".to_string());
-            lean_stmt(body, out);
+            lean_stmt(body, out, next);
         }
-        St::CallFn(f, args) => {
-            out.extend(["callf".to_string(), f.clone(), args.len().to_string()]);
-            out.extend(args.iter().cloned());
+        St::Let(x, value, rest) => {
+            match value {
+                Value::Outcome(op) => {
+                    out.extend(["seq".to_string(), "op".to_string(), lean_op(op).to_string()]);
+                    let ok = if matches!(op, Op::Store) { "DnaFile" } else { "Void" };
+                    out.extend(["val".to_string(), x.clone(), "out".to_string(), ok.to_string()]);
+                }
+                Value::Variant(tag) => {
+                    let carried = if *tag == "Wipe" { "Str" } else { "Void" };
+                    out.extend(["val".to_string(), x.clone(), "var".to_string(), "Job".to_string(), tag.to_string(), carried.to_string()]);
+                }
+            }
+            lean_stmt(rest, out, next);
+        }
+        St::Try(x, ty, y, rest) => {
+            out.extend(["try".to_string(), x.clone()]);
+            ty.lean(out);
+            out.push(y.clone());
+            lean_stmt(rest, out, next);
+        }
+        St::Match(y, arms, wildcard) => {
+            for (tag, body) in arms {
+                *next += 1;
+                out.extend(["mt".to_string(), y.clone(), tag.to_string(), format!("z{next}")]);
+                lean_stmt(body, out, next);
+            }
+            match wildcard {
+                Some(body) => lean_stmt(body, out, next),
+                None => out.extend(["nomatch".to_string(), y.clone()]),
+            }
         }
     }
-}
-
-fn lean_type(ty: &[Ceil], out: &mut Vec<String>) {
-    out.push(ty.len().to_string());
-    out.extend(ty.iter().map(|c| c.lean().to_string()));
 }
 
 /// The program as NucleScript and as the Lean checker's input line.
 fn render(gen: &Gen, main: &St) -> (String, String) {
     let mut w = Writer { helpers: Vec::new(), next: 0, types: Default::default() };
     let mut functions = String::new();
-    let mut lean = Vec::new();
+    let mut lean = vec!["enum", "Job", "2", "Keep", "Void", "Wipe", "Str"].into_iter().map(str::to_string).collect::<Vec<_>>();
+    let mut next = 0;
     for f in &gen.functions {
         for (p, k, t) in &f.params {
             w.types.insert(p.clone(), (t.clone(), *k));
         }
-        let params: Vec<String> = f.params.iter().map(|(p, k, t)| format!("{p}: {}", fn_type(t, *k))).collect();
+        let params: Vec<String> = f.params.iter().map(|(p, k, t)| format!("{p}: {}", t.nsl(*k))).collect();
         let body = w.stmt(&f.body, "    ");
-        functions.push_str(&format!("fn {}({}) returns Void {{\n{body}}}\n", f.name, params.join(", ")));
+        let generic = if f.generic() { "<P>" } else { "" };
+        let returns = if f.returns_result { "Result<DnaFile, Str>" } else { "Void" };
+        functions.push_str(&format!("fn {}{generic}({}) returns {returns} {{\n{body}}}\n", f.name, params.join(", ")));
         lean.extend(["fn".to_string(), f.name.clone(), f.params.len().to_string()]);
         for (p, k, t) in &f.params {
             lean.extend([p.clone(), k.lean().to_string()]);
-            lean_type(t, &mut lean);
+            t.lean(&mut lean);
         }
-        lean_stmt(&f.body, &mut lean);
+        lean_stmt(&f.body, &mut lean, &mut next);
     }
     let body = w.stmt(main, "");
     lean.push("main".to_string());
-    lean_stmt(main, &mut lean);
+    for (p, prof) in POOLS {
+        lean.extend(["val".to_string(), p.to_string(), "pool".to_string(), prof.to_string()]);
+    }
+    lean_stmt(main, &mut lean, &mut next);
     let source = format!(
-        "enum Side {{\n    L,\n    R,\n}}\npool p0: DnaPool {{ codec: Ternary, redundancy: 3x, profile: Illumina }}\n\
+        "enum Side {{\n    L,\n    R,\n}}\nenum Job {{\n    Keep,\n    Wipe(Str),\n}}\n\
+         pool p0: DnaPool {{ codec: Ternary, redundancy: 3x, profile: Illumina }}\n\
+         pool p1: DnaPool {{ codec: Ternary, redundancy: 3x, profile: Twist }}\n\
          let noisy: Pool<Illumina, 0.35%> = simulate p0 under Illumina\n{functions}{}{body}",
         w.helpers.join("")
     );

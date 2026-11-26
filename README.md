@@ -1041,17 +1041,21 @@ counted as Pure and so fit any ceiling, a closure under a second name was
 missing at run time, and a function could pass a parameter without a
 ceiling into one. All eight are fixed. A proof in
 [proofs/NucleScriptCore.lean](proofs/NucleScriptCore.lean), checked by Lean
-in CI, shows that the rules keep the confirmation, effect-report and
-ceiling promises for a core of the language that includes loops over a
-pool's files, early returns through `?`, and closures that take closures
-as arguments, and that a program in it whose calls pass each closure as
-many closures as it takes never reaches a call it cannot make. Writing those rules found that a closure handed to a
+in CI, shows that the rules keep all four promises for a core of the
+language that includes loops over a pool's files, early returns through
+`?`, closures that take closures as arguments with or without ceilings,
+pools passed to functions generic over their profile, and `Result` and
+enum values taken apart by `?` and `match`: a program in it whose values
+have the types it declares never reaches a call it cannot make, or a `?`
+or `match` that meets a value it cannot take. Writing those rules found that a closure handed to a
 parameter was dropped from the effect report, so a delete passed that way
 was called Pure and ran under `confirm hardware`. A checker Lean can run,
 proved to follow the rules, is compared with the Rust checker on generated
-programs in CI; the comparison found three places where the Rust type
+programs in CI; the comparison found four places where the Rust type
 checker had drifted from the rules, one of them unsound (a closure bound
-by `let` that called its argument fit a ceiling), all now fixed.
+by `let` that called its argument fit a ceiling), and writing the rules
+for generic pools found a fifth (a `let` annotated with a type parameter
+made every call to its function fail), all now fixed.
 [docs/soundness.md](docs/soundness.md) states the rules, what the proof
 covers, and what neither the proof nor the testing establishes:
 
@@ -1460,7 +1464,8 @@ nucle agent "pool status"
 | **Total** | **1,002 discovered tests (1,001 runnable, 1 ignored; includes 3 doctests)** | **All 1,001 runnable tests passed with `cargo test --workspace --no-fail-fast` on 26 November 2026.** |
 
 CI also checks the Lean proof in `proofs/`: three theorems about the effect
-rules and a checker proved to follow them, with no step left unproved,
+rules, one about the shapes of values, and a checker proved to follow
+them, with no step left unproved,
 and runs `nucle_lang/tests/lean_differential.rs` against that checker:
 1,000 generated programs on which the Rust and Lean checkers must agree
 (see [docs/soundness.md](docs/soundness.md#the-machine-checked-core)).

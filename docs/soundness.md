@@ -4,8 +4,8 @@ The NucleScript checker makes four promises about any program it accepts.
 This page states them, gives the rules they rest on, and describes how they
 are checked: by running programs under a monitor that compares what each
 one did with what the checker said it would do, and by a proof, checked by
-Lean, that the rules keep the first three promises for a core of the
-language. The last section says where each stops.
+Lean, that the rules keep all four promises for a core of the language.
+The last section says where each stops.
 
 ## The promises
 
@@ -241,8 +241,7 @@ fail on the code before the fixes.
 
 [proofs/NucleScriptCore.lean](../proofs/NucleScriptCore.lean) writes the
 effect rules above down in Lean 4 for a core of the language and proves
-that a program they accept keeps promises 1 to 3, and promise 4 for the
-shape its values have there. The core has:
+that a program they accept keeps all four promises there. The core has:
 
 - operations, each with its effect and whether its confirmation was
   written;
@@ -256,7 +255,15 @@ shape its values have there. The core has:
   closures as arguments, with or without ceilings, recursion included;
 - loops over a pool's files, which run their body zero or more times;
 - an early return through `?`, which ends the function or closure it is in,
-  so nothing after it there runs.
+  so nothing after it there runs;
+- declared pools, passed to functions that take a pool of one profile or
+  are generic over it (`fn keep<P>(source: Pool<P>)`);
+- the `Result` a `store` or `delete` gives back, or a function returning
+  one, unwrapped by `?`;
+- enum values, whose variants carry a plain value such as a `Str` or
+  nothing;
+- `match` on an enum or a `Result`, with an arm for each variant or a
+  wildcard arm.
 
 Running a statement gives the list of operations it performed, each with
 its effect, whether it carried its confirmation, and the ceilings of the
@@ -291,21 +298,38 @@ its body's R fits in; the least fixed point the checker computes is one.
 | `program_confirmed` | 1: every operation that ran carried its confirmation |
 | `program_effects_sound` | 2: every operation's effect is in R |
 | `program_ceilings_sound` | 3: every operation is allowed by the ceiling of each closure call it ran inside |
-| `program_shapes_sound` | 4, for the core: no run reaches a call it cannot make |
+| `program_shapes_sound` | 4: no run reaches a call it cannot make, a value that breaks its declared type, or a `?` or `match` that meets a value it cannot take |
 
-In the core every value is a closure, so a value's shape is its type: the
-ceilings of the closures it takes. A program is shaped when every call
-passes its closure or function closures of the types its parameters want,
-and names only what is in scope; `program_shapes_sound` proves that a
-shaped program never reaches a call to a name with no value, a call with
-the wrong number of closures, a call to a closure whose parameters have
-other ceilings than its type says, or a call to an unknown function. A
-function's parameters record the types of the closures they hold.
+A value's shape is its type: for a closure, the ceilings of the closures
+it takes; for a pool, its profile; for a `Result` or an enum value, the
+variants it may be. A program is shaped when every call passes values of
+the types its parameters want, every `let` gives its name the type of its
+value, `?` meets only a `Result`, and `match` meets only an enum or a
+`Result`, with an arm for each variant it may be (an arm that did not
+match rules its variant out for the arms after it). In the core a run
+checks values at a call's arguments and at the name `?` binds, and there
+a generic `Pool<P>` takes any pool, since a running program no longer
+knows `P`. `program_shapes_sound` proves that a shaped program
+never reaches a call to a name with no value or to something that is not
+a closure, arguments that do not conform to their parameters' types, an
+unknown function, a value that does not conform to the type `?` binds it
+to, a `?` on something other than a `Result`, or a `match` none of whose
+arms fits. A generic function's body is checked once, with `P` abstract,
+and the proof covers it for every profile a call gives `P`: the call
+carries the profiles the checker inferred.
 
-The proof needs one invariant the rules do not state: a closure value does
-at most what the binding holding it says, given what the enclosing
+The effect rules see a function's parameter whose type is not a closure's
+as doing nothing. That is sound because a run checks what each call
+passes, so such a parameter never holds a closure. What `?` or a `match`
+arm takes out of a value counts as doing anything, as a closure the rules
+cannot see into does; in the core it is a plain value, so it never runs.
+
+The proof needs two invariants the rules do not state. A closure value
+does at most what the binding holding it says, given what the enclosing
 function's parameters hold and, when it is called, what it is passed, and
 calls none of its arguments if its binding says so (`ValOk` and `EnvOk`).
+And every name holds a value of its type, with each type parameter
+standing for the profile the call gave it (`Has` and `EnvShaped`).
 Lean checks the file in a few seconds, the theorems rest on Lean's
 standard axioms `propext` and `Quot.sound` (function extensionality), and
 CI rebuilds the proof and fails if any step rests on `sorry`.
@@ -326,17 +350,24 @@ per line.
 (functions taking closures with and without each ceiling, some of them
 closures that are passed a closure, closures with and without arguments
 of their own, those arguments with and without ceilings, second names
-for them, closures returned from functions,
-branches, loops over a pool's files, and every operation with and without
-its confirmation, and now and then a call that passes one closure too
-many), writes each as NucleScript and for `nsl-check`, which also checks
-shapes, and fails if the two checkers differ on whether a program is
-accepted or on its worst effect. CI runs 1,000 on every push. A run of
-20,000 on 26 November 2026 accepted 9,500 and found no disagreement; 4,855
-of them give a closure's own parameter a ceiling, and 1,114 of those are
-accepted. The same 20,000 against the Rust checker as it was at v0.1.85,
-before the two closure fixes above, give 3, each a program it accepted
-and the rules reject.
+for them, closures returned from functions, branches, loops over a pool's
+files, two pools of different profiles passed to functions that take one
+profile or are generic over it, the `Result`s of stores, deletes and
+functions returning one, unwrapped by `?` in functions that return a
+`Result`, values of an enum, `match`es on those and on `Result`s with an
+arm for each variant or a wildcard, and every operation with and without
+its confirmation; now and then a call passes one closure too many or a
+pool of the wrong profile, a `?` declares the wrong type, or a `match`
+leaves an arm out), writes each as NucleScript and for `nsl-check`, which
+also checks shapes, and fails if the two checkers differ on whether a
+program is accepted or on its worst effect. CI runs 1,000 on every push.
+A run of 20,000 on 26 November 2026 accepted 10,580 and found no
+disagreement. Of the 20,000, 4,540 match on an enum or a `Result` (2,153
+accepted), 447 use `?` (212), 756 call a generic function (279) and 2,449
+take a pool as a parameter (889). Against the Rust checker as it was at
+v0.1.85, before the two closure fixes above, the generator as it was then
+gave 3 disagreements in 20,000, each a program that checker accepted and
+the rules reject.
 
 Its first run found 40 disagreements, all programs the Lean rules accept
 and the Rust checker rejected. Beyond mistakes in how the test wrote
@@ -363,17 +394,39 @@ one on each side:
   closure that calls its arguments fits no ceiling. The Rust checker had
   this right, and the rule now matches it.
 
+Writing the rules for pools, `Result`s and enums, and generating programs
+that use them, found three more:
+
+- **A `let` annotated with a type parameter broke every call.** A generic
+  function's body is checked again with each call's profile, to report
+  what only a concrete profile raises, and that check compared `let held:
+  Pool<P> = source` with the annotation as written, so every call to the
+  function was rejected. It now reads `P` as the call's profile.
+- **An enum parameter could not be given a second name.** `let again: Job
+  = job` reported `job` as undeclared when it was a parameter, as a `Fn`
+  parameter once did. 151 of the 20,000 programs hit it before the fix.
+- **The Lean rule took a pool parameter for a closure.** All of a
+  function's parameters were bound as closure parameters, so passing a
+  pool parameter on from inside a closure with a ceiling counted as
+  calling a closure no one had seen, and the closure fit no ceiling. 3 of
+  20,000 programs hit it. The Rust checker had this right; the rule now
+  sees a parameter whose type is not a closure's as doing nothing.
+
 ## What this does not show
 
 - **The proof covers a core, not the implementation.** Its rules were
   written by hand from `effects.rs` and `typeck.rs`. The two are tied by
   testing, not by proof: the differential test checks that the Rust
   checker gives the rules' verdict on generated core programs, which
-  catches a slip only where the generator reaches. The core leaves out
-  generics, whose instantiations change no effect, and enums other than
-  as a source of closures it cannot see into. Of promise 4 it covers
-  closures' types only: the shapes of pools, `Result` values and enums
-  rest on testing alone.
+  catches a slip only where the generator reaches. The core's functions
+  return nothing: what a call to a function returning a `Result` gives
+  back is taken to be a `Result` of its declared type, so the shape of a
+  returned value rests on testing. It also leaves out `Ok(...)` and
+  `Err(...)` written out, enum variants carrying anything but a plain
+  value (a closure carried by an enum is still a closure the rules cannot
+  see into), closures that take a pool, generic closures (`fn<P>(...)`),
+  a second name for a pool or a `Result`, and `Strand`, `Sequence` and
+  `File` values.
 - **The generator leaves pool expressions out** (`consensus_vote`,
   `synthesise`, `sequence`): they never run, existing only while
   checking, so the monitor has nothing to watch. Their rules are covered
