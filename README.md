@@ -1041,7 +1041,8 @@ missing at run time, and a function could pass a parameter without a
 ceiling into one. All eight are fixed. A proof in
 [proofs/NucleScriptCore.lean](proofs/NucleScriptCore.lean), checked by Lean
 in CI, shows that the rules keep the confirmation, effect-report and
-ceiling promises for a core of the language. A checker Lean can run,
+ceiling promises for a core of the language that includes loops over a
+pool's files and early returns through `?`. A checker Lean can run,
 proved to follow those rules, is compared with the Rust checker on
 generated programs in CI; the comparison found two places where the Rust
 type checker had drifted from the rules, both now fixed.

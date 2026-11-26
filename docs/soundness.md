@@ -231,7 +231,10 @@ that a program they accept keeps promises 1 to 3. The core has:
 - closures the rules cannot see into, such as one returned by a function,
   with or without a ceiling on the type they come through;
 - calls to closures, and named functions that take closures as arguments,
-  with or without ceilings, recursion included.
+  with or without ceilings, recursion included;
+- loops over a pool's files, which run their body zero or more times;
+- an early return through `?`, which ends the function or closure it is in,
+  so nothing after it there runs.
 
 Running a statement gives the list of operations it performed, each with
 its effect, whether it carried its confirmation, and the ceilings of the
@@ -269,11 +272,12 @@ per line.
 
 `nucle_lang/tests/lean_differential.rs` generates programs in the core
 (functions taking closures with and without each ceiling, closures,
-second names for them, closures returned from functions, branches, and
-every operation with and without its confirmation), writes each as
+second names for them, closures returned from functions, branches, loops
+over a pool's files, and every operation with and without its
+confirmation), writes each as
 NucleScript and for `nsl-check`, and fails if the two checkers differ on
 whether a program is accepted or on its worst effect. CI runs 1,000 on
-every push; a run of 20,000 on 26 November 2026 accepted 9,649 and
+every push; a run of 20,000 with loops on 26 November 2026 accepted 9,982 and
 found no disagreement.
 
 Its first run found 40 disagreements, all programs the Lean rules accept
@@ -297,10 +301,13 @@ the rules and from `effects.rs`, neither of them unsound:
   written by hand from `effects.rs` and `typeck.rs`. The two are tied by
   testing, not by proof: the differential test checks that the Rust
   checker gives the rules' verdict on generated core programs, which
-  catches a slip only where the generator reaches. The core leaves out closures
-  that take arguments of their own, generics, `Result` and `?`, enums other
-  than as a source of closures it cannot see into, and value shapes:
-  promise 4 rests on testing alone.
+  catches a slip only where the generator reaches. The core leaves out
+  closures that take arguments of their own: what such a closure may do
+  depends on the arguments each call passes, so its binding would have to
+  mean a function of them, a different proof from this one. It also leaves
+  out generics, whose instantiations change no effect, enums other than as
+  a source of closures it cannot see into, and value shapes: promise 4
+  rests on testing alone.
 - **The generator leaves pool expressions out** (`consensus_vote`,
   `synthesise`, `sequence`): they never run, existing only while
   checking, so the monitor has nothing to watch. Their rules are covered
