@@ -76,6 +76,8 @@ enum St {
     Opaque(String, Ceil, Box<St>, Box<St>),
     Call(String),
     CallFn(String, Vec<String>),
+    /// Runs zero or more times: written as a loop over a pool's files.
+    Loop(Box<St>),
 }
 
 struct Function {
@@ -144,7 +146,8 @@ impl Gen {
     /// A statement in a scope holding the callable names `scope`.
     fn stmt(&mut self, scope: &[String], depth: u32) -> St {
         loop {
-            match self.rng.gen_range(0..10) {
+            match self.rng.gen_range(0..11) {
+                10 if depth > 0 => return St::Loop(Box::new(self.stmt(scope, depth - 1))),
                 0 | 1 => return St::Op(self.op()),
                 2 if depth > 0 => {
                     return St::Seq(Box::new(self.stmt(scope, depth - 1)), Box::new(self.stmt(scope, depth - 1)));
@@ -282,6 +285,11 @@ impl Writer {
                 let v = self.fresh("done");
                 format!("{indent}let {v}: Void = {f}({})\n", args.join(", "))
             }
+            St::Loop(body) => {
+                let file = self.fresh("file");
+                let b = self.stmt(body, &deeper);
+                format!("{indent}for {file} in files of p0 {{\n{b}{indent}}}\n")
+            }
         }
     }
 }
@@ -318,6 +326,10 @@ fn lean_stmt(st: &St, out: &mut Vec<String>) {
             lean_stmt(rest, out);
         }
         St::Call(x) => out.extend(["call".to_string(), x.clone()]),
+        St::Loop(body) => {
+            out.push("loop".to_string());
+            lean_stmt(body, out);
+        }
         St::CallFn(f, args) => {
             out.extend(["callf".to_string(), f.clone(), args.len().to_string()]);
             out.extend(args.iter().cloned());
