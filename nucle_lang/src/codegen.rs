@@ -324,6 +324,10 @@ pub fn execute_program(
                 }
             }
             Declaration::Operation(Operation::Decode(op)) => exec_decode_reads(op, base_dir, &mut steps)?,
+            Declaration::For(for_decl) if for_decl.files_of.is_some() => {
+                let mut calling = HashSet::new();
+                run_files_loop(for_decl, &mut env, &funcs, &pools, os, base_dir, &mut steps, &mut calling).into_value()?;
+            }
             Declaration::Let(binding) if is_result_producing(&binding.expr, &funcs) => {
                 // Top-level `?` is impossible here: typeck rejects `?`
                 // outside a `Result`-returning function
@@ -1104,10 +1108,54 @@ fn exec_function_body(
                     return EvalOutcome::Err(msg);
                 }
             }
+            Declaration::For(for_decl) if for_decl.files_of.is_some() => {
+                if let EvalOutcome::Err(msg) = run_files_loop(for_decl, env, funcs, pools, os, base_dir, steps, calling) {
+                    return EvalOutcome::Err(msg);
+                }
+            }
             _ => {}
         }
     }
     last
+}
+
+/// `for f in files of pool { ... }`: runs the body once for each file the
+/// pool holds when the loop starts, in name order, with `f` bound to the
+/// file's name. The list is read before the first pass, so a body that
+/// deletes or stores files changes nothing about which ones it visits.
+#[allow(clippy::too_many_arguments)]
+fn run_files_loop(
+    for_decl: &ForDecl,
+    env: &mut HashMap<String, Value>,
+    funcs: &FunctionTable,
+    pools: &HashMap<String, PoolDecl>,
+    os: &mut NucleOS,
+    base_dir: &Path,
+    steps: &mut Vec<String>,
+    calling: &mut HashSet<String>,
+) -> EvalOutcome {
+    let pool = resolve_pool_arg(for_decl.files_of.as_deref().unwrap_or_default(), env).to_string();
+    let prefix = format!("{pool}/");
+    let mut names: Vec<String> = os
+        .dna_list(&prefix)
+        .into_iter()
+        .filter_map(|info| info.filename.strip_prefix(&prefix).map(str::to_string))
+        .collect();
+    names.sort();
+    names.dedup();
+    steps.push(format!("for {} in files of {pool}: {} file(s)", for_decl.binding, names.len()));
+    let shadowed = env.get(&for_decl.binding).cloned();
+    for name in names {
+        env.insert(for_decl.binding.clone(), Value::Str(name));
+        if let EvalOutcome::Err(msg) = exec_function_body(&for_decl.body, env, funcs, pools, os, base_dir, steps, calling) {
+            return EvalOutcome::Err(msg);
+        }
+    }
+    match shadowed {
+        Some(previous) => { env.insert(for_decl.binding.clone(), previous); }
+        None => { env.remove(&for_decl.binding); }
+    }
+    EvalOutcome::Value(Value::Unit)
 }
 
 /// `decode reads ... against ...`: loads the reads and references next to

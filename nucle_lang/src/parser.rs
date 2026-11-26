@@ -171,11 +171,25 @@ impl Parser {
         self.expect_ident_text("for")?;
         let binding = self.expect_ident_any("loop binding name")?;
         self.expect_ident_text("in")?;
-        let (items, literal_items) = self.parse_ident_or_string_list()?.into_iter().unzip();
+        // `files of <pool>`: the files a pool holds when the loop runs.
+        // A pool that happens to be called `files` still unrolls, since
+        // only `files of` starts the run-time form.
+        let files_of = if self.check_ident("files") && self.check_ident_ahead(1, "of") {
+            self.advance();
+            self.advance();
+            Some(self.expect_ident_any("pool name after 'files of'")?)
+        } else {
+            None
+        };
+        let (items, literal_items) = if files_of.is_some() {
+            (Vec::new(), Vec::new())
+        } else {
+            self.parse_ident_or_string_list()?.into_iter().unzip()
+        };
         self.expect(TokenKind::LBrace, "'{' to start for body")?;
         let body = self.parse_declaration_block()?;
         self.expect(TokenKind::RBrace, "'}' to end for body")?;
-        Ok(ForDecl { binding, items, literal_items, body, span: self.span_since(start) })
+        Ok(ForDecl { binding, items, literal_items, body, files_of, span: self.span_since(start) })
     }
 
     /// Shared by `if`/`for`/function bodies: zero or more declarations up

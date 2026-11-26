@@ -131,6 +131,12 @@ pub struct ForDecl {
     #[serde(default)]
     pub literal_items: Vec<bool>,
     pub body: Vec<Declaration>,
+    /// `for f in files of pool { ... }`: the pool whose stored files the
+    /// loop walks while the program runs, binding each file's name to the
+    /// loop variable. `items` is empty then, and the loop is kept, not
+    /// unrolled.
+    #[serde(default)]
+    pub files_of: Option<String>,
     pub span: Span,
 }
 

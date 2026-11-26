@@ -459,6 +459,9 @@ impl TypeChecker {
     /// as writing the unrolled copies one after another with shadowing.
     /// The last iteration's bindings stay visible after the loop.
     fn check_for(&mut self, for_decl: &ForDecl) -> Vec<Declaration> {
+        if let Some(pool) = &for_decl.files_of {
+            return self.check_files_loop(for_decl, pool);
+        }
         let body_lets: Vec<String> = for_decl
             .body
             .iter()
@@ -481,6 +484,40 @@ impl TypeChecker {
             }
         }
         out
+    }
+
+    /// `for f in files of pool { ... }`, which runs once per file the pool
+    /// holds when the program reaches it: the body is checked once, with
+    /// `f` a `File`, and the loop is kept for the interpreter. Its effects
+    /// are its body's, whether it runs zero times or many. Names the body
+    /// binds, and the loop variable, end with the loop.
+    fn check_files_loop(&mut self, for_decl: &ForDecl, pool: &str) -> Vec<Declaration> {
+        if !self.pools.contains_key(pool) && !self.pool_bindings.contains_key(pool) {
+            self.report.error(for_decl.span, "E-FOR-POOL-UNDECLARED", format!(
+                "'for {} in files of {}' names a pool that is not declared{}",
+                for_decl.binding, pool, did_you_mean(self.suggest_pool_name(pool))
+            ));
+        }
+        let shadowed = self.bindings.insert(for_decl.binding.clone(), LetDecl {
+            name: for_decl.binding.clone(),
+            annotation: TypeExpr::File,
+            expr: Expr::Variable(for_decl.binding.clone()),
+            span: for_decl.span,
+        });
+        let mut body = Vec::new();
+        for decl in &for_decl.body {
+            body.extend(self.check_declaration_single(decl));
+        }
+        for decl in &for_decl.body {
+            if let Declaration::Let(binding) = decl {
+                self.forget_binding(&binding.name);
+            }
+        }
+        match shadowed {
+            Some(previous) => { self.bindings.insert(for_decl.binding.clone(), previous); }
+            None => { self.bindings.remove(&for_decl.binding); }
+        }
+        vec![Declaration::For(ForDecl { body, ..for_decl.clone() })]
     }
 
     /// Remove `name` from every binding scope map, so it can be bound again.
@@ -2896,6 +2933,7 @@ fn substitute_declaration(decl: &Declaration, binding: &str, value: &str, litera
                 .enumerate()
                 .map(|(i, item)| if item == binding { literal } else { d.literal_items.get(i).copied().unwrap_or(false) })
                 .collect(),
+            files_of: d.files_of.as_ref().map(|pool| sub(pool)),
             // An inner loop reusing the same binding name shadows the
             // outer one within its own body, matching ordinary lexical
             // scoping -- don't substitute through it.
