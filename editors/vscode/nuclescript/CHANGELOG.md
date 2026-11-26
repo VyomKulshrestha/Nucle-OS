@@ -4,6 +4,20 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.23]
+
+- A closure handed to a call through a parameter, or through a closure the
+  checker cannot see into, now counts at that call. It was dropped, so a
+  delete passed that way was reported Pure and could run inside a
+  closure accepted under `confirm hardware`.
+- A closure bound by `let` that calls its own argument no longer fits an
+  effect ceiling, as a closure literal that does already did not;
+  passing one into a `confirm ...` parameter is `E-FN-EFFECT-ARG-MISMATCH`.
+- A call through a parameter held to a ceiling counts none of the closures
+  passed to it, since what it holds cannot call them.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.89 runtime, which also has `nucle restore`.
+
 ## [0.1.22]
 
 - `confirm synthesis` and `confirm sequencing` are narrower ceilings
