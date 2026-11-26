@@ -1,5 +1,12 @@
 name = "nucle_proofs"
-defaultTargets = ["NucleScriptCore"]
+defaultTargets = ["NucleScriptCore", "Checker", "nsl-check"]
 
 [[lean_lib]]
 name = "NucleScriptCore"
+
+[[lean_lib]]
+name = "Checker"
+
+[[lean_exe]]
+name = "nsl-check"
+root = "Main"
