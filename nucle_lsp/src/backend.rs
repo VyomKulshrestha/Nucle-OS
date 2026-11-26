@@ -14,7 +14,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use nucle_lang::ast::{FnEffectAnnotation, Span, TypeExpr};
+use nucle_lang::ast::{Span, TypeExpr};
 use nucle_lang::{
     analyze, Diagnostic as NucleDiagnostic, DiagnosticLevel, Lexer, SymbolTable, Token, TokenKind,
 };
@@ -72,6 +72,8 @@ const KEYWORDS: &[&str] = &[
     "enum",
     "confirm",
     "hardware",
+    "synthesis",
+    "sequencing",
     "physical_key",
     "Ok",
     "Err",
@@ -630,11 +632,7 @@ fn describe_type(ty: &TypeExpr) -> String {
                 .collect::<Vec<_>>()
                 .join(", "),
             describe_type(ret),
-            match effect {
-                Some(FnEffectAnnotation::Hardware) => " confirm hardware",
-                Some(FnEffectAnnotation::PhysicalKey) => " confirm physical_key",
-                None => "",
-            }
+            effect.map(|c| format!(" confirm {}", c.keyword())).unwrap_or_default()
         ),
         TypeExpr::Enum(name) => name.clone(),
     }

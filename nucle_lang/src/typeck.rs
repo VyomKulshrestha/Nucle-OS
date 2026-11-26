@@ -184,7 +184,7 @@ struct TypeChecker {
     /// populated for an *annotated* `Fn(...)`-typed parameter -- an
     /// unannotated one contributes no entry here, preserving today's
     /// exact "unresolvable call, assumed Pure" behavior unchanged.
-    fn_param_effects: HashMap<String, Effect>,
+    fn_param_effects: crate::effects::ParamEffects,
     /// The `(Ok, Err)` pair of the function/closure currently being
     /// type-checked, if it declares a `Result<...>` return type -- `None`
     /// at top level (a `?` outside any function) and for a non-`Result`-
@@ -232,7 +232,7 @@ struct VariantSignature {
 struct ScopedPattern {
     name: String,
     closure: Option<(Vec<String>, Vec<TypeExpr>, TypeExpr)>,
-    ceiling: Option<Effect>,
+    ceiling: Option<crate::effects::EffectSet>,
     decl: Option<FunctionDecl>,
 }
 
@@ -1008,7 +1008,7 @@ impl TypeChecker {
                 self.closures.insert(binding.name.clone(), (Vec::new(), param_types.clone(), (**ret).clone()));
                 match (effect, &binding.expr) {
                     (Some(effect), _) => {
-                        self.fn_param_effects.insert(binding.name.clone(), effect.to_effect());
+                        self.fn_param_effects.insert(binding.name.clone(), effect.allowed());
                     }
                     (None, Expr::Variable(other)) if self.closure_decls.contains_key(other) => {
                         let aliased = self.closure_decls[other].clone();
@@ -1314,7 +1314,7 @@ impl TypeChecker {
             decl: self.closure_decls.remove(name),
         };
         if let Some(effect) = effect {
-            self.fn_param_effects.insert(name.to_string(), effect.to_effect());
+            self.fn_param_effects.insert(name.to_string(), effect.allowed());
         }
         Some(saved)
     }
@@ -1959,13 +1959,13 @@ impl TypeChecker {
             self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
                 "'{}' holds a closure whose body the checker cannot see (a parameter without a ceiling, a function's return value, an enum payload, or a binding of one of these), so it may do anything; give the `Fn` type it comes through a `confirm {}` ceiling",
                 name,
-                match expected { FnEffectAnnotation::Hardware => "hardware", FnEffectAnnotation::PhysicalKey => "physical_key" },
+                expected.keyword(),
             ));
         } else if !actual.within(expected) {
             self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
-                "this closure's real effect is {}, which doesn't fall within the parameter's declared {}",
+                "this closure's real effect is {}, which doesn't fall within the parameter's declared confirm {}",
                 actual,
-                match expected { FnEffectAnnotation::Hardware => "confirm hardware", FnEffectAnnotation::PhysicalKey => "confirm physical_key" },
+                expected.keyword(),
             ));
         } else if !confirmed_enough {
             self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(
@@ -2289,7 +2289,7 @@ impl TypeChecker {
             // adds the closure it passes (see `effects::scoped_fn_param_effects`).
             TypeExpr::Fn(param_types, return_type, effect) => {
                 self.closures.insert(param.name.clone(), (Vec::new(), param_types.clone(), (**return_type).clone()));
-                self.fn_param_effects.insert(param.name.clone(), effect.map_or(Effect::Pure, |e| e.to_effect()));
+                self.fn_param_effects.insert(param.name.clone(), effect.map_or(crate::effects::EffectSet::default(), |e| e.allowed()));
             }
             // A user-enum-typed parameter -- see
             // `TypeChecker::enum_bindings`'s own doc comment.

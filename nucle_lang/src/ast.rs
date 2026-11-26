@@ -564,7 +564,13 @@ impl std::fmt::Display for Effect {
 /// either. See `TypeExpr::Fn`'s doc comment for why this exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FnEffectAnnotation {
+    /// `confirm hardware`: synthesis and sequencing.
     Hardware,
+    /// `confirm synthesis`: synthesis only.
+    Synthesis,
+    /// `confirm sequencing`: sequencing only.
+    Sequencing,
+    /// `confirm physical_key`: deletion.
     PhysicalKey,
 }
 
@@ -577,9 +583,25 @@ impl FnEffectAnnotation {
     /// from `Sequencing` either.
     pub fn to_effect(self) -> Effect {
         match self {
-            Self::Hardware => Effect::Synthesis,
+            Self::Hardware | Self::Synthesis => Effect::Synthesis,
+            Self::Sequencing => Effect::Sequencing,
             Self::PhysicalKey => Effect::Destructive,
         }
+    }
+
+    /// The word after `confirm` that writes this ceiling.
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Hardware => "hardware",
+            Self::Synthesis => "synthesis",
+            Self::Sequencing => "sequencing",
+            Self::PhysicalKey => "physical_key",
+        }
+    }
+
+    /// The ceiling `confirm <word>` names, if `word` names one.
+    pub fn from_keyword(word: &str) -> Option<Self> {
+        [Self::Hardware, Self::Synthesis, Self::Sequencing, Self::PhysicalKey].into_iter().find(|c| c.keyword() == word)
     }
 }
 

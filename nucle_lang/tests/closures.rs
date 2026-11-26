@@ -648,3 +648,65 @@ fn the_shipped_example_formats_and_is_idempotent() {
     let twice = format_source(&once).unwrap_or_else(|e| panic!("failed to re-format its own output: {}", e));
     assert_eq!(once, twice, "formatting is not idempotent");
 }
+
+// ---------------------------------------------------------------------
+// The narrower ceilings: `confirm synthesis` and `confirm sequencing`
+// ---------------------------------------------------------------------
+
+fn errors(src: &str) -> Vec<String> {
+    check_source(src).diagnostics.into_iter().filter(|d| d.level == nucle_lang::typeck::DiagnosticLevel::Error).map(|d| d.code).collect()
+}
+
+/// `confirm synthesis` lets a closure store but not sequence or delete;
+/// `confirm sequencing` the other way round.
+#[test]
+fn synthesis_and_sequencing_ceilings_each_allow_one_effect() {
+    let slot = |ceiling: &str, body: &str| format!(
+        "{POOL}let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina\n\
+         fn run(op: Fn() -> Void confirm {ceiling}) returns Void {{\n    let x: Void = op()\n}}\n\
+         let done: Void = run(fn() -> Void {{\n    {body}\n}})\n"
+    );
+    let store = "store \"sample_a.txt\" into archive";
+    let read = "let reads: Pool<Illumina, 0.35%> = sequence noisy via Illumina confirm sequencing";
+    let wipe = "delete \"sample_a.txt\" from archive confirm physical_key";
+    assert!(errors(&slot("synthesis", store)).is_empty(), "{:?}", errors(&slot("synthesis", store)));
+    assert!(errors(&slot("synthesis", read)).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()), "{:?}", errors(&slot("synthesis", read)));
+    assert!(errors(&slot("synthesis", wipe)).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()));
+    assert!(errors(&slot("sequencing", read)).is_empty(), "{:?}", errors(&slot("sequencing", read)));
+    assert!(errors(&slot("sequencing", store)).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()));
+    // `confirm hardware` still allows both.
+    assert!(errors(&slot("hardware", store)).is_empty());
+    assert!(errors(&slot("hardware", read)).is_empty(), "{:?}", errors(&slot("hardware", read)));
+}
+
+/// A call through a `confirm hardware` parameter may sequence as well as
+/// synthesise, so a closure making one does not fit `confirm synthesis`.
+/// Before the narrower ceilings existed the analysis recorded such a call
+/// as Synthesis alone, which would have let it through.
+#[test]
+fn a_hardware_parameter_does_not_fit_a_synthesis_ceiling() {
+    let src = format!(
+        "{POOL}fn only_synthesis(op: Fn() -> Void confirm synthesis) returns Void {{\n    let x: Void = op()\n}}\n\
+         fn forward(step: Fn() -> Void confirm hardware) returns Void {{\n    let y: Void = only_synthesis(fn() -> Void {{\n        let z: Void = step()\n    }})\n}}\n"
+    );
+    assert!(errors(&src).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()), "{:?}", errors(&src));
+}
+
+/// `synthesise` takes `confirm synthesis` as well as `confirm hardware`,
+/// `sequence` takes `confirm sequencing`; each refuses the other's word.
+#[test]
+fn synthesise_and_sequence_take_their_own_confirmation() {
+    let prog = |line: &str| format!("{POOL}let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina\n{line}\n");
+    assert!(errors(&prog("let made: Pool<Twist, 0.03%> = synthesise archive via Twist confirm synthesis")).is_empty());
+    assert!(errors(&prog("let reads: Pool<Illumina, 0.35%> = sequence noisy via Illumina confirm sequencing")).is_empty());
+    assert!(!errors(&prog("let made: Pool<Twist, 0.03%> = synthesise archive via Twist confirm sequencing")).is_empty());
+    assert!(!errors(&prog("let reads: Pool<Illumina, 0.35%> = sequence noisy via Illumina confirm synthesis")).is_empty());
+}
+
+/// The new ceilings format and document like the old ones.
+#[test]
+fn narrower_ceilings_round_trip_through_the_formatter() {
+    let src = "fn run(op: Fn() -> Void confirm sequencing) returns Void {\n    let x: Void = op()\n}\n";
+    let formatted = nucle_lang::format_source(src).unwrap();
+    assert!(formatted.contains("Fn() -> Void confirm sequencing"), "{formatted}");
+}

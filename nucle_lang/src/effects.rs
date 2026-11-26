@@ -38,6 +38,11 @@ impl EffectSet {
         }
     }
 
+    /// No effect at all.
+    pub fn is_empty(self) -> bool {
+        !self.synthesis && !self.sequencing && !self.destructive
+    }
+
     /// Every effect: what a call through a closure the analysis cannot see
     /// into may do.
     pub fn all() -> Self {
@@ -120,12 +125,12 @@ pub fn function_table(program: &Program) -> FunctionTable {
 /// option. `effect_summary` (used by `nucle explain`) and `body_effect`
 /// build `closures` up as they walk, so a call to a closure bound earlier
 /// in the same block resolves to its body (see `block_effect`).
-pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> Effect {
+pub fn expr_effect(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> Effect {
     expr_effects(expr, funcs, closures, fn_param_effects, resolving).worst()
 }
 
 /// Every kind of effect `expr` may have; see [`EffectSet`].
-pub fn expr_effects(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> EffectSet {
+pub fn expr_effects(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> EffectSet {
     match expr {
         Expr::SimulatePool { .. } => EffectSet::default(),
         Expr::SynthesizePool { .. } => EffectSet::of(Effect::Synthesis),
@@ -184,7 +189,7 @@ pub fn expr_effects(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable
 /// callee's body already counts their declared ceiling. Joined whether or
 /// not the callee calls the parameter on every path, the same
 /// over-approximation an untaken `if` branch gets.
-fn closure_args_effect(name: &str, args: &[Expr], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> EffectSet {
+fn closure_args_effect(name: &str, args: &[Expr], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> EffectSet {
     let Some(callee) = funcs.get(name).or_else(|| closures.get(name)) else {
         return EffectSet::default();
     };
@@ -208,10 +213,28 @@ fn closure_args_effect(name: &str, args: &[Expr], funcs: &FunctionTable, closure
 pub fn effect_satisfies_annotation(actual: Effect, declared: FnEffectAnnotation) -> bool {
     match actual {
         Effect::Pure => true,
-        Effect::Synthesis | Effect::Sequencing => declared == FnEffectAnnotation::Hardware,
+        Effect::Synthesis => matches!(declared, FnEffectAnnotation::Hardware | FnEffectAnnotation::Synthesis),
+        Effect::Sequencing => matches!(declared, FnEffectAnnotation::Hardware | FnEffectAnnotation::Sequencing),
         Effect::Destructive => declared == FnEffectAnnotation::PhysicalKey,
     }
 }
+
+impl FnEffectAnnotation {
+    /// Every effect this ceiling allows: what a call through a parameter
+    /// or binding with this ceiling may do.
+    pub fn allowed(self) -> EffectSet {
+        EffectSet {
+            synthesis: effect_satisfies_annotation(Effect::Synthesis, self),
+            sequencing: effect_satisfies_annotation(Effect::Sequencing, self),
+            destructive: effect_satisfies_annotation(Effect::Destructive, self),
+        }
+    }
+}
+
+/// The ceilings of the `Fn` parameters and bindings in scope, as the
+/// effects a call through each may have. An unannotated `Fn` parameter is
+/// entered with no effects: its call sites add whatever closure they pass.
+pub type ParamEffects = HashMap<String, EffectSet>;
 
 /// The `fn_param_effects` a callable's *own* body should be resolved
 /// against: its own annotated `Fn(...)`-typed parameters (always
@@ -231,11 +254,11 @@ pub fn effect_satisfies_annotation(actual: Effect, declared: FnEffectAnnotation)
 /// nowhere, neither here nor among functions and `let`-bound closures, is
 /// a closure value the analysis cannot trace, and has every effect (see
 /// `function_call_effects`).
-pub fn scoped_fn_param_effects(params: &[FnParam], outer: &HashMap<String, Effect>) -> HashMap<String, Effect> {
+pub fn scoped_fn_param_effects(params: &[FnParam], outer: &ParamEffects) -> ParamEffects {
     let mut scoped = outer.clone();
     for param in params {
         if let TypeExpr::Fn(_, _, annotation) = &param.ty {
-            scoped.insert(param.name.clone(), annotation.map_or(Effect::Pure, |a| a.to_effect()));
+            scoped.insert(param.name.clone(), annotation.map_or(EffectSet::default(), |a| a.allowed()));
         }
     }
     scoped
@@ -246,8 +269,8 @@ pub fn scoped_fn_param_effects(params: &[FnParam], outer: &HashMap<String, Effec
 /// call through one counts as every effect. Reporting can leave such a
 /// parameter's closure to the call site that passed it; a ceiling cannot,
 /// because whatever closure the parameter holds runs under the ceiling.
-pub fn ceiling_view(fn_param_effects: &HashMap<String, Effect>) -> HashMap<String, Effect> {
-    fn_param_effects.iter().filter(|(_, effect)| **effect != Effect::Pure).map(|(name, effect)| (name.clone(), *effect)).collect()
+pub fn ceiling_view(fn_param_effects: &ParamEffects) -> ParamEffects {
+    fn_param_effects.iter().filter(|(_, effects)| !effects.is_empty()).map(|(name, effects)| (name.clone(), *effects)).collect()
 }
 
 pub fn operation_effect(operation: &Operation) -> Effect {
@@ -261,7 +284,7 @@ pub fn operation_effect(operation: &Operation) -> Effect {
     }
 }
 
-pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> bool {
+pub fn expr_has_required_confirmation(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> bool {
     match expr {
         Expr::SimulatePool { .. } => true,
         Expr::SynthesizePool { confirmed, .. } | Expr::SequencePool { confirmed, .. } => *confirmed,
@@ -343,13 +366,13 @@ pub fn join_effects(a: Effect, b: Effect) -> Effect {
 /// compatibility` can resolve a named reference to a let-bound closure
 /// the identical way a real call to it already would, when validating a
 /// concrete closure bound into an effect-annotated `Fn(...)`-typed slot.
-pub fn function_call_effect(name: &str, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (Effect, bool) {
+pub fn function_call_effect(name: &str, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> (Effect, bool) {
     let (effects, confirmed) = function_call_effects(name, funcs, closures, fn_param_effects, resolving);
     (effects.worst(), confirmed)
 }
 
 /// `function_call_effect` with every kind of effect kept; see [`EffectSet`].
-pub fn function_call_effects(name: &str, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (EffectSet, bool) {
+pub fn function_call_effects(name: &str, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> (EffectSet, bool) {
     // Global functions take priority (matches typeck's own closures-
     // *before*-global lookup order for resolving *what* gets called --
     // but here it doesn't actually matter which table wins first, since
@@ -367,7 +390,7 @@ pub fn function_call_effects(name: &str, funcs: &FunctionTable, closures: &Funct
         // in" case, not the only option -- see `expr_effect`'s doc
         // comment.
         return match fn_param_effects.get(name) {
-            Some(&effect) => (EffectSet::of(effect), true),
+            Some(&effects) => (effects, true),
             // A closure value from somewhere the analysis cannot see into:
             // returned by a function, taken out of an enum, or bound
             // through an unannotated `Fn` type to any of those. It may do
@@ -394,13 +417,13 @@ pub fn function_call_effects(name: &str, funcs: &FunctionTable, closures: &Funct
 /// to inspect a concrete closure's real effect without first resolving
 /// it by name. `closures` are the closures in scope where the body is
 /// written; ones the body binds itself are added as the walk reaches them.
-pub fn body_effect(body: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (Effect, bool) {
+pub fn body_effect(body: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> (Effect, bool) {
     let (effects, confirmed) = body_effects(body, funcs, closures, fn_param_effects, resolving);
     (effects.worst(), confirmed)
 }
 
 /// `body_effect` with every kind of effect kept; see [`EffectSet`].
-pub fn body_effects(body: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (EffectSet, bool) {
+pub fn body_effects(body: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> (EffectSet, bool) {
     let (effects, _, confirmed) = block_effect(body, funcs, closures, fn_param_effects, resolving);
     (effects, confirmed)
 }
@@ -410,7 +433,7 @@ pub fn body_effects(body: &[Declaration], funcs: &FunctionTable, closures: &Func
 /// later call to that closure resolves to its body instead of to nothing.
 /// Returns the joined effect, whether anything in it needs confirmation,
 /// and whether everything that does has it.
-fn block_effect(block: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> (EffectSet, bool, bool) {
+fn block_effect(block: &[Declaration], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> (EffectSet, bool, bool) {
     let mut scope = closures.clone();
     let mut ceilings = fn_param_effects.clone();
     let (mut effect, mut required, mut confirmed) = (EffectSet::default(), false, true);
@@ -432,7 +455,7 @@ fn block_effect(block: &[Declaration], funcs: &FunctionTable, closures: &Functio
 /// annotated `Fn(...) -> T confirm ...` type, by its ceiling, which the
 /// checker enforced where the value was bound. Anything else stays
 /// unknown, so a call through it has every effect.
-pub fn bind_callable(scope: &mut FunctionTable, ceilings: &mut HashMap<String, Effect>, decl: &Declaration) {
+pub fn bind_callable(scope: &mut FunctionTable, ceilings: &mut ParamEffects, decl: &Declaration) {
     let Declaration::Let(LetDecl { name, annotation, expr, .. }) = decl else { return };
     match expr {
         Expr::Closure { type_params, params, return_type, body, span } => {
@@ -456,14 +479,14 @@ pub fn bind_callable(scope: &mut FunctionTable, ceilings: &mut HashMap<String, E
         }
         _ => {
             if let TypeExpr::Fn(_, _, Some(ceiling)) = annotation {
-                ceilings.insert(name.clone(), ceiling.to_effect());
+                ceilings.insert(name.clone(), ceiling.allowed());
             }
         }
     }
 }
 
 /// `closures` are the `let`-bound closures in scope at `decl`.
-pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &HashMap<String, Effect>, resolving: &mut ResolvingSet) -> DeclEffect {
+pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> DeclEffect {
     match decl {
         Declaration::Pool(pool) => DeclEffect {
             name: pool.name.clone(),
@@ -823,7 +846,7 @@ mod tests {
     fn an_unresolvable_call_with_a_declared_fn_param_effect_resolves_to_it() {
         let funcs = FunctionTable::new();
         let mut fn_param_effects = HashMap::new();
-        fn_param_effects.insert("attempt_fn".to_string(), Effect::Destructive);
+        fn_param_effects.insert("attempt_fn".to_string(), EffectSet::of(Effect::Destructive));
         let call = Expr::FunctionCall { name: "attempt_fn".into(), args: vec![], explicit_type_args: vec![] };
         // The actual fix: an effect-annotated `Fn(...)`-typed
         // parameter's call resolves to its declared ceiling, and is

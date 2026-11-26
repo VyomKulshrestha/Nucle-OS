@@ -539,14 +539,15 @@ impl Parser {
             let return_type = self.parse_type_expr()?;
             let effect = if self.check_ident("confirm") {
                 self.advance();
-                if self.check_ident("hardware") {
-                    self.advance();
-                    Some(FnEffectAnnotation::Hardware)
-                } else if self.check_ident("physical_key") {
-                    self.advance();
-                    Some(FnEffectAnnotation::PhysicalKey)
-                } else {
-                    return Err(self.error_here("expected 'hardware' or 'physical_key' after 'confirm' in Fn's effect annotation"));
+                let named = [FnEffectAnnotation::Hardware, FnEffectAnnotation::Synthesis, FnEffectAnnotation::Sequencing, FnEffectAnnotation::PhysicalKey]
+                    .into_iter()
+                    .find(|ceiling| self.check_ident(ceiling.keyword()));
+                match named {
+                    Some(ceiling) => {
+                        self.advance();
+                        Some(ceiling)
+                    }
+                    None => return Err(self.error_here("expected 'hardware', 'synthesis', 'sequencing' or 'physical_key' after 'confirm' in Fn's effect annotation")),
                 }
             } else {
                 None
@@ -692,7 +693,7 @@ impl Parser {
             let profile_name = self.expect_ident_any("profile")?;
             let profile = Profile::parse(&profile_name)
                 .ok_or_else(|| self.error_previous(format!("unknown profile '{}'", profile_name)))?;
-            let confirmed = self.consume_confirmation("hardware")?;
+            let confirmed = self.consume_confirmation_any(&["hardware", "synthesis"])?;
             Ok(Expr::SynthesizePool { source, profile, confirmed })
         } else if self.check_ident("sequence") {
             self.advance();
@@ -701,7 +702,7 @@ impl Parser {
             let profile_name = self.expect_ident_any("profile")?;
             let profile = Profile::parse(&profile_name)
                 .ok_or_else(|| self.error_previous(format!("unknown profile '{}'", profile_name)))?;
-            let confirmed = self.consume_confirmation("hardware")?;
+            let confirmed = self.consume_confirmation_any(&["hardware", "sequencing"])?;
             Ok(Expr::SequencePool { source, profile, confirmed })
         } else if self.check_ident("consensus_vote") {
             // Sugar over a call to the `consensus_vote` stdlib function
@@ -947,6 +948,23 @@ impl Parser {
         }
         self.expect(TokenKind::RBrace, "'}' to end closure body")?;
         Ok(Expr::Closure { type_params, params, return_type, body, span: self.span_since(start) })
+    }
+
+    /// `confirm <marker>` for any one of `markers`: `synthesise` takes
+    /// `confirm hardware` or the narrower `confirm synthesis`, `sequence`
+    /// `confirm hardware` or `confirm sequencing`.
+    fn consume_confirmation_any(&mut self, markers: &[&str]) -> Result<bool, ParseError> {
+        if !self.check_ident("confirm") {
+            return Ok(false);
+        }
+        self.advance();
+        match markers.iter().find(|m| self.check_ident(m)) {
+            Some(_) => {
+                self.advance();
+                Ok(true)
+            }
+            None => Err(self.error_here(format!("expected {} after 'confirm'", markers.iter().map(|m| format!("'{m}'")).collect::<Vec<_>>().join(" or ")))),
+        }
     }
 
     fn consume_confirmation(&mut self, marker: &str) -> Result<bool, ParseError> {

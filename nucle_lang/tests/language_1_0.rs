@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// SHA-256 of the EBNF block in docs/grammar.md, line endings normalized.
-const GRAMMAR_1_0_DIGEST: &str = "70f904728554cd5609f21a19338cdcf9a6f04bf0fcf8e2234dbbac7bb0fe4fce";
+const GRAMMAR_1_0_DIGEST: &str = "f08ecfea63e38ba12377ba019c859837e3616e9ba377fd9d469e5196ae8702ff";
 
 fn corpus() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("conformance").join("1.0")

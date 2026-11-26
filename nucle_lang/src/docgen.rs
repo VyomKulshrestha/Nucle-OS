@@ -10,7 +10,7 @@
 //! package instead of needing this file to know about it specially; this
 //! only ever walks whatever `Program` it's given.
 
-use crate::ast::{Declaration, FnEffectAnnotation, PipelineStep, Program, TypeExpr};
+use crate::ast::{Declaration, PipelineStep, Program, TypeExpr};
 use crate::effects::{decl_effect_info, function_table, ResolvingSet};
 
 /// Renders every documented (and undocumented -- see below) top-level
@@ -160,11 +160,7 @@ pub(crate) fn render_type(ty: &TypeExpr) -> String {
             "Fn({}) -> {}{}",
             params.iter().map(render_type).collect::<Vec<_>>().join(", "),
             render_type(ret),
-            match effect {
-                Some(FnEffectAnnotation::Hardware) => " confirm hardware",
-                Some(FnEffectAnnotation::PhysicalKey) => " confirm physical_key",
-                None => "",
-            }
+            effect.map(|c| format!(" confirm {}", c.keyword())).unwrap_or_default()
         ),
         TypeExpr::Enum(name) => name.clone(),
     }
