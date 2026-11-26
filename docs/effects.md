@@ -11,8 +11,8 @@ actually do before you run it.
 | Effect | Meaning | Confirmation required? |
 |---|---|---|
 | `Pure` | No hardware interaction, no data loss. Reads, in-memory computation, simulation. | No |
-| `Synthesis` | Writes DNA to a physical synthesizer. Costs money and lab time. | Yes — `confirm hardware` |
-| `Sequencing` | Reads DNA from a physical sequencer. Costs money and lab time. | Yes — `confirm hardware` |
+| `Synthesis` | Writes DNA to a physical synthesizer. Costs money and lab time. | Yes — `confirm hardware` or `confirm synthesis` |
+| `Sequencing` | Reads DNA from a physical sequencer. Costs money and lab time. | Yes — `confirm hardware` or `confirm sequencing` |
 | `Destructive` | Permanently deletes physical material. Cannot be undone. | Yes — `confirm physical_key` |
 
 Source: `nucle_lang/src/ast.rs`'s `Effect` enum; classification logic lives in
@@ -22,8 +22,9 @@ Source: `nucle_lang/src/ast.rs`'s `Effect` enum; classification logic lives in
 
 - `simulate`/`consensus_vote` are always `Pure` — they never touch hardware.
 - `synthesise ... via <profile>` is `Synthesis`; `sequence ... via <profile>`
-  is `Sequencing`. Both require `confirm hardware` in source, checked by
-  `expr_has_required_confirmation`.
+  is `Sequencing`. Both require `confirm hardware` in source, or the
+  narrower `confirm synthesis` and `confirm sequencing` respectively,
+  checked by `expr_has_required_confirmation`.
 - `store` is `Synthesis` unless written as `simulate store ...`, which is
   `Pure` (it never reaches real hardware). A `pipeline` with a `store into`
   step is `Synthesis` too: it stores for real.
@@ -93,7 +94,12 @@ because its caller may hand it a closure that deletes.
 An effect ceiling (`Fn(...) -> T confirm hardware`) is checked against
 every kind of effect a closure may have, not just the worst one: a closure
 that stores and deletes needs both confirmations, so it fits neither
-ceiling. See [docs/soundness.md](soundness.md) for the rules in full and
+ceiling. Four ceilings exist: `confirm hardware` allows synthesis and
+sequencing, `confirm synthesis` and `confirm sequencing` one each, and
+`confirm physical_key` deletion. A call through a parameter with a ceiling
+counts as everything that ceiling allows, so a closure that calls a
+`confirm hardware` parameter does not fit `confirm synthesis`: the closure
+it holds may sequence. See [docs/soundness.md](soundness.md) for the rules in full and
 how they are checked by running programs.
 
 ## What surfaces this

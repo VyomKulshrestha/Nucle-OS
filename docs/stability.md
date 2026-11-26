@@ -64,6 +64,14 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.77:** addition. `confirm synthesis`
+  and `confirm sequencing` are narrower ceilings beside `confirm hardware`
+  on `Fn` types, and confirmations of `synthesise` and `sequence`
+  respectively. The EBNF gains them, so the grammar digest changed. A
+  call through a `confirm hardware` parameter now counts as synthesis and
+  sequencing together (before, as synthesis alone), which matters only
+  under the new ceilings: no program 1.0 accepted is rejected, and none
+  of the 33 programs in the 1.0 corpus changed.
 - **26 November 2026, NucleOS v0.1.76:** a closure can be stored in an
   enum (`Run(Fn() -> Void)`) and called from the arm that takes it out;
   1.0 rejected the `match` because the payload never type-checked. The

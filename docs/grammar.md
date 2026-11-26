@@ -95,10 +95,13 @@ TypeExpr            ::= 'Pool' '<' PoolState ( ',' PercentLiteral )? '>'
                       // Propagation", "Generics", "Closures", and "Enums"
                       // below.
 
-// The two confirmation keywords already used after 'synthesise'/
-// 'sequence'/'delete', reused verbatim here rather than inventing a new
-// vocabulary -- see "Effect-Annotated Function Types" below.
+// The confirmation keywords used after 'synthesise'/'sequence'/'delete':
+// 'hardware' allows synthesis and sequencing, 'synthesis' and
+// 'sequencing' one each, 'physical_key' deletion -- see
+// "Effect-Annotated Function Types" below.
 FnEffectAnnotation  ::= 'confirm' 'hardware'
+                      | 'confirm' 'synthesis'
+                      | 'confirm' 'sequencing'
                       | 'confirm' 'physical_key'
 
 PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'IDT' | 'Amplified' | 'Recovered' | Identifier
@@ -136,8 +139,8 @@ Comparison          ::= NumericExpr ( '==' | '!=' | '<' | '>' | '<=' | '>=' ) Nu
 NumericExpr         ::= NumberLiteral | Identifier
 
 Expr                ::= 'simulate' Identifier 'under' ProfileLiteral
-                      | ( 'synthesise' | 'synthesize' ) Identifier 'via' ProfileLiteral ( 'confirm' 'hardware' )?
-                      | 'sequence' Identifier 'via' ProfileLiteral ( 'confirm' 'hardware' )?
+                      | ( 'synthesise' | 'synthesize' ) Identifier 'via' ProfileLiteral ( 'confirm' ( 'hardware' | 'synthesis' ) )?
+                      | 'sequence' Identifier 'via' ProfileLiteral ( 'confirm' ( 'hardware' | 'sequencing' ) )?
                       | 'consensus_vote' '(' Identifier ',' 'coverage' ':' MultiplierLiteral ')'
                       | 'protect' Identifier 'for' Identifier
                       | StoreOp | RetrieveOp | DeleteOp
@@ -966,9 +969,10 @@ fn run_cleanup() returns Void {
 ```
 
 - **The annotation is a ceiling, declared once on the type** — `confirm
-  hardware` covers whatever the language's own `confirm hardware` token
-  already covers (`Synthesis`/`Sequencing`, which require the identical
-  confirmation), `confirm physical_key` covers `Destructive`. No
+  hardware` covers `Synthesis` and `Sequencing`, `confirm synthesis` and
+  `confirm sequencing` one of them each, and `confirm physical_key` covers
+  `Destructive`. A call through a parameter with a ceiling counts as
+  everything the ceiling allows. No
   annotation (every `Fn(...)` type written before this feature, and any
   written without one going forward) means exactly the pre-existing
   behavior: the parameter's own call is still optimistically `Pure`, and
@@ -997,12 +1001,11 @@ fn run_cleanup() returns Void {
   parameter without a ceiling fits none either, passed on by name or
   called inside a closure, since a caller may pass any closure for it. See
   [docs/soundness.md](soundness.md).
-- **Still a ceiling, not full hardware-request precision** — `Synthesis`
-  and `Sequencing` are deliberately not distinguished at the annotation
-  level (the language's own `confirm hardware` doesn't distinguish them
-  either), and hardware-request collection (`nucle hardware export`)
+- **Still a ceiling, not full hardware-request precision** — a ceiling
+  can tell synthesis from sequencing (`confirm synthesis`, `confirm
+  sequencing`), but hardware-request collection (`nucle hardware export`)
   never walks into any function or closure body at all, indirect calls
-  included, so this doesn't change what that pipeline sees either way.
+  included, so ceilings don't change what that pipeline sees.
 - **Narration follows the real closure, not the ceiling** — see the
   note on `nucle plan` above; a declared ceiling tells the compiler what
   confirmation is needed, and the call site supplies the body to

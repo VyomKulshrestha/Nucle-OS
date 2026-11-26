@@ -11,12 +11,15 @@ language. The last section says where each stops.
 
 1. **Confirmation.** No `delete` runs unless its own source carries
    `confirm physical_key`, and no `synthesise`/`sequence` compiles without
-   `confirm hardware`.
+   `confirm hardware` (or the narrower `confirm synthesis` /
+   `confirm sequencing`).
 2. **Effect reports.** No top-level declaration performs an operation with
    a worse effect than `nucle explain` reports for it, in the order
    `Pure < Sequencing < Synthesis < Destructive`.
 3. **Effect ceilings.** A closure bound into a `Fn(...) -> T confirm
-   hardware` slot never deletes while it runs, and one bound into a
+   hardware` slot never deletes while it runs, one bound into a
+   `confirm synthesis` slot only synthesises (or stores), one bound into
+   a `confirm sequencing` slot only sequences, and one bound into a
    `confirm physical_key` slot never stores, synthesises or sequences.
 4. **Value shapes.** Every value bound to an annotated name, passed as an
    argument or returned from a function has a shape its declared type
@@ -46,8 +49,7 @@ enclosing blocks, and the ceilings of any annotated `Fn(...)` parameters.
 | `pipeline` with a `store into` step | {Synthesis} |
 | a closure literal `fn(...) -> T { ... }` | ∅: defining one runs nothing |
 | `f(a₁, ..., aₙ)`, `f` a function or a closure in Γ | E(body of `f`) ∪ E(aᵢ) for each closure aᵢ passed to an unannotated `Fn` parameter |
-| `p()`, `p` a parameter typed `Fn(...) -> T confirm hardware` | {Synthesis} |
-| `p()`, `p` a parameter typed `Fn(...) -> T confirm physical_key` | {Destructive} |
+| `p()`, `p` a parameter typed `Fn(...) -> T confirm k` | allowed(`k`), below: {Synthesis, Sequencing} for `hardware` |
 | `p()`, `p` an unannotated `Fn` parameter | ∅; the call that passed the closure adds its effects (row above) |
 | `g()`, `g` a closure the analysis cannot trace: returned by a function, taken out of an enum, or bound to either through an unannotated `Fn` type | every effect |
 | `?`, `Ok`, `Err`, enum constructors, `!`, binary operators | the effects of their operands |
@@ -61,14 +63,16 @@ pure one stays Pure.
 
 **Confirmation.** Each operation that needs confirmation carries it on its
 own line: `confirm physical_key` on a `delete`, `confirm hardware` on
-`synthesise` and `sequence`. A call is confirmed when every operation its
+`synthesise` and `sequence` (or `confirm synthesis` on `synthesise` and
+`confirm sequencing` on `sequence`). A call is confirmed when every operation its
 effects come from is. `store` needs no confirmation; the checker warns
 about real (not simulated) stores instead.
 
 **Ceilings.** Binding a closure `c` into a slot with ceiling `k` (passing
 it to an annotated parameter, or `let`-binding it with an annotated type)
 requires E(c) ⊆ allowed(k), where allowed(`hardware`) = {Synthesis,
-Sequencing} and allowed(`physical_key`) = {Destructive}, and requires every
+Sequencing}, allowed(`synthesis`) = {Synthesis}, allowed(`sequencing`) =
+{Sequencing} and allowed(`physical_key`) = {Destructive}, and requires every
 operation in `c` to be confirmed. Here a call through an unannotated `Fn`
 parameter counts as every effect, not ∅: whatever closure a caller passes
 for it would run under `k`, so `c` fits only if it calls none. The checker
@@ -275,8 +279,9 @@ rebuilds the proof and fails if any step rests on `sorry`.
   declared pool is checked against a concrete `Pool<Profile>`, but a
   generic `Pool<P>` is erased by the time a program runs, and `Strand`,
   `Sequence` and `Recovery` have no values at all.
-- **Synthesis and Sequencing share a ceiling**, and `store` needs no
-  confirmation, by design (see [effects.md](effects.md)).
+- **`store` needs no confirmation**, by design (see
+  [effects.md](effects.md)); the checker warns about real stores
+  instead.
 - **The VFS only.** Hardware submission (`nucle hardware export`) has its
   own confirmation gates, tested separately; see
   [hardware-providers.md](hardware-providers.md).
