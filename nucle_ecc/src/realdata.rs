@@ -289,8 +289,8 @@ pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConf
     let references: std::collections::HashSet<&DnaStrand> =
         data.iter().filter(|c| !c.reads.is_empty()).map(|c| &c.reference).collect();
     let multi = clusters.iter().filter(|c| c.len() >= 2).count();
-    let len = modal_length(data.iter().map(|c| &c.reference));
-    let recovered = recovered_references(&reads, &clusters, &references, len);
+    let lengths = reference_lengths(data.iter().map(|c| &c.reference));
+    let recovered = recovered_references(&reads, &clusters, &references, &lengths);
 
     BlindReport {
         reads: reads.len(),
@@ -304,7 +304,7 @@ pub fn evaluate_blind(data: &[ReadCluster], config: &crate::cluster::ClusterConf
 
 /// How many distinct `references` some cluster's length-aware consensus
 /// reproduces exactly.
-fn recovered_references(reads: &[DnaStrand], clusters: &[Vec<usize>], references: &std::collections::HashSet<&DnaStrand>, len: usize) -> usize {
+fn recovered_references(reads: &[DnaStrand], clusters: &[Vec<usize>], references: &std::collections::HashSet<&DnaStrand>, lengths: &[usize]) -> usize {
     let mut recovered: std::collections::HashSet<DnaStrand> = std::collections::HashSet::new();
     for c in clusters {
         // A single read is its own best guess (most clean short reads are
@@ -312,7 +312,7 @@ fn recovered_references(reads: &[DnaStrand], clusters: &[Vec<usize>], references
         // `MAX_CONSENSUS_READS` reads, since agreement saturates long
         // before a merged cluster of thousands.
         let group: Vec<DnaStrand> = c.iter().take(MAX_CONSENSUS_READS).map(|&i| reads[i].clone()).collect();
-        if let Some(r) = crate::consensus::build_consensus_with_length(&group, len) {
+        if let Some(r) = crate::consensus::build_consensus_with_length(&group, nearest_length(lengths, &group)) {
             if references.contains(&r.sequence) {
                 recovered.insert(r.sequence);
             }
@@ -405,18 +405,30 @@ pub fn evaluate_unlabelled(reads: &[DnaStrand], references: &[DnaStrand], config
         references: wanted.len(),
         clusters: clusters.len(),
         multi_read_clusters: clusters.iter().filter(|c| c.len() >= 2).count(),
-        recovered_exact: recovered_references(reads, &clusters, &wanted, modal_length(references.iter())),
+        recovered_exact: recovered_references(reads, &clusters, &wanted, &reference_lengths(references.iter())),
     }
 }
 
-/// The strand length a decoder would be configured with: the most common
-/// reference length.
-fn modal_length<'a>(references: impl Iterator<Item = &'a DnaStrand>) -> usize {
-    let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    for reference in references {
-        *counts.entry(reference.len()).or_insert(0) += 1;
+/// The strand lengths a decoder would be configured with: each length the
+/// references come in, once, ascending. Most pools have one.
+fn reference_lengths<'a>(references: impl Iterator<Item = &'a DnaStrand>) -> Vec<usize> {
+    let mut lengths: Vec<usize> = references.map(|r| r.len()).collect();
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
+}
+
+/// Which of `lengths` to polish a cluster to: the one nearest its median
+/// read length (the shorter on a tie). A decoder knows which lengths were
+/// ordered, but not which one a cluster of reads is.
+fn nearest_length(lengths: &[usize], group: &[DnaStrand]) -> usize {
+    if lengths.len() <= 1 || group.is_empty() {
+        return lengths.first().copied().unwrap_or(0);
     }
-    counts.into_iter().max_by_key(|&(len, n)| (n, len)).map(|(len, _)| len).unwrap_or(0)
+    let mut read_lengths: Vec<usize> = group.iter().map(|r| r.len()).collect();
+    read_lengths.sort_unstable();
+    let median = read_lengths[read_lengths.len() / 2];
+    *lengths.iter().min_by_key(|&&l| l.abs_diff(median)).unwrap()
 }
 
 impl fmt::Display for RealDataReport {
@@ -475,6 +487,21 @@ mod tests {
         assert_eq!(report.recovery_rate(), 1.0);
         let absent = [s("GGGGGGGGGGCCCCCCCCCCAAAAAAAAAA")];
         assert_eq!(evaluate_unlabelled(&reads, &absent, &crate::cluster::ClusterConfig::default()).recovered_exact, 0);
+    }
+
+    #[test]
+    fn references_of_several_lengths_are_each_polished_to_their_own() {
+        // An order sheet's header strands are shorter than its data strands;
+        // polishing every cluster to the commonest length lost them.
+        let long = s("ACGTACGTACGTACGTACGTACGTACGTAC");
+        let short = s("TTGGCCAATTGGCCAATTGG");
+        let mut reads = vec![long.clone(); 4];
+        reads.extend(vec![short.clone(); 3]);
+        reads.push(s("TTGGCCAATTGCCAATTGG"));
+        let report = evaluate_unlabelled(&reads, &[long.clone(), long, short], &crate::cluster::ClusterConfig::default());
+        assert_eq!((report.references, report.recovered_exact), (2, 2));
+        assert_eq!(nearest_length(&[20, 30], &[s("ACGTACGTACGTACGTACGTACGTA")]), 20, "a tie takes the shorter");
+        assert_eq!(nearest_length(&[30], &[s("ACGT")]), 30);
     }
 
     #[test]

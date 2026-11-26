@@ -1412,7 +1412,10 @@ than against its neighbour in the bucket. `realdata::evaluate_blind` pools
 and shuffles every read, clusters, takes the length-aware consensus of each
 cluster (at most 64 reads, since agreement saturates long before that; a
 single read stands as its own guess), and counts references recovered
-exactly. On the same 2,000 clusters:
+exactly. The polish length is the references' length; when they come in
+several, as an order sheet's header and data strands do, each cluster takes
+the one nearest its median read length (it used to be the commonest
+length, which lost every header strand of a flanked order sheet). On the same 2,000 clusters:
 
 | Merge threshold (edit distance / length) | Clusters | Purity | Recovered |
 |---:|---:|---:|---:|

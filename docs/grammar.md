@@ -375,7 +375,9 @@ are relative to the program's file. The reads can be:
 - unlabelled, as a sequencer writes them: FASTQ, FASTA, or one read per
   line, against references in FASTA or one per line. These are always
   decoded blind; reads with bases other than A/C/G/T are counted and left
-  out.
+  out. When the references come in several lengths, as an order sheet's
+  header and data strands do, each cluster is polished to the reference
+  length nearest its median read length.
 
 The scores come from the same functions `nucle reads` uses
 (`nucle_ecc::realdata`), so a program and the CLI report the same numbers
