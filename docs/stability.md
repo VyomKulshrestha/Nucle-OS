@@ -64,6 +64,12 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.75:** new warning. An error in the
+  branch an `if` does not take is reported as an `E-IF-UNTAKEN-BRANCH`
+  warning; it was silently ignored before. No program 1.0 accepted is
+  rejected, and none of the 33 programs in the 1.0 corpus changed. A
+  comment inside the EBNF block was corrected to match, so the grammar
+  digest changed with no change to the syntax.
 - **8 November 2026, NucleOS v0.1.67:** soundness fix. A `Fn` parameter
   without a ceiling no longer fits one: a function that passes it on to a
   `confirm ...` parameter, or calls it inside a closure it passes there, is

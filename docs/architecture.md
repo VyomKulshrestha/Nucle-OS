@@ -87,8 +87,9 @@ any of that MIR/optimizer/backend machinery runs — before `Result<T, E>`/`?`
 (below) existed, NucleScript's execution model was "compile a static plan, then run it,"
 with no runtime branch or loop anywhere in a compiled program.
 `check_and_desugar` evaluates each `if` condition once and keeps only the
-taken branch (the untaken branch is never type-checked, closer to
-`#[cfg(...)]` than a real conditional), and unrolls each `for` by
+taken branch (closer to `#[cfg(...)]` than a real conditional; the untaken
+branch is checked on a copy of the checker and its errors become
+`E-IF-UNTAKEN-BRANCH` warnings), and unrolls each `for` by
 substituting the loop binding with every item in its literal list. The
 result is a plain, control-flow-free `Program` — `middle` never sees an
 `if`/`for` node at all. See

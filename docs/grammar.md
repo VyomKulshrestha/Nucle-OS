@@ -112,7 +112,7 @@ PoolState           ::= 'Illumina' | 'Nanopore' | 'Twist' | 'IDT' | 'Amplified' 
 // execution model is "compile a static plan, then run it," so there is no
 // runtime branch or loop anywhere in a compiled program. The type checker
 // evaluates `Condition` once, keeps only the taken branch (the untaken
-// branch is never type-checked, similar to `#[cfg(...)]`), and unrolls a
+// branch is checked for warnings only, much like `#[cfg(...)]`), and unrolls a
 // `for` by textual substitution of `Binding` with each item -- the
 // compiled output never contains an `IfDecl`/`ForDecl` node. See
 // `nucle_lang::ast::IfDecl`/`ForDecl` for the full rationale.
@@ -415,10 +415,13 @@ for target in [archive] {
 }
 ```
 
-- **`if`** only ever keeps one branch. The untaken branch is never
-  type-checked at all (so, unlike a real `if`, a type error in the branch
-  that's never taken will not be reported) -- this mirrors `#[cfg(...)]`
-  more than a conditional statement.
+- **`if`** only ever keeps one branch, which mirrors `#[cfg(...)]` more
+  than a conditional statement. The untaken branch is still checked, on a
+  copy of the checker so nothing it declares leaks out, and each error it
+  holds is reported as an `E-IF-UNTAKEN-BRANCH` warning: NucleScript 1.x
+  adds no new errors to programs 1.0 accepted, so this becomes an error
+  only in 2.0. A failed `assert` there is not reported, since it is about
+  the case where that branch runs.
 - **`for`** always iterates a literal, statically-known list of identifiers
   and/or string literals -- never an open-ended `while` or a runtime
   collection. Each iteration is unrolled by substituting the loop binding
