@@ -11,7 +11,7 @@ the core holds and what it leaves out.
 | `program_confirmed` | no operation runs without the confirmation it needs |
 | `program_effects_sound` | no operation has an effect the rules did not report |
 | `program_ceilings_sound` | no operation runs inside a closure call whose ceiling it exceeds |
-| `program_shapes_sound` | a shaped program never reaches a call it cannot make (an unbound name, or the wrong number of closures) |
+| `program_shapes_sound` | a shaped program never reaches a call it cannot make (an unbound name, the wrong number of closures, or a closure of another type) |
 
 `Checker.lean` turns the rules into a checker Lean can run. `check`
 computes a statement's effects, or rejects it, and `check_sound` proves its

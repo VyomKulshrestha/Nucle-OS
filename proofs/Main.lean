@@ -11,19 +11,23 @@ compares these verdicts with the Rust checker's.
 A line is a list of functions followed by the program's statement, in
 prefix form:
 
-    fn <name> <n> <param> <ceiling> <arity> ... <stmt>   (repeated)
+    fn <name> <n> <param> <ceiling> <type> ... <stmt>   (repeated)
     main <stmt>
 
     <ceiling> ::= none | hw | syn | sqn | key
+    <type>    ::= <m> <ceiling> ...
     <stmt>    ::= op <store | sim | get | del1 | del0 | syn1 | syn0 | sqn1 | sqn0>
                 | seq <stmt> <stmt> | alt <stmt> <stmt>
-                | clo <x> <ceiling> <n> <param> ... <stmt> <stmt> | alias <x> <y> <stmt>
-                | opq <x> <ceiling> <n> <param> ... <stmt> <stmt>
-                | call <x> <n> <arg> ... | callf <f> <n> <arg> ...
+                | clo <x> <ceiling> <n> <param> <ceiling> ... <stmt> <stmt>
+                | opq <x> <ceiling> <n> <param> <ceiling> ... <stmt> <stmt>
+                | alias <x> <y> <stmt>
+                | call <x> <n> <arg> ... <type> | callf <f> <n> <arg> ...
                 | loop <stmt> | stop
 
-`del0` is a delete without its confirmation, `syn1`/`sqn1` a synthesis or
-sequencing with one, and so on.
+A `<type>` is the ceilings of the closures a closure takes: a function
+parameter's, or, in a call, the called closure's. `del0` is a delete
+without its confirmation, `syn1`/`sqn1` a synthesis or sequencing with one,
+and so on.
 -/
 
 open NucleScript
@@ -53,6 +57,22 @@ def takeN : Nat → List String → Option (List String × List String)
   | n + 1, a :: rest => (takeN n rest).map fun (xs, r) => (a :: xs, r)
   | _ + 1, [] => none
 
+def parseType : Nat → List String → Option (List (Option Ceiling) × List String)
+  | 0, rest => some ([], rest)
+  | n + 1, c :: rest => do
+    let k ← parseCeiling c
+    let (ks, r) ← parseType n rest
+    pure (k :: ks, r)
+  | _ + 1, [] => none
+
+def parseOwn : Nat → List String → Option (List (Name × Option Ceiling) × List String)
+  | 0, rest => some ([], rest)
+  | n + 1, p :: c :: rest => do
+    let k ← parseCeiling c
+    let (ps, r) ← parseOwn n rest
+    pure ((p, k) :: ps, r)
+  | _ + 1, _ => none
+
 partial def parseStmt : List String → Option (Stmt × List String)
   | "op" :: k :: rest => (parseOp k).map fun o => (.op o, rest)
   | "seq" :: rest => do
@@ -65,7 +85,7 @@ partial def parseStmt : List String → Option (Stmt × List String)
     pure (.choice a b, r₂)
   | "clo" :: x :: c :: n :: rest => do
     let k ← parseCeiling c
-    let (ps, r₀) ← takeN (← n.toNat?) rest
+    let (ps, r₀) ← parseOwn (← n.toNat?) rest
     let (body, r₁) ← parseStmt r₀
     let (s, r₂) ← parseStmt r₁
     pure (.letClosure x k ps body s, r₂)
@@ -74,13 +94,17 @@ partial def parseStmt : List String → Option (Stmt × List String)
     pure (.letAlias x y s, r)
   | "opq" :: x :: c :: n :: rest => do
     let k ← parseCeiling c
-    let (ps, r₀) ← takeN (← n.toNat?) rest
+    let (ps, r₀) ← parseOwn (← n.toNat?) rest
     let (body, r₁) ← parseStmt r₀
     let (s, r₂) ← parseStmt r₁
     pure (.letOpaque x k ps body s, r₂)
   | "call" :: x :: n :: rest => do
-    let (args, r) ← takeN (← n.toNat?) rest
-    pure (.callClosure x args, r)
+    let (args, r₀) ← takeN (← n.toNat?) rest
+    match r₀ with
+    | m :: r₁ =>
+      let (pks, r) ← parseType (← m.toNat?) r₁
+      pure (.callClosure x args pks, r)
+    | [] => none
   | "stop" :: rest => some (.stop, rest)
   | "loop" :: rest => do
     let (body, r) ← parseStmt rest
@@ -90,20 +114,21 @@ partial def parseStmt : List String → Option (Stmt × List String)
     pure (.callFun f args, r)
   | _ => none
 
-def parseParams : Nat → List String → Option (List (Name × Option Ceiling) × List Nat × List String)
+def parseParams : Nat → List String →
+    Option (List (Name × Option Ceiling) × List (List (Option Ceiling)) × List String)
   | 0, rest => some ([], [], rest)
-  | n + 1, p :: c :: a :: rest => do
+  | n + 1, p :: c :: m :: rest => do
     let k ← parseCeiling c
-    let arity ← a.toNat?
-    let (ps, ns, r) ← parseParams n rest
-    pure ((p, k) :: ps, arity :: ns, r)
+    let (t, r₀) ← parseType (← m.toNat?) rest
+    let (ps, ts, r) ← parseParams n r₀
+    pure ((p, k) :: ps, t :: ts, r)
   | _ + 1, _ => none
 
 partial def parseProgram (fs : List (Name × FunDecl)) : List String → Option (List (Name × FunDecl) × Stmt)
   | "fn" :: f :: n :: rest => do
-    let (params, arities, r₁) ← parseParams (← n.toNat?) rest
+    let (params, ptypes, r₁) ← parseParams (← n.toNat?) rest
     let (body, r₂) ← parseStmt r₁
-    parseProgram (fs ++ [(f, { params, body, arities })]) r₂
+    parseProgram (fs ++ [(f, { params, body, ptypes })]) r₂
   | "main" :: rest => do
     let (s, r) ← parseStmt rest
     if r.isEmpty then pure (fs, s) else none

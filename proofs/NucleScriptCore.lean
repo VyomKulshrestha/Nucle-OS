@@ -9,8 +9,8 @@ into (returned by a function, taken out of an enum), calls to closures,
 named functions taking closure arguments, with or without ceilings, loops
 over a pool's files (zero or more passes), and an early return through `?`
 (`stop`), which ends the function or closure it is in. Closures take
-closures as arguments of their own, without ceilings, and a call passes
-them. Pools, files, `Result` and the rest add no effects of their own, so
+closures as arguments of their own, with or without ceilings, and a call
+passes them. Pools, files, `Result` and the rest add no effects of their own, so
 they are left out.
 
 The static rules give a statement two things: `R`, the effects it may have
@@ -119,17 +119,19 @@ inductive Stmt where
   | seq (s₁ s₂ : Stmt)
   /-- An `if` or `match`: either side may run. -/
   | choice (s₁ s₂ : Stmt)
-  /-- `let x: Fn(...) -> Void [confirm k] = fn(p₁: Fn() -> Void, ...) -> Void
-  { body }`, then `rest`: a closure whose own parameters `ps` take
-  closures and have no ceiling. -/
-  | letClosure (x : Name) (k : Option Ceiling) (ps : List Name) (body rest : Stmt)
+  /-- `let x: Fn(...) -> Void [confirm k] = fn(p₁: Fn() -> Void [confirm
+  k₁], ...) -> Void { body }`, then `rest`: a closure whose own parameters
+  `ps` take closures, each with or without a ceiling. -/
+  | letClosure (x : Name) (k : Option Ceiling) (ps : List (Name × Option Ceiling)) (body rest : Stmt)
   /-- `let x: Fn(...) -> Void = y`, then `rest`. -/
   | letAlias (x y : Name) (rest : Stmt)
   /-- A closure the checker cannot see into, such as one returned by a
   function: `body` is what it does, which the rules do not look at. -/
-  | letOpaque (x : Name) (k : Option Ceiling) (ps : List Name) (body rest : Stmt)
-  /-- `x(a₁, ...)`: a call to a closure, passing it closures. -/
-  | callClosure (x : Name) (args : List Name)
+  | letOpaque (x : Name) (k : Option Ceiling) (ps : List (Name × Option Ceiling)) (body rest : Stmt)
+  /-- `x(a₁, ...)`: a call to a closure, passing it closures. `pks` are the
+  ceilings of the closure's parameters as its type gives them; a run checks
+  that the closure it finds has them. -/
+  | callClosure (x : Name) (args : List Name) (pks : List (Option Ceiling))
   | callFun (f : Name) (args : List Name)
   /-- `for f in files of pool { body }`: the body runs zero or more times. -/
   | loop (body : Stmt)
@@ -142,21 +144,22 @@ ceiling, and its body. Named functions capture nothing. -/
 structure FunDecl where
   params : List (Name × Option Ceiling)
   body : Stmt
-  /-- How many closures the closure each parameter holds takes, in order;
-  zero where the list stops. Only the value-shape theorem reads it. -/
-  arities : List Nat := []
+  /-- The type of the closure each parameter holds, in order: the
+  ceilings of the closures it takes, none where the list stops. Only the
+  value-shape theorem reads it. -/
+  ptypes : List (List (Option Ceiling)) := []
 
 abbrev Program := Name → Option FunDecl
 
-/-- A closure's own parameters, as parameters without ceilings. -/
-def unann (ps : List Name) : List (Name × Option Ceiling) := ps.map fun p => (p, none)
+/-- The names of a list of parameters. -/
+def names (ps : List (Name × Option Ceiling)) : List Name := ps.map Prod.fst
 
 /-! ## Running a statement -/
 
 /-- A closure value: its own parameters, its body, the environment it
 captured, and the ceilings of the slots it was bound into. -/
 inductive Val where
-  | closure (ps : List Name) (body : Stmt) (env : List (Name × Val)) (ceilings : List Ceiling)
+  | closure (ps : List (Name × Option Ceiling)) (body : Stmt) (env : List (Name × Val)) (ceilings : List Ceiling)
 
 abbrev Env := List (Name × Val)
 
@@ -206,11 +209,12 @@ inductive Eval (P : Program) : Env → List Ceiling → Stmt → List Event → 
       Eval P ((x, .closure ps body ρ k.toList) :: ρ) cs rest t b →
       Eval P ρ cs (.letOpaque x k ps body rest) t b
   /-- The closure runs in the environment it captured, with its own
-  parameters bound to the arguments. -/
-  | callClosure {ρ cs x args ps body ρ' ks ρa t b} :
-      lookup ρ x = some (.closure ps body ρ' ks) → BindArgs ρ (unann ps) args ρa →
-      Eval P (ρa ++ ρ') (ks ++ cs) body t b →
-      Eval P ρ cs (.callClosure x args) t false
+  parameters bound to the arguments, each taking on its parameter's
+  ceiling. -/
+  | callClosure {ρ cs x args pks ps body ρ' ks ρa t b} :
+      lookup ρ x = some (.closure ps body ρ' ks) → ps.map Prod.snd = pks →
+      BindArgs ρ ps args ρa → Eval P (ρa ++ ρ') (ks ++ cs) body t b →
+      Eval P ρ cs (.callClosure x args pks) t false
   | callFun {ρ cs f args d ρf t b} : P f = some d → BindArgs ρ d.params args ρf →
       Eval P ρf cs d.body t b → Eval P ρ cs (.callFun f args) t false
   | loopDone {ρ cs body} : Eval P ρ cs (.loop body) [] false
@@ -223,7 +227,8 @@ inductive Eval (P : Program) : Env → List Ceiling → Stmt → List Event → 
 /-- What a name in scope stands for: a closure whose effects `R`, used
 parameters `U` and own parameters `ps` are known (a closure literal, a slot
 with a ceiling, an untraceable closure), or a parameter without a ceiling.
-`U` may name the closure's own parameters, which each call fills. -/
+`U` may name the closure's own parameters without ceilings, which each call
+fills; `ps` names all of its own parameters. -/
 inductive Binding where
   | known (R : Effs) (U : List Name) (ps : List Name)
   | param (p : Name)
@@ -260,6 +265,14 @@ parameters of its own, or a parameter's closure, may run them. A slot with
 a ceiling may not, since a closure that calls its arguments fits none. -/
 def Binding.mayCallArgs : Binding → Bool
   | .known _ _ ps => !ps.isEmpty
+  | .param _ => true
+
+/-- Whether a call counts the closures it passes to parameters with a
+ceiling too. A call through a parameter does, since it cannot see which of
+them the closure the parameter holds runs; they fit their ceilings, so
+they add effects only. -/
+def Binding.addsAll : Binding → Bool
+  | .known _ _ _ => false
   | .param _ => true
 
 /-- What the closures passed to a call add to it. -/
@@ -306,22 +319,19 @@ it uses no parameter without a ceiling, and every effect is allowed. -/
 def Fits (k : Option Ceiling) (R : Effs) (U : List Name) : Prop :=
   ∀ c, k = some c → U = [] ∧ Effs.Sub R c.allows
 
-/-- The arguments of a call, checked against the parameters: an argument to
-a parameter with a ceiling must fit it; the others add their effects. -/
-inductive ArgsOk (Γ : Ctx) : List (Name × Option Ceiling) → List Name → Effs → List Name → Prop
-  | nil : ArgsOk Γ [] [] Effs.none []
-  | unannotated {p a ps as b R U} : lookup Γ a = some b → ArgsOk Γ ps as R U →
-      ArgsOk Γ ((p, none) :: ps) (a :: as) (Effs.union b.R R) (b.outer ++ U)
-  | annotated {p c a ps as b R U} : lookup Γ a = some b → b.U = [] →
-      Effs.Sub b.R c.allows → ArgsOk Γ ps as R U →
-      ArgsOk Γ ((p, some c) :: ps) (a :: as) R U
+/-- `A` added to `R` when `add` says so. -/
+def addIf (add : Bool) (A R : Effs) : Effs := if add then Effs.union A R else R
 
-/-- The closures passed to a closure call: each may be run, so each adds its
-effects. -/
-inductive ArgsAll (Γ : Ctx) : List Name → Effs → List Name → Prop
-  | nil : ArgsAll Γ [] Effs.none []
-  | cons {a as b R U} : lookup Γ a = some b → ArgsAll Γ as R U →
-      ArgsAll Γ (a :: as) (Effs.union b.R R) (b.outer ++ U)
+/-- The arguments of a call, checked against the ceilings of the parameters
+they fill: an argument to a parameter with a ceiling must fit it; the
+others add their effects, and with `add` so do the ones that fit. -/
+inductive ArgsOk (Γ : Ctx) (add : Bool) : List (Option Ceiling) → List Name → Effs → List Name → Prop
+  | nil : ArgsOk Γ add [] [] Effs.none []
+  | unannotated {a ks as b R U} : lookup Γ a = some b → ArgsOk Γ add ks as R U →
+      ArgsOk Γ add (none :: ks) (a :: as) (Effs.union b.R R) (b.outer ++ U)
+  | annotated {c a ks as b R U} : lookup Γ a = some b → b.U = [] →
+      Effs.Sub b.R c.allows → ArgsOk Γ add ks as R U →
+      ArgsOk Γ add (some c :: ks) (a :: as) (addIf add b.R R) U
 
 /-- No closure the body can see by name runs a parameter named like one of
 the closure's own: such a use would be taken for the closure's own. -/
@@ -356,20 +366,20 @@ inductive Typed (P : Program) (Φ : Name → Effs) : Ctx → Stmt → Effs → L
   | choice {Γ s₁ s₂ R₁ R₂ U₁ U₂} : Typed P Φ Γ s₁ R₁ U₁ → Typed P Φ Γ s₂ R₂ U₂ →
       Typed P Φ Γ (.choice s₁ s₂) (Effs.union R₁ R₂) (U₁ ++ U₂)
   | letClosure {Γ x k ps body rest Rb Ub R U} :
-      Typed P Φ (paramCtx (unann ps) ++ weaken ps Γ) body Rb Ub → Fits k Rb Ub →
-      Typed P Φ ((x, .known Rb Ub ps) :: Γ) rest R U →
+      Typed P Φ (paramCtx ps ++ weaken (names ps) Γ) body Rb Ub → Fits k Rb Ub →
+      Typed P Φ ((x, .known Rb Ub (names ps)) :: Γ) rest R U →
       Typed P Φ Γ (.letClosure x k ps body rest) R U
   | letAlias {Γ x y rest b R U} : lookup Γ y = some b →
       Typed P Φ ((x, b) :: Γ) rest R U → Typed P Φ Γ (.letAlias x y rest) R U
   | letOpaque {Γ x k ps body rest Rb Ub R U} :
-      Typed P Φ (paramCtx (unann ps) ++ weaken ps Γ) body Rb Ub → Fits k Rb Ub →
-      Typed P Φ ((x, .known (opaqueEffs k) (opaqueU k ps) (opaquePs k ps)) :: Γ) rest R U →
+      Typed P Φ (paramCtx ps ++ weaken (names ps) Γ) body Rb Ub → Fits k Rb Ub →
+      Typed P Φ ((x, .known (opaqueEffs k) (opaqueU k (names ps)) (opaquePs k (names ps))) :: Γ) rest R U →
       Typed P Φ Γ (.letOpaque x k ps body rest) R U
   /-- A call may do what the closure does, and what the closures passed to
   it do if it may call them. -/
-  | callClosure {Γ x args b R U} : lookup Γ x = some b → ArgsAll Γ args R U →
-      Typed P Φ Γ (.callClosure x args) (Effs.union b.R (argEffs b R)) (b.outer ++ argUses b U)
-  | callFun {Γ f args d R U} : P f = some d → ArgsOk Γ d.params args R U →
+  | callClosure {Γ x args pks b R U} : lookup Γ x = some b → ArgsOk Γ b.addsAll pks args R U →
+      Typed P Φ Γ (.callClosure x args pks) (Effs.union b.R (argEffs b R)) (b.outer ++ argUses b U)
+  | callFun {Γ f args d R U} : P f = some d → ArgsOk Γ false (d.params.map Prod.snd) args R U →
       Typed P Φ Γ (.callFun f args) (Effs.union (Φ f) R) U
   /-- A loop may do whatever its body does, any number of times. -/
   | loop {Γ body R U} : Typed P Φ Γ body R U → Typed P Φ Γ (.loop body) R U
@@ -389,10 +399,10 @@ under each of its ceilings it calls none of them and does only what the
 ceiling allows. -/
 inductive ValOk (P : Program) (Φ : Name → Effs) : Effs → Bool → Val → Prop
   | closure {B o Γ σ ps body env ks R U} :
-      Fresh ps Γ → Typed P Φ (paramCtx (unann ps) ++ Γ) body R U → EnvOk P Φ [] Γ env σ →
-      Effs.Sub (Effs.union R (bigU σ (outerOf U ps))) B →
-      (o = false → ∀ q, q ∈ U → q ∉ ps) →
-      (∀ c, c ∈ ks → (∀ q, q ∈ U → q ∉ ps) ∧ Effs.Sub (Effs.union R (bigU σ U)) c.allows) →
+      Fresh (names ps) Γ → Typed P Φ (paramCtx ps ++ Γ) body R U → EnvOk P Φ [] Γ env σ →
+      Effs.Sub (Effs.union R (bigU σ (outerOf U (names ps)))) B →
+      (o = false → ∀ q, q ∈ U → q ∉ names ps) →
+      (∀ c, c ∈ ks → (∀ q, q ∈ U → q ∉ names ps) ∧ Effs.Sub (Effs.union R (bigU σ U)) c.allows) →
       ValOk P Φ B o (.closure ps body env ks)
 
 /-- Each name's value does at most what its binding says. A name already
@@ -622,7 +632,7 @@ theorem fresh_weaken (ps : List Name) (Γ : Ctx) : Fresh ps (weaken ps Γ) := by
     subst hl
     unfold weakenB at hq
     by_cases hc : (decide (y ∉ ps) && b₀.outer.any fun q => decide (q ∈ ps)) = true
-    · rw [if_pos hc] at hq
+    · simp only [hc, ↓reduceIte] at hq
       cases b₀ with
       | known R U ps' =>
         simp only [weakB, Binding.outer, Binding.U, Binding.ps] at hq
@@ -630,7 +640,7 @@ theorem fresh_weaken (ps : List Name) (Γ : Ctx) : Fresh ps (weaken ps Γ) := by
       | param p =>
         simp only [weakB, Binding.outer, Binding.U, Binding.ps] at hq
         exact (mem_outerOf.mp hq).2 (mem_outerOf.mp hq).1
-    · rw [if_neg hc] at hq
+    · simp only [hc] at hq
       apply hc
       simp only [Bool.and_eq_true, decide_eq_true_eq]
       exact ⟨hy, List.any_eq_true.mpr ⟨q, hq, decide_eq_true hqp⟩⟩
@@ -639,7 +649,7 @@ theorem weakenB_ok {P Φ σ ps y b v} (h : ValOk P Φ (b.sem σ) b.callsOwn v) :
     ValOk P Φ ((weakenB ps y b).sem σ) (weakenB ps y b).callsOwn v := by
   unfold weakenB
   by_cases hc : (decide (y ∉ ps) && b.outer.any fun q => decide (q ∈ ps)) = true
-  · rw [if_pos hc]
+  · simp only [hc, ↓reduceIte]
     cases b with
     | known R U ps' =>
       refine h.mono (fun e _ => Or.inl trivial) ?_
@@ -651,7 +661,7 @@ theorem weakenB_ok {P Φ σ ps y b v} (h : ValOk P Φ (b.sem σ) b.callsOwn v) :
       refine h.mono (fun e _ => Or.inl trivial) ?_
       intro hco
       simp [weakB, Binding.callsOwn] at hco
-  · rw [if_neg hc]
+  · simp only [hc]
     exact h
 
 theorem EnvOk.weaken {P Φ σ ps} : ∀ {ρ seen Γ}, EnvOk P Φ seen Γ ρ σ →
@@ -668,84 +678,47 @@ theorem EnvOk.weaken {P Φ σ ps} : ∀ {ρ seen Γ}, EnvOk P Φ seen Γ ρ σ �
     | cons hv hr => exact EnvOk.cons (weakenB_ok hv) (ih hr)
     | hidden hd hr => exact EnvOk.hidden hd (ih hr)
 
-theorem paramCtx_unann_names : ∀ ps : List Name, (paramCtx (unann ps)).map Prod.fst = ps
+theorem paramCtx_names : ∀ ps : List (Name × Option Ceiling), (paramCtx ps).map Prod.fst = names ps
   | [] => rfl
-  | p :: ps => by
-    show (paramCtx ((p, none) :: unann ps)).map Prod.fst = p :: ps
-    simp only [paramCtx, List.map_cons, paramCtx_unann_names ps]
+  | (p, k) :: ps => by
+    have h := paramCtx_names ps
+    simp only [names] at h ⊢
+    simp only [paramCtx, List.map_cons, h]
 
-/-- The callee's environment does what the arguments' bindings say, with
-every parameter without a ceiling bounded by all the closures they pass. -/
-theorem bindArgs_ok {P Φ Γ ρ σ} (henv : EnvOk P Φ [] Γ ρ σ) :
-    ∀ {ps as ρf}, BindArgs ρ ps as ρf → ∀ {R U B seen}, ArgsOk Γ ps as R U →
-    Effs.Sub (Effs.union R (bigU σ U)) B →
-    EnvOk P Φ seen (paramCtx ps) ρf (fun _ => B) := by
+theorem mem_names_of {p : Name} {k : Option Ceiling} {ps : List (Name × Option Ceiling)}
+    (h : (p, k) ∈ ps) : p ∈ names ps :=
+  List.mem_map.mpr ⟨(p, k), h, rfl⟩
+
+theorem sub_addIf (add : Bool) (A R : Effs) : Effs.Sub R (addIf add A R) := by
+  intro e h
+  cases add with
+  | false => exact h
+  | true => exact Or.inr h
+
+/-- The callee's environment does what the arguments' bindings say: an
+argument to a parameter with a ceiling fits it and takes it on, and each
+parameter without one holds a closure doing at most `σ'' p`, which bounds
+everything the call passes. -/
+theorem bindArgs_ok {P Φ Γ ρ σ σ'' A} (henv : EnvOk P Φ [] Γ ρ σ) :
+    ∀ {ps as ρf}, BindArgs ρ ps as ρf → (∀ p, (p, none) ∈ ps → Effs.Sub A (σ'' p)) →
+    ∀ {add R U seen}, ArgsOk Γ add (ps.map Prod.snd) as R U →
+    Effs.Sub (Effs.union R (bigU σ U)) A →
+    EnvOk P Φ seen (paramCtx ps) ρf σ'' := by
   intro ps as ρf hbind
   induction hbind with
-  | nil => intro _ _ _ _ _ _; exact EnvOk.nil
+  | nil => intro _ _ _ _ _ _ _; exact EnvOk.nil
   | @cons p k a ps as v ρf hl hrest ih =>
-    intro R U B seen ha hB
+    intro hps add R U seen ha hA
+    have hps' : ∀ p', (p', none) ∈ ps → Effs.Sub A (σ'' p') :=
+      fun p' h => hps p' (List.mem_cons_of_mem _ h)
     obtain ⟨b', hb', hv⟩ := henv.find (by simp) hl
+    simp only [List.map_cons] at ha
     cases ha with
     | unannotated hlb ht =>
       rw [hlb] at hb'
       cases hb'
-      refine EnvOk.cons ?_ (ih ht ?_)
-      · refine hv.mono ?_ (fun h => by simp [paramBinding, Binding.callsOwn] at h)
-        intro e he
-        refine Or.inr ⟨p, param_mem_outer p, hB e ?_⟩
-        rcases he with hR | hU
-        · exact Or.inl (Or.inl hR)
-        · exact Or.inr (bigU_append_left σ _ _ e hU)
-      · intro e he
-        apply hB e
-        rcases he with hR | hU
-        · exact Or.inl (Or.inr hR)
-        · exact Or.inr (bigU_append_right σ _ _ e hU)
-    | annotated hlb hU hR ht =>
-      rw [hlb] at hb'
-      cases hb'
-      refine EnvOk.cons ?_ (ih ht hB)
-      -- The value takes on the ceiling, which its effects fit, and it calls
-      -- none of its own arguments, since its binding uses no parameter.
-      have hbR := sem_of_outer_nil (σ := σ) (outer_of_U_nil hU)
-      cases hv with
-      | closure hf ht' henv' hb hown hc =>
-        have hno := hown (callsOwn_of_U_nil hU)
-        refine ValOk.closure hf ht' henv' ?_ (fun _ => hno) ?_
-        · intro e he
-          exact Or.inl (hR e (hbR e (hb e he)))
-        · intro c' hc'
-          rcases List.mem_cons.mp hc' with heq | hin
-          · subst heq
-            refine ⟨hno, ?_⟩
-            intro e he
-            refine hR e (hbR e (hb e ?_))
-            rcases he with h₁ | h₂
-            · exact Or.inl h₁
-            · exact Or.inr (bigU_sub_outerOf hno e h₂)
-          · exact hc c' hin
-
-/-- A closure's own parameters, bound to the closures a call passes, each
-do at most what all of those closures do. -/
-theorem argsAll_bind {P Φ Γ ρ σ σ'' A} (henv : EnvOk P Φ [] Γ ρ σ) :
-    ∀ {qs as ρa}, BindArgs ρ qs as ρa →
-    (∀ p k, (p, k) ∈ qs → k = none ∧ Effs.Sub A (σ'' p)) →
-    ∀ {R U seen}, ArgsAll Γ as R U → Effs.Sub (Effs.union R (bigU σ U)) A →
-    EnvOk P Φ seen (paramCtx qs) ρa σ'' := by
-  intro qs as ρa hbind
-  induction hbind with
-  | nil => intro _ _ _ _ _ _; exact EnvOk.nil
-  | @cons p k a ps as v ρf hl hrest ih =>
-    intro hqs R U seen ha hA
-    obtain ⟨hk, hpA⟩ := hqs p k (by simp)
-    subst hk
-    cases ha with
-    | cons hlb ht =>
-      obtain ⟨b', hb', hv⟩ := henv.find (by simp) hl
-      rw [hlb] at hb'
-      cases hb'
-      refine EnvOk.cons ?_ (ih (fun p' k' h => hqs p' k' (List.mem_cons_of_mem _ h)) ht ?_)
+      have hpA := hps p (by simp)
+      refine EnvOk.cons ?_ (ih hps' ht ?_)
       · refine hv.mono ?_ (fun h => by simp [paramBinding, Binding.callsOwn] at h)
         intro e he
         refine Or.inr ⟨p, param_mem_outer p, hpA e (hA e ?_)⟩
@@ -757,6 +730,35 @@ theorem argsAll_bind {P Φ Γ ρ σ σ'' A} (henv : EnvOk P Φ [] Γ ρ σ) :
         rcases he with hR | hU
         · exact Or.inl (Or.inr hR)
         · exact Or.inr (bigU_append_right σ _ _ e hU)
+    | annotated hlb hU hR ht =>
+      rw [hlb] at hb'
+      cases hb'
+      refine EnvOk.cons ?_ (ih hps' ht ?_)
+      · -- The value takes on the ceiling, which its effects fit, and it
+        -- calls none of its own arguments, since its binding uses no
+        -- parameter.
+        have hbR := sem_of_outer_nil (σ := σ) (outer_of_U_nil hU)
+        cases hv with
+        | closure hf ht' henv' hb hown hc =>
+          have hno := hown (callsOwn_of_U_nil hU)
+          refine ValOk.closure hf ht' henv' ?_ (fun _ => hno) ?_
+          · intro e he
+            exact Or.inl (hR e (hbR e (hb e he)))
+          · intro c' hc'
+            rcases List.mem_cons.mp hc' with heq | hin
+            · subst heq
+              refine ⟨hno, ?_⟩
+              intro e he
+              refine hR e (hbR e (hb e ?_))
+              rcases he with h₁ | h₂
+              · exact Or.inl h₁
+              · exact Or.inr (bigU_sub_outerOf hno e h₂)
+            · exact hc c' hin
+      · intro e he
+        apply hA e
+        rcases he with h₁ | h₂
+        · exact Or.inl (sub_addIf _ _ _ e h₁)
+        · exact Or.inr h₂
 
 /-! ## Soundness -/
 
@@ -842,7 +844,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
     cases ht with
     | letClosure hb hfit hr =>
       refine ih hr (EnvOk.cons ?_ (henv.mono_seen (by simp))) ev hev
-      refine ValOk.closure (fresh_weaken ps Γ) hb henv.weaken (Effs.Sub.refl _) (fun h => callsOwn_false h) ?_
+      refine ValOk.closure (fresh_weaken (names ps) Γ) hb henv.weaken (Effs.Sub.refl _) (fun h => callsOwn_false h) ?_
       intro c hc
       obtain ⟨hU, hR⟩ := hfit c (mem_toList hc)
       exact ⟨fun q hq => (by rw [hU] at hq; cases hq), fits_sem hU hR⟩
@@ -859,7 +861,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
     cases ht with
     | letOpaque hb hfit hr =>
       refine ih hr (EnvOk.cons ?_ (henv.mono_seen (by simp))) ev hev
-      refine ValOk.closure (fresh_weaken ps Γ) hb henv.weaken ?_ ?_ ?_
+      refine ValOk.closure (fresh_weaken (names ps) Γ) hb henv.weaken ?_ ?_ ?_
       · intro e he
         cases k with
         | none => exact Or.inl trivial
@@ -882,38 +884,37 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
       · intro c hc
         obtain ⟨hU, hR⟩ := hfit c (mem_toList hc)
         exact ⟨fun q hq => (by rw [hU] at hq; cases hq), fits_sem hU hR⟩
-  | @callClosure ρ cs x args ps body ρ' ks ρa t b hl hbind _ ih =>
+  | @callClosure ρ cs x args pks ps body ρ' ks ρa t b hl hpks hbind _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
-    | @callClosure _ _ _ bx Ra Ua hlb hargs =>
+    | @callClosure _ _ _ _ bx Ra Ua hlb hargs =>
+      subst hpks
       obtain ⟨b', hb', hv⟩ := henv.find (by simp) hl
       rw [hlb] at hb'
       cases hb'
       cases hv with
       | @closure _ _ Γc σc _ _ _ _ Rb Ub hfresh htb henvc hbound hown hceil =>
         -- The closure's own parameters hold the arguments; everything it
-        -- captured keeps its meaning, since its parameters are named apart.
+        -- captured keeps its meaning, since what it can see by name runs
+        -- no parameter its own hide.
         obtain ⟨σ'', hin, hout⟩ : ∃ σ'' : Name → Effs,
-            (∀ q, q ∈ ps → σ'' q = Effs.union Ra (bigU σ Ua)) ∧ (∀ q, q ∉ ps → σ'' q = σc q) :=
-          ⟨fun q => if q ∈ ps then Effs.union Ra (bigU σ Ua) else σc q,
+            (∀ q, q ∈ names ps → σ'' q = Effs.union Ra (bigU σ Ua)) ∧
+            (∀ q, q ∉ names ps → σ'' q = σc q) :=
+          ⟨fun q => if q ∈ names ps then Effs.union Ra (bigU σ Ua) else σc q,
             fun q h => by simp [h], fun q h => by simp [h]⟩
-        have henva : EnvOk P Φ [] (paramCtx (unann ps)) ρa σ'' := by
-          refine argsAll_bind henv hbind ?_ hargs (Effs.Sub.refl _)
-          intro p k hpk
-          simp only [unann, List.mem_map] at hpk
-          obtain ⟨q, hq, hqe⟩ := hpk
-          cases hqe
-          refine ⟨rfl, ?_⟩
-          rw [hin _ hq]
+        have henva : EnvOk P Φ [] (paramCtx ps) ρa σ'' := by
+          refine bindArgs_ok henv hbind ?_ hargs (Effs.Sub.refl _)
+          intro p hp
+          rw [hin p (mem_names_of hp)]
           exact Effs.Sub.refl _
-        have henvc' : EnvOk P Φ ps.reverse Γc ρ' σ'' :=
+        have henvc' : EnvOk P Φ (names ps).reverse Γc ρ' σ'' :=
           (henvc.mono_seen (by simp)).congr
             (fun y b' hyb hy q hq => hout q (hfresh y b' hyb (by simpa using hy) q hq))
-        have henvc'' : EnvOk P Φ (((paramCtx (unann ps)).map Prod.fst).reverse ++ []) Γc ρ' σ'' := by
-          rw [paramCtx_unann_names, List.append_nil]
+        have henvc'' : EnvOk P Φ (((paramCtx ps).map Prod.fst).reverse ++ []) Γc ρ' σ'' := by
+          rw [paramCtx_names, List.append_nil]
           exact henvc'
         obtain ⟨he, hc⟩ := ih htb (EnvOk.append henva henvc'') ev hev
-        have lift : ∀ e, Effs.union Rb (bigU σc (outerOf Ub ps)) e →
+        have lift : ∀ e, Effs.union Rb (bigU σc (outerOf Ub (names ps))) e →
             Effs.union (Effs.union bx.R (argEffs bx Ra)) (bigU σ (bx.outer ++ argUses bx Ua)) e := by
           intro e h'
           rcases hbound e h' with hR | hU
@@ -922,7 +923,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
         refine ⟨?_, ?_⟩
         · rcases he with hR | ⟨q, hq, hqe⟩
           · exact lift _ (Or.inl hR)
-          · by_cases hqp : q ∈ ps
+          · by_cases hqp : q ∈ names ps
             · -- A use of its own parameter: the callee may call its
               -- arguments, so the call counts them.
               cases hm : bx.mayCallArgs with
@@ -956,11 +957,12 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
   | @callFun ρ cs f args d ρf t b hf hbind _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
-    | callFun hf' hargs =>
+    | @callFun _ _ _ _ Ra _ hf' hargs =>
       rw [hf] at hf'
       cases hf'
       obtain ⟨Rb, Ub, htb, hsig⟩ := hP f d hf
-      have henvf := bindArgs_ok (seen := []) henv hbind hargs (Effs.Sub.refl _)
+      have henvf := bindArgs_ok (seen := []) (σ'' := fun _ => Effs.union Ra (bigU σ U)) henv hbind
+        (fun _ _ => Effs.Sub.refl _) hargs (Effs.Sub.refl _)
       obtain ⟨he, hc⟩ := ih htb henvf ev hev
       refine ⟨?_, hc⟩
       rcases he with hR | hU
@@ -1005,7 +1007,7 @@ inductive Confirmed : Stmt → Prop
   | letAlias {x y rest} : Confirmed rest → Confirmed (.letAlias x y rest)
   | letOpaque {x k ps body rest} : Confirmed body → Confirmed rest →
       Confirmed (.letOpaque x k ps body rest)
-  | callClosure {x args} : Confirmed (.callClosure x args)
+  | callClosure {x args pks} : Confirmed (.callClosure x args pks)
   | callFun {f args} : Confirmed (.callFun f args)
   | loop {body} : Confirmed body → Confirmed (.loop body)
   | stop : Confirmed .stop
@@ -1120,7 +1122,7 @@ theorem eval_confirmed {P} (hP : ProgramConfirmed P) :
     cases hc with
     | letOpaque hb hr =>
       exact ih hr (EnvConfirmed.cons (ValConfirmed.closure hb henv) henv) ev hev
-  | callClosure hl hbind _ ih =>
+  | callClosure hl _ hbind _ ih =>
     intro _ henv ev hev
     have hv := henv.find hl
     cases hv with
@@ -1137,75 +1139,80 @@ theorem program_confirmed {P s t b} (hP : ProgramConfirmed P) (h : Eval P [] [] 
 
 /-! ## Value shapes
 
-In the core every value is a closure, and its shape is how many closures it
-takes. A program whose calls pass every closure the number of arguments it
-takes, built only from names in scope, never reaches a call it cannot make:
-the fourth promise, for the core. -/
+In this part of the core every value is a closure, and its shape is its
+type: the ceilings of the closures it takes. A program whose calls pass
+every closure what it takes, built only from names in scope, never reaches
+a call it cannot make: the fourth promise, for closures. -/
 
-/-- How many closures each callable name takes. -/
-abbrev Shapes := List (Name × Nat)
+/-- The type of each callable name: the ceilings of the closures it takes. -/
+abbrev Shapes := List (Name × List (Option Ceiling))
 
-/-- A function's parameters with the number of closures each one's closure
-takes, zero where the declaration does not say. -/
-def paramShapes : List (Name × Option Ceiling) → List Nat → Shapes
+/-- A function's parameters with their closures' types, taking nothing
+where the declaration does not say. -/
+def paramShapes : List (Name × Option Ceiling) → List (List (Option Ceiling)) → Shapes
   | [], _ => []
-  | (p, _) :: ps, [] => (p, 0) :: paramShapes ps []
-  | (p, _) :: ps, n :: ns => (p, n) :: paramShapes ps ns
+  | (p, _) :: ps, [] => (p, []) :: paramShapes ps []
+  | (p, _) :: ps, t :: ts => (p, t) :: paramShapes ps ts
 
 /-- What a call must pass each parameter. -/
-def wantOf (ps : List (Name × Option Ceiling)) (ns : List Nat) : List Nat :=
-  (paramShapes ps ns).map Prod.snd
+def wantOf (ps : List (Name × Option Ceiling)) (ts : List (List (Option Ceiling))) :
+    List (List (Option Ceiling)) :=
+  (paramShapes ps ts).map Prod.snd
 
-/-- The closures a call passes have the shapes its callee wants. -/
-inductive ArgsShaped (Δ : Shapes) : List Nat → List Name → Prop
+/-- The closures a call passes have the types its callee wants. -/
+inductive ArgsShaped (Δ : Shapes) : List (List (Option Ceiling)) → List Name → Prop
   | nil : ArgsShaped Δ [] []
-  | cons {n ns a as} : lookup Δ a = some n → ArgsShaped Δ ns as → ArgsShaped Δ (n :: ns) (a :: as)
+  | cons {t ts a as} : lookup Δ a = some t → ArgsShaped Δ ts as → ArgsShaped Δ (t :: ts) (a :: as)
 
 /-- `Shaped P Δ s`: every call in `s` passes its callee the closures it
-takes. A closure's own parameters take none. -/
+takes, and names the callee's parameter ceilings as its type does. A
+closure's own parameters take no closures. -/
 inductive Shaped (P : Program) : Shapes → Stmt → Prop
   | op {Δ o} : Shaped P Δ (.op o)
   | stop {Δ} : Shaped P Δ .stop
   | seq {Δ s₁ s₂} : Shaped P Δ s₁ → Shaped P Δ s₂ → Shaped P Δ (.seq s₁ s₂)
   | choice {Δ s₁ s₂} : Shaped P Δ s₁ → Shaped P Δ s₂ → Shaped P Δ (.choice s₁ s₂)
   | loop {Δ s} : Shaped P Δ s → Shaped P Δ (.loop s)
-  | letClosure {Δ x k ps body rest} : Shaped P (paramShapes (unann ps) [] ++ Δ) body →
-      Shaped P ((x, ps.length) :: Δ) rest → Shaped P Δ (.letClosure x k ps body rest)
-  | letOpaque {Δ x k ps body rest} : Shaped P (paramShapes (unann ps) [] ++ Δ) body →
-      Shaped P ((x, ps.length) :: Δ) rest → Shaped P Δ (.letOpaque x k ps body rest)
-  | letAlias {Δ x y rest n} : lookup Δ y = some n → Shaped P ((x, n) :: Δ) rest →
+  | letClosure {Δ x k ps body rest} : Shaped P (paramShapes ps [] ++ Δ) body →
+      Shaped P ((x, ps.map Prod.snd) :: Δ) rest → Shaped P Δ (.letClosure x k ps body rest)
+  | letOpaque {Δ x k ps body rest} : Shaped P (paramShapes ps [] ++ Δ) body →
+      Shaped P ((x, ps.map Prod.snd) :: Δ) rest → Shaped P Δ (.letOpaque x k ps body rest)
+  | letAlias {Δ x y rest t} : lookup Δ y = some t → Shaped P ((x, t) :: Δ) rest →
       Shaped P Δ (.letAlias x y rest)
-  | callClosure {Δ x args} : lookup Δ x = some args.length →
-      ArgsShaped Δ (List.replicate args.length 0) args → Shaped P Δ (.callClosure x args)
-  | callFun {Δ f args d} : P f = some d → ArgsShaped Δ (wantOf d.params d.arities) args →
+  | callClosure {Δ x args pks} : lookup Δ x = some pks → args.length = pks.length →
+      ArgsShaped Δ (List.replicate args.length []) args → Shaped P Δ (.callClosure x args pks)
+  | callFun {Δ f args d} : P f = some d → ArgsShaped Δ (wantOf d.params d.ptypes) args →
       Shaped P Δ (.callFun f args)
 
-/-- Every function's body is shaped, with its parameters' shapes. -/
+/-- Every function's body is shaped, with its parameters' types. -/
 def ShapeOk (P : Program) : Prop :=
-  ∀ f d, P f = some d → Shaped P (paramShapes d.params d.arities) d.body
+  ∀ f d, P f = some d → Shaped P (paramShapes d.params d.ptypes) d.body
 
 mutual
-/-- A closure value takes `n` closures, and its body is shaped in the
-environment it captured. -/
-inductive ValShaped (P : Program) : Nat → Val → Prop
+/-- A closure value has the type of its parameters' ceilings, and its body
+is shaped in the environment it captured. -/
+inductive ValShaped (P : Program) : List (Option Ceiling) → Val → Prop
   | closure {Δ ps body env ks} : EnvShaped P Δ env →
-      Shaped P (paramShapes (unann ps) [] ++ Δ) body → ValShaped P ps.length (.closure ps body env ks)
+      Shaped P (paramShapes ps [] ++ Δ) body → ValShaped P (ps.map Prod.snd) (.closure ps body env ks)
 
-/-- Each name's value has the shape the context says. -/
+/-- Each name's value has the type the context says. -/
 inductive EnvShaped (P : Program) : Shapes → Env → Prop
   | nil : EnvShaped P [] []
-  | cons {x n v Δ ρ} : ValShaped P n v → EnvShaped P Δ ρ → EnvShaped P ((x, n) :: Δ) ((x, v) :: ρ)
+  | cons {x t v Δ ρ} : ValShaped P t v → EnvShaped P Δ ρ → EnvShaped P ((x, t) :: Δ) ((x, v) :: ρ)
 end
 
 /-- A run reaches a call it cannot make: a name with no value, a closure
-or function given the wrong number of arguments, or an unknown function. -/
+given a different number of arguments or ceilings than it has, a function
+given the wrong number of arguments, or an unknown function. -/
 inductive Stuck (P : Program) : Env → Stmt → Prop
-  | callUnbound {ρ x args} : lookup ρ x = none → Stuck P ρ (.callClosure x args)
-  | callArity {ρ x args ps body ρ' ks} : lookup ρ x = some (.closure ps body ρ' ks) →
-      args.length ≠ ps.length → Stuck P ρ (.callClosure x args)
-  | callArgUnbound {ρ x args a} : a ∈ args → lookup ρ a = none → Stuck P ρ (.callClosure x args)
-  | callBody {ρ x args ps body ρ' ks ρa} : lookup ρ x = some (.closure ps body ρ' ks) →
-      BindArgs ρ (unann ps) args ρa → Stuck P (ρa ++ ρ') body → Stuck P ρ (.callClosure x args)
+  | callUnbound {ρ x args pks} : lookup ρ x = none → Stuck P ρ (.callClosure x args pks)
+  | callType {ρ x args pks ps body ρ' ks} : lookup ρ x = some (.closure ps body ρ' ks) →
+      (ps.map Prod.snd ≠ pks ∨ args.length ≠ ps.length) → Stuck P ρ (.callClosure x args pks)
+  | callArgUnbound {ρ x args pks a} : a ∈ args → lookup ρ a = none →
+      Stuck P ρ (.callClosure x args pks)
+  | callBody {ρ x args pks ps body ρ' ks ρa} : lookup ρ x = some (.closure ps body ρ' ks) →
+      ps.map Prod.snd = pks → BindArgs ρ ps args ρa → Stuck P (ρa ++ ρ') body →
+      Stuck P ρ (.callClosure x args pks)
   | funUnknown {ρ f args} : P f = none → Stuck P ρ (.callFun f args)
   | funArity {ρ f args d} : P f = some d → args.length ≠ d.params.length → Stuck P ρ (.callFun f args)
   | funArgUnbound {ρ f args a} : a ∈ args → lookup ρ a = none → Stuck P ρ (.callFun f args)
@@ -1226,26 +1233,26 @@ inductive Stuck (P : Program) : Env → Stmt → Prop
   | loopAgain {ρ cs body t} : Eval P ρ cs body t false → Stuck P ρ (.loop body) →
       Stuck P ρ (.loop body)
 
-theorem EnvShaped.find {P x} : ∀ {Δ ρ}, EnvShaped P Δ ρ → ∀ {n}, lookup Δ x = some n →
-    ∃ v, lookup ρ x = some v ∧ ValShaped P n v := by
+theorem EnvShaped.find {P x} : ∀ {Δ ρ}, EnvShaped P Δ ρ → ∀ {t}, lookup Δ x = some t →
+    ∃ v, lookup ρ x = some v ∧ ValShaped P t v := by
   intro Δ ρ h
   induction ρ generalizing Δ with
   | nil =>
     cases h
-    intro n hn
-    simp [lookup] at hn
+    intro t ht
+    simp [lookup] at ht
   | cons yv ρ ih =>
     obtain ⟨y, v⟩ := yv
     cases h with
     | @cons _ m _ Δ' _ hv hr =>
-      intro n hn
+      intro t ht
       by_cases hyx : y = x
       · subst hyx
-        simp [lookup] at hn
-        subst hn
+        simp [lookup] at ht
+        subst ht
         exact ⟨v, by simp [lookup], hv⟩
-      · simp [lookup, hyx] at hn
-        obtain ⟨w, hw, hws⟩ := ih hr hn
+      · simp [lookup, hyx] at ht
+        obtain ⟨w, hw, hws⟩ := ih hr ht
         exact ⟨w, by simp [lookup, hyx, hw], hws⟩
 
 theorem EnvShaped.append {P Δ₂ ρ₂} (h₂ : EnvShaped P Δ₂ ρ₂) :
@@ -1261,63 +1268,65 @@ theorem EnvShaped.append {P Δ₂ ρ₂} (h₂ : EnvShaped P Δ₂ ρ₂) :
     cases h₁ with
     | cons hv hr => exact EnvShaped.cons hv (ih hr)
 
-theorem ArgsShaped.length {Δ} : ∀ {ns as}, ArgsShaped Δ ns as → as.length = ns.length
+theorem ArgsShaped.length {Δ} : ∀ {ts as}, ArgsShaped Δ ts as → as.length = ts.length
   | _, _, .nil => rfl
   | _, _, .cons _ h => by simp [ArgsShaped.length h]
 
-theorem ArgsShaped.mem {Δ a} : ∀ {ns as}, ArgsShaped Δ ns as → a ∈ as → ∃ n, lookup Δ a = some n
+theorem ArgsShaped.mem {Δ a} : ∀ {ts as}, ArgsShaped Δ ts as → a ∈ as → ∃ t, lookup Δ a = some t
   | _, _, .nil, h => by cases h
   | _, _, .cons hl hr, h => by
     rcases List.mem_cons.mp h with rfl | h
     · exact ⟨_, hl⟩
     · exact ArgsShaped.mem hr h
 
-theorem paramShapes_length : ∀ (ps : List (Name × Option Ceiling)) (ns : List Nat),
-    (paramShapes ps ns).length = ps.length
+theorem paramShapes_length : ∀ (ps : List (Name × Option Ceiling)) (ts : List (List (Option Ceiling))),
+    (paramShapes ps ts).length = ps.length
   | [], _ => rfl
   | (_, _) :: ps, [] => by simp [paramShapes, paramShapes_length ps []]
-  | (_, _) :: ps, _ :: ns => by simp [paramShapes, paramShapes_length ps ns]
+  | (_, _) :: ps, _ :: ts => by simp [paramShapes, paramShapes_length ps ts]
 
-theorem wantOf_length (ps : List (Name × Option Ceiling)) (ns : List Nat) :
-    (wantOf ps ns).length = ps.length := by
+theorem wantOf_length (ps : List (Name × Option Ceiling)) (ts : List (List (Option Ceiling))) :
+    (wantOf ps ts).length = ps.length := by
   simp [wantOf, paramShapes_length]
 
-theorem wantOf_unann : ∀ (ps : List Name), wantOf (unann ps) [] = List.replicate ps.length 0
+/-- A closure's own parameters each want a closure that takes nothing. -/
+theorem wantOf_closure : ∀ (ps : List (Name × Option Ceiling)),
+    wantOf ps [] = List.replicate ps.length []
   | [] => rfl
-  | p :: ps => by
-    have h := wantOf_unann ps
-    unfold wantOf unann at h ⊢
+  | (p, k) :: ps => by
+    have h := wantOf_closure ps
+    unfold wantOf at h ⊢
     simp only [List.map_cons, paramShapes, List.length_cons, List.replicate_succ]
     rw [h]
 
-theorem ValShaped.arity {P n ps body env ks} (h : ValShaped P n (.closure ps body env ks)) :
-    ps.length = n := by
+theorem ValShaped.type {P t ps body env ks} (h : ValShaped P t (.closure ps body env ks)) :
+    ps.map Prod.snd = t := by
   cases h
   rfl
 
-theorem ValShaped.body {P n ps body env ks} (h : ValShaped P n (.closure ps body env ks)) :
-    ∃ Δ', EnvShaped P Δ' env ∧ Shaped P (paramShapes (unann ps) [] ++ Δ') body := by
+theorem ValShaped.body {P t ps body env ks} (h : ValShaped P t (.closure ps body env ks)) :
+    ∃ Δ', EnvShaped P Δ' env ∧ Shaped P (paramShapes ps [] ++ Δ') body := by
   cases h with
   | closure he hb => exact ⟨_, he, hb⟩
 
-theorem ValShaped.underCeiling {P n v} (h : ValShaped P n v) (k : Option Ceiling) :
-    ValShaped P n (v.underCeiling k) := by
+theorem ValShaped.underCeiling {P t v} (h : ValShaped P t v) (k : Option Ceiling) :
+    ValShaped P t (v.underCeiling k) := by
   cases h with
   | closure he hb =>
     cases k with
     | none => exact ValShaped.closure he hb
     | some c => exact ValShaped.closure he hb
 
-/-- The callee's parameters hold closures of the shapes they want. -/
+/-- The callee's parameters hold closures of the types they want. -/
 theorem bindArgs_shaped {P Δ ρ} (h : EnvShaped P Δ ρ) :
-    ∀ {ps as ρf}, BindArgs ρ ps as ρf → ∀ {ns}, ArgsShaped Δ (wantOf ps ns) as →
-    EnvShaped P (paramShapes ps ns) ρf := by
+    ∀ {ps as ρf}, BindArgs ρ ps as ρf → ∀ {ts}, ArgsShaped Δ (wantOf ps ts) as →
+    EnvShaped P (paramShapes ps ts) ρf := by
   intro ps as ρf hbind
   induction hbind with
   | nil => intro _ _; exact EnvShaped.nil
   | @cons p k a ps as v ρf hl _ ih =>
-    intro ns ha
-    cases ns with
+    intro ts ha
+    cases ts with
     | nil =>
       simp only [wantOf, paramShapes, List.map_cons] at ha
       cases ha with
@@ -1325,17 +1334,17 @@ theorem bindArgs_shaped {P Δ ρ} (h : EnvShaped P Δ ρ) :
         obtain ⟨w, hw, hws⟩ := h.find hla
         rw [hl] at hw
         cases hw
-        exact EnvShaped.cons (hws.underCeiling k) (ih (ns := []) hr)
-    | cons n ns =>
+        exact EnvShaped.cons (hws.underCeiling k) (ih (ts := []) hr)
+    | cons t ts =>
       simp only [wantOf, paramShapes, List.map_cons] at ha
       cases ha with
       | cons hla hr =>
         obtain ⟨w, hw, hws⟩ := h.find hla
         rw [hl] at hw
         cases hw
-        exact EnvShaped.cons (hws.underCeiling k) (ih (ns := ns) hr)
+        exact EnvShaped.cons (hws.underCeiling k) (ih (ts := ts) hr)
 
-/-- A shaped statement, run where every name has the shape the context
+/-- A shaped statement, run where every name has the type the context
 says, never reaches a call it cannot make. -/
 theorem shaped_not_stuck {P} (hP : ShapeOk P) :
     ∀ {ρ s}, Stuck P ρ s → ∀ {Δ}, Shaped P Δ s → EnvShaped P Δ ρ → False := by
@@ -1344,37 +1353,42 @@ theorem shaped_not_stuck {P} (hP : ShapeOk P) :
   | callUnbound hl =>
     intro Δ hs he
     cases hs with
-    | callClosure hx _ =>
+    | callClosure hx _ _ =>
       obtain ⟨v, hv, _⟩ := he.find hx
       rw [hl] at hv
       cases hv
-  | callArity hl hne =>
+  | callType hl hne =>
     intro Δ hs he
     cases hs with
-    | callClosure hx _ =>
+    | callClosure hx hlen _ =>
       obtain ⟨v, hv, hvs⟩ := he.find hx
       rw [hl] at hv
       cases hv
-      exact hne hvs.arity.symm
+      have ht := hvs.type
+      rcases hne with h₁ | h₂
+      · exact h₁ ht
+      · apply h₂
+        rw [hlen, ← ht, List.length_map]
   | callArgUnbound ha hl =>
     intro Δ hs he
     cases hs with
-    | callClosure _ hargs =>
-      obtain ⟨n, hn⟩ := hargs.mem ha
-      obtain ⟨v, hv, _⟩ := he.find hn
+    | callClosure _ _ hargs =>
+      obtain ⟨t, ht⟩ := hargs.mem ha
+      obtain ⟨v, hv, _⟩ := he.find ht
       rw [hl] at hv
       cases hv
-  | @callBody ρ x args ps body ρ' ks ρa hl hbind _ ih =>
+  | @callBody ρ x args pks ps body ρ' ks ρa hl hpks hbind _ ih =>
     intro Δ hs he
     cases hs with
-    | callClosure hx hargs =>
+    | callClosure hx hlen hargs =>
       obtain ⟨v, hv, hvs⟩ := he.find hx
       rw [hl] at hv
       cases hv
       obtain ⟨Δ', hec, hbody⟩ := hvs.body
-      have hlen : args.length = ps.length := hvs.arity.symm
-      have hwant : ArgsShaped Δ (wantOf (unann ps) []) args := by
-        rw [wantOf_unann, ← hlen]
+      have hlen' : args.length = ps.length := by
+        rw [hlen, ← hpks, List.length_map]
+      have hwant : ArgsShaped Δ (wantOf ps []) args := by
+        rw [wantOf_closure, ← hlen']
         exact hargs
       exact ih hbody (EnvShaped.append hec (bindArgs_shaped he hbind hwant))
   | funUnknown hf =>
@@ -1394,8 +1408,8 @@ theorem shaped_not_stuck {P} (hP : ShapeOk P) :
     intro Δ hs he
     cases hs with
     | callFun _ hargs =>
-      obtain ⟨n, hn⟩ := hargs.mem ha
-      obtain ⟨v, hv, _⟩ := he.find hn
+      obtain ⟨t, ht⟩ := hargs.mem ha
+      obtain ⟨v, hv, _⟩ := he.find ht
       rw [hl] at hv
       cases hv
   | @funBody ρ f args d ρf hf hbind _ ih =>
@@ -1456,6 +1470,5 @@ theorem shaped_not_stuck {P} (hP : ShapeOk P) :
 cannot make. -/
 theorem program_shapes_sound {P s} (hP : ShapeOk P) (hs : Shaped P [] s) : ¬ Stuck P [] s :=
   fun h => shaped_not_stuck hP h hs EnvShaped.nil
-
 
 end NucleScript

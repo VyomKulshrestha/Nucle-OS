@@ -127,6 +127,10 @@ def CBinding.mayCallArgs : CBinding → Bool
   | .known _ _ ps => !ps.isEmpty
   | .param _ => true
 
+def CBinding.addsAll : CBinding → Bool
+  | .known _ _ _ => false
+  | .param _ => true
+
 def CBinding.toBinding : CBinding → Binding
   | .known R U ps => .known R.toEffs U ps
   | .param p => .param p
@@ -143,6 +147,9 @@ theorem CBinding.toBinding_outer (b : CBinding) : b.toBinding.outer = b.outer :=
   cases b <;> rfl
 
 theorem CBinding.toBinding_mayCallArgs (b : CBinding) : b.toBinding.mayCallArgs = b.mayCallArgs := by
+  cases b <;> rfl
+
+theorem CBinding.toBinding_addsAll (b : CBinding) : b.toBinding.addsAll = b.addsAll := by
   cases b <;> rfl
 
 abbrev CCtx := List (Name × CBinding)
@@ -230,33 +237,28 @@ theorem toBinding_cweakenB (ps : List Name) (y : Name) (b : CBinding) :
   unfold cweakenB weakenB
   rw [CBinding.toBinding_outer]
   by_cases hc : (decide (y ∉ ps) && b.outer.any fun q => decide (q ∈ ps)) = true
-  · rw [if_pos hc, if_pos hc]
+  · simp only [hc, ↓reduceIte]
     cases b <;> simp [CBinding.weak, weakB, CBinding.toBinding, BEffs.toEffs_all]
-  · rw [if_neg hc, if_neg hc]
+  · simp only [hc, Bool.false_eq_true, ↓reduceIte]
 
 theorem toCtx_cweaken (ps : List Name) : ∀ Γ : CCtx, CCtx.toCtx (cweaken ps Γ) = weaken ps (CCtx.toCtx Γ)
   | [] => rfl
   | (y, b) :: Γ => by
     simp only [cweaken, weaken, CCtx.toCtx, toBinding_cweakenB, toCtx_cweaken ps Γ]
 
-/-- The closures passed to a closure call. -/
-def argsAllCheck (Γ : CCtx) : List Name → Option (BEffs × List Name)
-  | [] => some (BEffs.none, [])
-  | a :: as =>
-    match lookup Γ a, argsAllCheck Γ as with
-    | some b, some (R, U) => some (b.R.union R, b.outer ++ U)
-    | _, _ => none
-
-def argsCheck (Γ : CCtx) : List (Name × Option Ceiling) → List Name → Option (BEffs × List Name)
+/-- `ArgsOk`, computed: the arguments of a call against the ceilings of
+the parameters they fill. -/
+def argsCheck (Γ : CCtx) (add : Bool) : List (Option Ceiling) → List Name → Option (BEffs × List Name)
   | [], [] => some (BEffs.none, [])
-  | (_, none) :: ps, a :: as =>
-    match lookup Γ a, argsCheck Γ ps as with
+  | none :: ks, a :: as =>
+    match lookup Γ a, argsCheck Γ add ks as with
     | some b, some (R, U) => some (b.R.union R, b.outer ++ U)
     | _, _ => none
-  | (_, some c) :: ps, a :: as =>
-    match lookup Γ a with
-    | some b => if b.U.isEmpty && b.R.sub c.ballows then argsCheck Γ ps as else none
-    | none => none
+  | some c :: ks, a :: as =>
+    match lookup Γ a, argsCheck Γ add ks as with
+    | some b, some (R, U) =>
+      if b.U.isEmpty && b.R.sub c.ballows then some (if add then b.R.union R else R, U) else none
+    | _, _ => none
   | _, _ => none
 
 def check (P : Program) (Φ : Name → BEffs) : CCtx → Stmt → Option (BEffs × List Name)
@@ -272,41 +274,50 @@ def check (P : Program) (Φ : Name → BEffs) : CCtx → Stmt → Option (BEffs 
     | some (R₁, U₁), some (R₂, U₂) => some (R₁.union R₂, U₁ ++ U₂)
     | _, _ => none
   | Γ, .letClosure x k ps body rest =>
-    match check P Φ (cparamCtx (unann ps) ++ cweaken ps Γ) body with
-    | some (Rb, Ub) => if fitsB k Rb Ub then check P Φ ((x, .known Rb Ub ps) :: Γ) rest else none
+    match check P Φ (cparamCtx ps ++ cweaken (names ps) Γ) body with
+    | some (Rb, Ub) => if fitsB k Rb Ub then check P Φ ((x, .known Rb Ub (names ps)) :: Γ) rest else none
     | none => none
   | Γ, .letAlias x y rest =>
     match lookup Γ y with
     | some b => check P Φ ((x, b) :: Γ) rest
     | none => none
   | Γ, .letOpaque x k ps body rest =>
-    match check P Φ (cparamCtx (unann ps) ++ cweaken ps Γ) body with
+    match check P Φ (cparamCtx ps ++ cweaken (names ps) Γ) body with
     | some (Rb, Ub) =>
-      if fitsB k Rb Ub then check P Φ ((x, .known (opaqueB k) (opaqueU k ps) (opaquePs k ps)) :: Γ) rest else none
+      if fitsB k Rb Ub then
+        check P Φ ((x, .known (opaqueB k) (opaqueU k (names ps)) (opaquePs k (names ps))) :: Γ) rest
+      else none
     | none => none
-  | Γ, .callClosure x args =>
-    match lookup Γ x, argsAllCheck Γ args with
-    | some b, some (R, U) =>
-      if b.mayCallArgs then some (b.R.union R, b.outer ++ U) else some (b.R.union BEffs.none, b.outer ++ [])
-    | _, _ => none
+  | Γ, .callClosure x args pks =>
+    match lookup Γ x with
+    | some b =>
+      match argsCheck Γ b.addsAll pks args with
+      | some (R, U) =>
+        if b.mayCallArgs then some (b.R.union R, b.outer ++ U) else some (b.R.union BEffs.none, b.outer ++ [])
+      | none => none
+    | none => none
   | Γ, .callFun f args =>
     match P f with
     | some d =>
-      match argsCheck Γ d.params args with
+      match argsCheck Γ false (d.params.map Prod.snd) args with
       | some (R, U) => some ((Φ f).union R, U)
       | none => none
     | none => none
 
 /-! ## The checker agrees with the rules -/
 
-theorem argsCheck_sound {Γ : CCtx} :
-    ∀ {ps as R U}, argsCheck Γ ps as = some (R, U) → ArgsOk (CCtx.toCtx Γ) ps as R.toEffs U
+theorem toEffs_addIf (add : Bool) (A R : BEffs) :
+    (if add then A.union R else R).toEffs = addIf add A.toEffs R.toEffs := by
+  cases add <;> simp [addIf, BEffs.toEffs_union]
+
+theorem argsCheck_sound {Γ : CCtx} {add : Bool} :
+    ∀ {ks as R U}, argsCheck Γ add ks as = some (R, U) → ArgsOk (CCtx.toCtx Γ) add ks as R.toEffs U
   | [], [], R, U, h => by
     simp [argsCheck] at h
     obtain ⟨rfl, rfl⟩ := h
     rw [BEffs.toEffs_none]
     exact ArgsOk.nil
-  | (_, none) :: ps, a :: as, R, U, h => by
+  | none :: ks, a :: as, R, U, h => by
     simp only [argsCheck] at h
     split at h
     · rename_i b R' U' hb hrest
@@ -317,39 +328,25 @@ theorem argsCheck_sound {Γ : CCtx} :
       rw [BEffs.toEffs_union, ← CBinding.toBinding_R, ← CBinding.toBinding_outer]
       exact ArgsOk.unannotated hl hrec
     · cases h
-  | (_, some c) :: ps, a :: as, R, U, h => by
+  | some c :: ks, a :: as, R, U, h => by
     simp only [argsCheck] at h
     split at h
-    · rename_i b hb
+    · rename_i b R' U' hb hrest
       split at h
       · rename_i hfit
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
         simp only [Bool.and_eq_true, List.isEmpty_iff] at hfit
         obtain ⟨hU, hR⟩ := hfit
         have hsub := BEffs.sub_sound hR
         rw [Ceiling.ballows_toEffs, ← CBinding.toBinding_R] at hsub
-        exact ArgsOk.annotated (CCtx.lookup_toCtx hb) (by rw [CBinding.toBinding_U]; exact hU) hsub
-          (argsCheck_sound h)
+        rw [toEffs_addIf, ← CBinding.toBinding_R]
+        exact ArgsOk.annotated (CCtx.lookup_toCtx hb)
+          (by rw [CBinding.toBinding_U]; exact hU) hsub (argsCheck_sound hrest)
       · cases h
     · cases h
   | [], _ :: _, _, _, h => by simp [argsCheck] at h
   | _ :: _, [], _, _, h => by simp [argsCheck] at h
-
-theorem argsAllCheck_sound {Γ : CCtx} :
-    ∀ {as R U}, argsAllCheck Γ as = some (R, U) → ArgsAll (CCtx.toCtx Γ) as R.toEffs U
-  | [], R, U, h => by
-    simp [argsAllCheck] at h
-    obtain ⟨rfl, rfl⟩ := h
-    rw [BEffs.toEffs_none]
-    exact ArgsAll.nil
-  | a :: as, R, U, h => by
-    simp only [argsAllCheck] at h
-    split at h
-    · rename_i b R' U' hb hrest
-      simp at h
-      obtain ⟨rfl, rfl⟩ := h
-      rw [BEffs.toEffs_union, ← CBinding.toBinding_R, ← CBinding.toBinding_outer]
-      exact ArgsAll.cons (CCtx.lookup_toCtx hb) (argsAllCheck_sound hrest)
-    · cases h
 
 theorem check_sound {P : Program} {Φ : Name → BEffs} :
     ∀ {s Γ R U}, check P Φ Γ s = some (R, U) →
@@ -402,7 +399,7 @@ theorem check_sound {P : Program} {Φ : Name → BEffs} :
       · rename_i hfit
         have htb := ihb hb
         rw [CCtx.toCtx_append, cparamCtx_toCtx, toCtx_cweaken] at htb
-        exact Typed.letClosure htb (fitsB_sound hfit) (ihr (Γ := (x, .known Rb Ub ps) :: Γ) h)
+        exact Typed.letClosure htb (fitsB_sound hfit) (ihr (Γ := (x, .known Rb Ub (names ps)) :: Γ) h)
       · cases h
     · cases h
   | letAlias x y rest ih =>
@@ -421,32 +418,36 @@ theorem check_sound {P : Program} {Φ : Name → BEffs} :
       · rename_i hfit
         have htb := ihb hb
         rw [CCtx.toCtx_append, cparamCtx_toCtx, toCtx_cweaken] at htb
-        have hr := ihr (Γ := (x, .known (opaqueB k) (opaqueU k ps) (opaquePs k ps)) :: Γ) h
+        have hr := ihr (Γ := (x, .known (opaqueB k) (opaqueU k (names ps)) (opaquePs k (names ps))) :: Γ) h
         simp only [CCtx.toCtx, CBinding.toBinding, opaqueB_toEffs] at hr
         exact Typed.letOpaque htb (fitsB_sound hfit) hr
       · cases h
     · cases h
-  | callClosure x args =>
+  | callClosure x args pks =>
     intro Γ R U h
     simp only [check] at h
     split at h
-    · rename_i b R' U' hb hargs
-      have ht := Typed.callClosure (P := P) (Φ := fun f => (Φ f).toEffs) (CCtx.lookup_toCtx hb)
-        (argsAllCheck_sound hargs)
-      simp only [argEffs, argUses, CBinding.toBinding_mayCallArgs, CBinding.toBinding_R,
-        CBinding.toBinding_outer] at ht
-      cases hm : b.mayCallArgs with
-      | true =>
-        simp only [hm, ite_true] at h ht
-        simp only [Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        rw [BEffs.toEffs_union]
-        exact ht
-      | false =>
-        simp only [hm, Bool.false_eq_true, ite_false, Option.some.injEq, Prod.mk.injEq] at h ht
-        obtain ⟨rfl, rfl⟩ := h
-        rw [BEffs.toEffs_union, BEffs.toEffs_none]
-        exact ht
+    · rename_i b hb
+      split at h
+      · rename_i R' U' hargs
+        have hargs' := argsCheck_sound hargs
+        rw [← CBinding.toBinding_addsAll] at hargs'
+        have ht := Typed.callClosure (P := P) (Φ := fun f => (Φ f).toEffs) (CCtx.lookup_toCtx hb) hargs'
+        simp only [argEffs, argUses, CBinding.toBinding_mayCallArgs, CBinding.toBinding_R,
+          CBinding.toBinding_outer] at ht
+        cases hm : b.mayCallArgs with
+        | true =>
+          simp only [hm, ite_true] at h ht
+          simp only [Option.some.injEq, Prod.mk.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          rw [BEffs.toEffs_union]
+          exact ht
+        | false =>
+          simp only [hm, Bool.false_eq_true, ite_false, Option.some.injEq, Prod.mk.injEq] at h ht
+          obtain ⟨rfl, rfl⟩ := h
+          rw [BEffs.toEffs_union, BEffs.toEffs_none]
+          exact ht
+      · cases h
     · cases h
   | callFun f args =>
     intro Γ R U h
@@ -496,7 +497,7 @@ def confirmedB : Stmt → Bool
   | .letClosure _ _ _ body rest => confirmedB body && confirmedB rest
   | .letAlias _ _ rest => confirmedB rest
   | .letOpaque _ _ _ body rest => confirmedB body && confirmedB rest
-  | .callClosure _ _ => true
+  | .callClosure _ _ _ => true
   | .callFun _ _ => true
   | .loop body => confirmedB body
   | .stop => true
@@ -516,7 +517,7 @@ theorem confirmedB_sound : ∀ {s}, confirmedB s = true → Confirmed s
   | .letOpaque _ _ _ body rest, h => by
     simp only [confirmedB, Bool.and_eq_true] at h
     exact Confirmed.letOpaque (confirmedB_sound h.1) (confirmedB_sound h.2)
-  | .callClosure _ _, _ => Confirmed.callClosure
+  | .callClosure _ _ _, _ => Confirmed.callClosure
   | .callFun _ _, _ => Confirmed.callFun
   | .loop _, h => Confirmed.loop (confirmedB_sound h)
   | .stop, _ => Confirmed.stop
@@ -559,16 +560,16 @@ theorem accept_confirmed {P : Program} {fs : List Name} {s t b}
 
 /-! ## Value shapes, computed -/
 
-def argsShapedB (Δ : Shapes) : List Nat → List Name → Bool
+def argsShapedB (Δ : Shapes) : List (List (Option Ceiling)) → List Name → Bool
   | [], [] => true
-  | n :: ns, a :: as => lookup Δ a == some n && argsShapedB Δ ns as
+  | t :: ts, a :: as => decide (lookup Δ a = some t) && argsShapedB Δ ts as
   | _, _ => false
 
 theorem argsShapedB_sound {Δ : Shapes} :
-    ∀ {ns as}, argsShapedB Δ ns as = true → ArgsShaped Δ ns as
+    ∀ {ts as}, argsShapedB Δ ts as = true → ArgsShaped Δ ts as
   | [], [], _ => ArgsShaped.nil
-  | n :: ns, a :: as, h => by
-    simp only [argsShapedB, Bool.and_eq_true, beq_iff_eq] at h
+  | t :: ts, a :: as, h => by
+    simp only [argsShapedB, Bool.and_eq_true, decide_eq_true_eq] at h
     exact ArgsShaped.cons h.1 (argsShapedB_sound h.2)
   | [], _ :: _, h => by simp [argsShapedB] at h
   | _ :: _, [], h => by simp [argsShapedB] at h
@@ -581,18 +582,19 @@ def shapedB (P : Program) : Shapes → Stmt → Bool
   | Δ, .choice s₁ s₂ => shapedB P Δ s₁ && shapedB P Δ s₂
   | Δ, .loop s => shapedB P Δ s
   | Δ, .letClosure x _ ps body rest =>
-    shapedB P (paramShapes (unann ps) [] ++ Δ) body && shapedB P ((x, ps.length) :: Δ) rest
+    shapedB P (paramShapes ps [] ++ Δ) body && shapedB P ((x, ps.map Prod.snd) :: Δ) rest
   | Δ, .letOpaque x _ ps body rest =>
-    shapedB P (paramShapes (unann ps) [] ++ Δ) body && shapedB P ((x, ps.length) :: Δ) rest
+    shapedB P (paramShapes ps [] ++ Δ) body && shapedB P ((x, ps.map Prod.snd) :: Δ) rest
   | Δ, .letAlias x y rest =>
     match lookup Δ y with
-    | some n => shapedB P ((x, n) :: Δ) rest
+    | some t => shapedB P ((x, t) :: Δ) rest
     | none => false
-  | Δ, .callClosure x args =>
-    lookup Δ x == some args.length && argsShapedB Δ (List.replicate args.length 0) args
+  | Δ, .callClosure x args pks =>
+    decide (lookup Δ x = some pks) && decide (args.length = pks.length) &&
+      argsShapedB Δ (List.replicate args.length []) args
   | Δ, .callFun f args =>
     match P f with
-    | some d => argsShapedB Δ (wantOf d.params d.arities) args
+    | some d => argsShapedB Δ (wantOf d.params d.ptypes) args
     | none => false
 
 theorem shapedB_sound {P : Program} : ∀ {s Δ}, shapedB P Δ s = true → Shaped P Δ s := by
@@ -623,13 +625,13 @@ theorem shapedB_sound {P : Program} : ∀ {s Δ}, shapedB P Δ s = true → Shap
     intro Δ h
     simp only [shapedB] at h
     split at h
-    · rename_i n hn
-      exact Shaped.letAlias hn (ih h)
+    · rename_i t ht
+      exact Shaped.letAlias ht (ih h)
     · cases h
-  | callClosure x args =>
+  | callClosure x args pks =>
     intro Δ h
-    simp only [shapedB, Bool.and_eq_true, beq_iff_eq] at h
-    exact Shaped.callClosure h.1 (argsShapedB_sound h.2)
+    simp only [shapedB, Bool.and_eq_true, decide_eq_true_eq] at h
+    exact Shaped.callClosure h.1.1 h.1.2 (argsShapedB_sound h.2)
   | callFun f args =>
     intro Δ h
     simp only [shapedB] at h
@@ -642,7 +644,7 @@ theorem shapedB_sound {P : Program} : ∀ {s Δ}, shapedB P Δ s = true → Shap
 def programShapedB (P : Program) (fs : List Name) : Bool :=
   fs.all fun f =>
     match P f with
-    | some d => shapedB P (paramShapes d.params d.arities) d.body
+    | some d => shapedB P (paramShapes d.params d.ptypes) d.body
     | none => true
 
 theorem programShapedB_sound {P : Program} {fs : List Name}
