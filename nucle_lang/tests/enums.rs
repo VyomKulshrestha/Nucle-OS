@@ -366,3 +366,70 @@ fn an_enum_declaration_produces_the_expected_markdown_section() {
     assert!(markdown.contains("A recovery strategy."), "got:\n{}", markdown);
     assert!(markdown.contains("enum RecoveryPlan { Retry, Fallback, GiveUp(Str) }"), "got:\n{}", markdown);
 }
+
+// ---------------------------------------------------------------------
+// Closures carried by an enum
+// ---------------------------------------------------------------------
+
+const TASK: &str = "\
+enum Task {
+    Run(Fn() -> Void),
+}
+enum Guarded {
+    Run(Fn() -> Void confirm physical_key),
+}
+";
+
+/// A closure can be stored in an enum and called from the arm that takes
+/// it out. Before, the payload never type-checked (a closure literal is
+/// not a value `infer_value_type` knows), so the binding was never an enum
+/// and the `match` was rejected.
+#[test]
+fn a_closure_stored_in_an_enum_can_be_called_from_its_arm() {
+    let src = format!(
+        "{TASK}{POOL}let t: Task = Task::Run(fn() -> Void {{\n    store \"sample_a.txt\" into archive\n}})\n\
+         let done: Void = match t {{\n    Run(step) => step(),\n}}\n"
+    );
+    assert_eq!(diagnostic_codes(&src).iter().filter(|c| !c.contains("SIMULATE")).count(), 0, "{:?}", diagnostic_codes(&src));
+    // The checker cannot see into a closure taken out of an enum, so the
+    // call counts as every effect.
+    let summary = effect_summary(&compile(&src).unwrap().program);
+    let done = summary.declarations.iter().find(|d| d.name == "done").unwrap();
+    assert_eq!(done.effect, Effect::Destructive);
+}
+
+/// With no ceiling on the payload type, the closure fits no ceiling.
+#[test]
+fn a_closure_out_of_an_enum_without_a_ceiling_fits_no_ceiling() {
+    let src = format!(
+        "{TASK}{POOL}fn with_hardware(action: Fn() -> Void confirm hardware) returns Void {{\n    let x: Void = action()\n}}\n\
+         let t: Task = Task::Run(fn() -> Void {{\n    delete \"sample_a.txt\" from archive confirm physical_key\n}})\n\
+         let done: Void = match t {{\n    Run(step) => with_hardware(step),\n}}\n"
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()), "{:?}", diagnostic_codes(&src));
+}
+
+/// A ceiling on the payload type is checked where the enum value is built,
+/// and the closure is trusted to stay within it where it is used.
+#[test]
+fn a_ceiling_on_an_enum_payload_is_checked_when_the_value_is_built() {
+    let bad = format!("{TASK}{POOL}let g: Guarded = Guarded::Run(fn() -> Void {{\n    store \"sample_a.txt\" into archive\n}})\n");
+    assert!(diagnostic_codes(&bad).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()), "{:?}", diagnostic_codes(&bad));
+
+    let good = format!(
+        "{TASK}{POOL}fn with_key(action: Fn() -> Void confirm physical_key) returns Void {{\n    let x: Void = action()\n}}\n\
+         store \"sample_a.txt\" into archive\n\
+         let g: Guarded = Guarded::Run(fn() -> Void {{\n    delete \"sample_a.txt\" from archive confirm physical_key\n}})\n\
+         let done: Void = match g {{\n    Run(step) => with_key(step),\n}}\n"
+    );
+    let errors: Vec<String> = check_source(&good).diagnostics.into_iter().filter(|d| d.level == nucle_lang::typeck::DiagnosticLevel::Error).map(|d| d.code).collect();
+    assert!(errors.is_empty(), "{errors:?}");
+
+    // It runs, and the monitor holds the closure to its ceiling.
+    let dir = examples_dir();
+    let mut os = nucle_vfs::syscall::NucleOS::new(100);
+    let mut plan = compile(&good).unwrap();
+    let result = execute_program(&mut os, &mut plan, &dir).expect("execution must not abort");
+    assert!(result.steps.iter().any(|s| s.contains("removed") && s.contains("sample_a.txt")), "steps: {:?}", result.steps);
+    assert!(nucle_lang::take_run_trace().faults.is_empty());
+}

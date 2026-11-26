@@ -227,6 +227,15 @@ struct VariantSignature {
     payload_ty: Option<TypeExpr>,
 }
 
+/// What a match arm's closure pattern shadowed while the arm was checked:
+/// see `TypeChecker::scope_closure_pattern`.
+struct ScopedPattern {
+    name: String,
+    closure: Option<(Vec<String>, Vec<TypeExpr>, TypeExpr)>,
+    ceiling: Option<Effect>,
+    decl: Option<FunctionDecl>,
+}
+
 /// What `TypeChecker::infer_scrutinee_kind` resolves a `match`'s
 /// scrutinee to.
 enum ScrutineeKind {
@@ -1254,7 +1263,12 @@ impl TypeChecker {
         let mut any_failed = false;
         for arm in arms {
             let pattern_ty = arm.variant.as_ref().and_then(|n| declared_variants.iter().find(|v| &v.name == n)).and_then(|v| v.payload_ty.clone());
-            match self.check_match_arm_general(&arm.body, arm.binding.as_deref(), pattern_ty.as_ref(), &declared_variants, arm.span) {
+            let saved = self.scope_closure_pattern(arm.binding.as_deref(), pattern_ty.as_ref());
+            let checked = self.check_match_arm_general(&arm.body, arm.binding.as_deref(), pattern_ty.as_ref(), &declared_variants, arm.span);
+            if let Some(saved) = saved {
+                self.unscope_closure_pattern(saved);
+            }
+            match checked {
                 Some(ty) => resolved.push((arm.span, ty)),
                 None => any_failed = true,
             }
@@ -1282,6 +1296,42 @@ impl TypeChecker {
             }
         }
         Some(joined)
+    }
+
+    /// While one match arm is checked, a pattern that binds a closure (a
+    /// `Fn`-typed payload) is callable and can be passed on like any other
+    /// closure. Its body is out of sight, so with no ceiling on the payload
+    /// type it is left out of `fn_param_effects` and counts as doing
+    /// anything; with a ceiling it is trusted to stay within it, which
+    /// `check_enum_construct` enforced where the enum value was built.
+    /// Returns what the arm's scope shadowed, for `unscope_closure_pattern`.
+    fn scope_closure_pattern(&mut self, binding: Option<&str>, pattern_ty: Option<&TypeExpr>) -> Option<ScopedPattern> {
+        let (Some(name), Some(TypeExpr::Fn(params, ret, effect))) = (binding, pattern_ty) else { return None };
+        let saved = ScopedPattern {
+            name: name.to_string(),
+            closure: self.closures.insert(name.to_string(), (Vec::new(), params.clone(), (**ret).clone())),
+            ceiling: self.fn_param_effects.remove(name),
+            decl: self.closure_decls.remove(name),
+        };
+        if let Some(effect) = effect {
+            self.fn_param_effects.insert(name.to_string(), effect.to_effect());
+        }
+        Some(saved)
+    }
+
+    fn unscope_closure_pattern(&mut self, saved: ScopedPattern) {
+        let ScopedPattern { name, closure, ceiling, decl } = saved;
+        match closure {
+            Some(previous) => { self.closures.insert(name.clone(), previous); }
+            None => { self.closures.remove(&name); }
+        }
+        match ceiling {
+            Some(previous) => { self.fn_param_effects.insert(name.clone(), previous); }
+            None => { self.fn_param_effects.remove(&name); }
+        }
+        if let Some(previous) = decl {
+            self.closure_decls.insert(name, previous);
+        }
     }
 
     /// A match arm's body is one of: the pattern variable itself (the
@@ -1440,6 +1490,15 @@ impl TypeChecker {
             (Some(_), None) => {
                 self.report.error(span, "E-ENUM-CONSTRUCT-PAYLOAD-MISMATCH", format!("'{}::{}' requires a payload", enum_name, variant));
                 None
+            }
+            // A closure payload is checked like a closure argument to a
+            // `Fn` parameter: its signature must match, and a ceiling on
+            // the payload type must cover what the closure does. Whatever
+            // that reports, the value is still of this enum, so a later
+            // `match` on it is not reported a second time.
+            (Some(TypeExpr::Fn(params, ret, effect)), Some(payload_expr)) => {
+                self.check_fn_typed_arg(params, ret, *effect, payload_expr, &format!("{enum_name}::{variant}"), span);
+                Some(TypeExpr::Enum(enum_name.to_string()))
             }
             (Some(expected_ty), Some(payload_expr)) => match self.infer_value_type(payload_expr, span) {
                 Some(ref ty) if ty == expected_ty => Some(TypeExpr::Enum(enum_name.to_string())),

@@ -114,6 +114,10 @@ thread_local! {
     static CURRENT_DECLARATION: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The ceilings of every closure call in progress, outermost first.
     static CEILINGS: std::cell::RefCell<Vec<FnEffectAnnotation>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Each enum variant's declared payload type, keyed by
+    /// `Enum::Variant`, so a closure stored in an enum takes on the
+    /// ceiling the payload type names.
+    static ENUM_PAYLOADS: std::cell::RefCell<HashMap<String, TypeExpr>> = std::cell::RefCell::new(HashMap::new());
 }
 
 /// The trace of the last `execute_program` on this thread, taken whether
@@ -273,6 +277,19 @@ pub fn execute_program(
     let mut steps = Vec::new();
     RUN_TRACE.with(|t| *t.borrow_mut() = RunTrace::default());
     CEILINGS.with(|c| c.borrow_mut().clear());
+    ENUM_PAYLOADS.with(|e| {
+        let mut payloads = e.borrow_mut();
+        payloads.clear();
+        for decl in &plan.program.declarations {
+            if let Declaration::Enum(enum_decl) = decl {
+                for variant in &enum_decl.variants {
+                    if let Some(ty) = &variant.payload {
+                        payloads.insert(format!("{}::{}", enum_decl.name, variant.name), ty.clone());
+                    }
+                }
+            }
+        }
+    });
     let funcs = function_table(&plan.program);
     let pools: HashMap<String, PoolDecl> = plan
         .program
@@ -462,11 +479,14 @@ fn eval_expr(
         // through `?` if so.
         Expr::EnumConstruct { enum_name, variant, payload } => match payload {
             Some(inner) => match eval_expr(inner, env, funcs, pools, os, base_dir, steps, calling) {
-                EvalOutcome::Value(v) => EvalOutcome::Value(Value::EnumInstance {
-                    enum_name: enum_name.clone(),
-                    variant: variant.clone(),
-                    payload: Some(Box::new(v)),
-                }),
+                EvalOutcome::Value(v) => {
+                    let payload_ty = ENUM_PAYLOADS.with(|e| e.borrow().get(&format!("{enum_name}::{variant}")).cloned());
+                    let v = match payload_ty {
+                        Some(ty) => bound_into(v, &ty),
+                        None => v,
+                    };
+                    EvalOutcome::Value(Value::EnumInstance { enum_name: enum_name.clone(), variant: variant.clone(), payload: Some(Box::new(v)) })
+                }
                 err @ EvalOutcome::Err(_) => err,
             },
             None => EvalOutcome::Value(Value::EnumInstance { enum_name: enum_name.clone(), variant: variant.clone(), payload: None }),
