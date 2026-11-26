@@ -217,7 +217,14 @@ impl Gen {
                 }
                 8 if !scope.is_empty() => {
                     let (x, arity) = scope[self.rng.gen_range(0..scope.len())].clone();
-                    let Some(args) = self.args(scope, &vec![0; arity]) else { continue };
+                    let Some(mut args) = self.args(scope, &vec![0; arity]) else { continue };
+                    // Now and then a call passes one closure too many, which
+                    // both checkers must refuse.
+                    if self.chance(0.02) {
+                        if let Some(extra) = self.args(scope, &[0]) {
+                            args.extend(extra);
+                        }
+                    }
                     return St::Call(x, args);
                 }
                 9 if !self.functions.is_empty() => {
@@ -405,8 +412,8 @@ fn render(gen: &Gen, main: &St) -> (String, String) {
         let body = w.stmt(&f.body, "    ");
         functions.push_str(&format!("fn {}({}) returns Void {{\n{body}}}\n", f.name, params.join(", ")));
         lean.extend(["fn".to_string(), f.name.clone(), f.params.len().to_string()]);
-        for (p, k, _) in &f.params {
-            lean.extend([p.clone(), k.lean().to_string()]);
+        for (p, k, a) in &f.params {
+            lean.extend([p.clone(), k.lean().to_string(), a.to_string()]);
         }
         lean_stmt(&f.body, &mut lean);
     }
