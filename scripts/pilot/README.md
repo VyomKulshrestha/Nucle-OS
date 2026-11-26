@@ -2,8 +2,9 @@
 
 Everything a first real write-and-read of NucleScript needs, short of the
 order itself: the program that writes the archive, order sheets for Twist
-and IDT, a dry run that predicts the result from measured channels, and the
-program that scores the sequencer's reads. Nothing here orders, pays for or
+and IDT, a dry run that predicts the result from measured channels, the
+program that scores the sequencer's reads, and the command that rebuilds
+the file from them. Nothing here orders, pays for or
 ships anything. A person places the order, with a vendor quote and a
 sequencing lab lined up.
 
@@ -14,9 +15,10 @@ codec and 4 Reed-Solomon parity strands: 23 oligos, 3 header strands that
 describe the archive and 20 file strands (16 data, 4 parity). With a
 primer site on each end they run 100 to 232 nt, 5,144 nt in all.
 
-The pilot passes if the sequencer's reads, clustered with no labels,
-reproduce at least 95% of the ordered oligos exactly (`check.nsl`), and the
-header strands give back the file table.
+The pilot passes if `nucle restore` rebuilds `pilot.txt` byte for byte from
+the sequencer's reads alone, with no pool directory. `check.nsl` also scores
+the strands: the reads, clustered with no labels, should reproduce at least
+95% of the ordered oligos exactly.
 
 ## 1. Pick the primer pair
 
@@ -56,19 +58,24 @@ reads a sequencer would return once paired reads are merged:
 ```bash
 cargo run --release -p nucle_ecc --example pilot_reads -- order.fasta reads.fastq array-lofi 30
 nucle run check.nsl
+nucle restore reads.fastq --flank ACGTCAGTGCATGACTGACT,TGCATCAGTCAGACTGCATG --out restored
 ```
 
-Oligos recovered exactly, with no labels, on 26 November 2026 (seed 2026):
+On 26 November 2026 (seed 2026), oligos recovered exactly with no labels,
+and whether `restore` gave back `pilot.txt` byte for byte:
 
 | Channel | 10 copies per oligo | 30 | 100 |
-|---|---:|---:|---:|
-| `array-hifi` (measured, ERR15127739) | 20 of 23 | 23 | 23 |
-| `array-lofi` (measured, ERR15127744) | 17 of 23 | 23 | 22 |
-| `twist-illumina` | 23 | 23 | 23 |
-| `twist-nanopore` | 23 | 23 | 23 |
+|---|---|---|---|
+| `array-hifi` (measured, ERR15127739) | 20 of 23, file rebuilt | 23, rebuilt | 23, rebuilt |
+| `array-lofi` (measured, ERR15127744) | 17 of 23, header lost | 23, rebuilt | 22, rebuilt |
+| `twist-illumina` | 23, rebuilt | 23, rebuilt | 23, rebuilt |
+| `twist-nanopore` | 23, rebuilt | 23, rebuilt | 23, rebuilt |
 
-The measured array channels drop many copies outright (their log-normal
-coverage spread), so at 10 copies some oligos get no reads. Any sequencing
+The file comes back with oligos missing because Reed-Solomon parity covers
+the file strands. The three header strands have no parity: the measured
+array channels drop many copies outright (their log-normal coverage
+spread), so at 10 copies the low-fidelity channel can leave a header
+strand with no reads at all, and then nothing says what the pool holds. Any sequencing
 run returns far more than 30 reads for each of 23 oligos; ask for the
 pool's share of a run, not a whole run.
 
@@ -86,21 +93,26 @@ pool's share of a run, not a whole run.
 
 ## 5. Read it back
 
-Save the reads as `reads.fastq` here and run the same scoring as the dry
-run:
+Save the reads as `reads.fastq` here and run the same two commands as the
+dry run:
 
 ```bash
+nucle restore reads.fastq --flank ACGTCAGTGCATGACTGACT,TGCATCAGTCAGACTGCATG --out restored
 nucle run check.nsl
 ```
 
-It reports the reads, the clusters found, the merge threshold fitted to the
-reads' own noise, and how many ordered oligos came back exactly. Compare
-with the dry run's row for the same number of reads per oligo.
+`restore` cuts the outer primer sites off each read, finds the archive
+header among the reads (or in their clusters' consensus), picks each file's
+reads out by its own primer pair, sorts them by the strand index HEDGES
+puts in every strand, and writes the file only if it hashes to what the
+header recorded. `check.nsl` reports the clusters found, the merge
+threshold fitted to the reads' own noise, and how many ordered oligos came
+back exactly. Compare both with the dry run's row for the same number of
+reads per oligo.
 
 ## Not done yet
 
-- Rebuilding `pilot.txt`'s bytes from the reads. `decode reads` shows each
-  strand came back; no command yet turns sequencing reads into a pool that
-  `nucle retrieve` can read.
+- `restore` rebuilds HEDGES files only: the other codecs need the strand
+  order the pool directory keeps.
 - The order itself, and choosing the sequencing lab and its primer pair.
   Both need someone with a budget and a lab.
