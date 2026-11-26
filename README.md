@@ -1493,8 +1493,9 @@ nuclescript.tex`.
 
 [CITATION.cff](CITATION.cff) gives the citation; GitHub shows it under
 "Cite this repository". [.zenodo.json](.zenodo.json) describes the
-software to Zenodo, which archives each GitHub release and gives it a DOI
-once the repository is switched on in Zenodo's GitHub settings.
+software to Zenodo, which archives every GitHub release from v0.1.74 on and
+gives each one a DOI, with the technical report linked as its
+documentation.
 
 ## License
 
