@@ -94,8 +94,9 @@ NucleScript 1.0, the declarative DNA-storage operations language for
   formatting all understand `Fn(...)` and closure literals — including
   generic closures (`fn<T>(...)`) and a closure calling itself by its own
   bound name.
-- **Effect-annotated `Fn(...)` types** — `Fn(...) -> T confirm hardware`/
-  `confirm physical_key` lets a function declare the effect ceiling its
+- **Effect-annotated `Fn(...)` types** — `Fn(...) -> T confirm hardware`,
+  `confirm synthesis`, `confirm sequencing` or `confirm physical_key` lets
+  a function declare the effect ceiling its
   `Fn(...)`-typed parameter's call is trusted to have, so calling a
   closure received as a parameter (unlike one bound to a `let`, already
   handled) can finally have its effect analyzed accurately instead of
@@ -106,7 +107,10 @@ NucleScript 1.0, the declarative DNA-storage operations language for
   one that both stores and deletes fits neither. A closure the checker
   cannot see into, such as one returned by a function, fits a ceiling only
   if its type declares one, and a `Fn` parameter without a ceiling fits
-  none. Diagnostics
+  none. `confirm synthesis` and `confirm sequencing` each allow one
+  hardware effect, where `confirm hardware` allows both. A closure can be
+  stored in an enum (`Run(Fn() -> Void)`) and called from the arm that
+  takes it out. Diagnostics
   (`E-FN-EFFECT-ARG-MISMATCH`), hover, formatting, and `nucle doc` all
   understand the new syntax.
 - **`Ok(...)`/`Err(...)` constructors, explicit `::<Illumina>()` type
@@ -118,6 +122,16 @@ NucleScript 1.0, the declarative DNA-storage operations language for
   typed parameter's real argument value, now genuinely reach `nucle run`
   — not just type-check. Highlighting, diagnostics, hover, formatting,
   and `nucle doc` all understand the new syntax.
+- **Loops over a pool's files** — `for f in files of archive { ... }`
+  runs its body once for each file the pool holds when the program
+  reaches it, inside functions too; a delete in the body still needs its
+  confirmation. The `nuclescript/std` package builds `clear`, `each_file`
+  and `prune` on it, in NucleScript.
+- **Warnings from the branch an `if` does not take** — an error there is
+  reported as `E-IF-UNTAKEN-BRANCH` instead of passing unseen.
+- **Measured consensus rates** — `consensus_vote` gives its result an
+  error rate measured on real reads at that coverage (a Nanopore pool's
+  5% is 0.18% at 10x), and diagnostics hold a declared rate to it.
 
 ## Getting started
 

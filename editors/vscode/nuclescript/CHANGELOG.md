@@ -4,6 +4,30 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.22]
+
+- `confirm synthesis` and `confirm sequencing` are narrower ceilings
+  beside `confirm hardware`, on `Fn` types and as the confirmations of
+  `synthesise` and `sequence`, and are highlighted as such. A call through
+  a `confirm hardware` parameter counts as both.
+- A closure can be stored in an enum and called, or passed on, from the
+  arm that takes it out.
+- A `Fn` parameter can be given a second name, and a second name for a
+  closure stands for exactly what that closure does.
+- `for f in files of pool { ... }` runs its body once for each file the
+  pool holds when the program runs.
+- An error in the branch an `if` does not take is reported as an
+  `E-IF-UNTAKEN-BRANCH` warning.
+- `consensus_vote` gives its result an error rate measured on real reads
+  at that coverage instead of the source's rate over the coverage squared,
+  so `Pool<Recovered, 0.05%>` on a Nanopore pool voted at 10x is now
+  `E-BINDING-ERROR-RATE-MISMATCH` (the measured rate is 0.18%).
+- Imports from `nuclescript/std`, the standard library written in
+  NucleScript, resolve with no install.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.84 runtime, which contains all of the above and `hardware order
+  --flank`.
+
 ## [0.1.21]
 
 - A closure the checker cannot see into, one returned by a function,
