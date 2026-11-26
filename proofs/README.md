@@ -11,12 +11,14 @@ the core holds and what it leaves out.
 | `program_confirmed` | no operation runs without the confirmation it needs |
 | `program_effects_sound` | no operation has an effect the rules did not report |
 | `program_ceilings_sound` | no operation runs inside a closure call whose ceiling it exceeds |
+| `program_shapes_sound` | a shaped program never reaches a call it cannot make (an unbound name, or the wrong number of closures) |
 
 `Checker.lean` turns the rules into a checker Lean can run. `check`
 computes a statement's effects, or rejects it, and `check_sound` proves its
 answer is a derivation of the rules, so `accept_effects_sound`,
 `accept_ceilings_sound` and `accept_confirmed` hold for every program it
-accepts. `Main.lean` builds it into `nsl-check`, which reads programs one
+accepts; `shapedB` does the same for shapes (`accept_shapes_sound`).
+`nsl-check` accepts a program only if it is also shaped. `Main.lean` builds it into `nsl-check`, which reads programs one
 per line and prints `accept <effect>` or `reject` for each.
 
 `nucle_lang/tests/lean_differential.rs` generates programs in the core,
@@ -37,6 +39,6 @@ NSL_LEAN_CHECKER=proofs/.lake/build/bin/nsl-check cargo test -p nucle_lang --tes
 `lake build` fetches the toolchain named in `lean-toolchain` (Lean 4.35.0)
 and needs no other package. `Axioms.lean` prints the axioms each theorem
 rests on: `propext`, and `Quot.sound` (through function extensionality)
-for all but `program_confirmed`. CI fails if `sorryAx` ever appears.
+for all but `program_confirmed` and `program_shapes_sound`. CI fails if `sorryAx` ever appears.
 `NSL_DIFFERENTIAL_PROGRAMS` sets how many programs the comparison runs
 (1,000 by default).

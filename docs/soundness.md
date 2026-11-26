@@ -241,7 +241,8 @@ fail on the code before the fixes.
 
 [proofs/NucleScriptCore.lean](../proofs/NucleScriptCore.lean) writes the
 effect rules above down in Lean 4 for a core of the language and proves
-that a program they accept keeps promises 1 to 3. The core has:
+that a program they accept keeps promises 1 to 3, and promise 4 for the
+shape its values have there. The core has:
 
 - operations, each with its effect and whether its confirmation was
   written;
@@ -278,6 +279,15 @@ its body's R fits in; the least fixed point the checker computes is one.
 | `program_confirmed` | 1: every operation that ran carried its confirmation |
 | `program_effects_sound` | 2: every operation's effect is in R |
 | `program_ceilings_sound` | 3: every operation is allowed by the ceiling of each closure call it ran inside |
+| `program_shapes_sound` | 4, for the core: no run reaches a call it cannot make |
+
+In the core every value is a closure, so a value's shape is how many
+closures it takes. A program is shaped when every call passes its closure
+or function that many, each of the shape the parameter wants, and names
+only what is in scope; `program_shapes_sound` proves that a shaped
+program never reaches a call to a name with no value, a call with the
+wrong number of closures, or a call to an unknown function. A function's
+parameters record how many closures their closures take.
 
 The proof needs one invariant the rules do not state: a closure value does
 at most what the binding holding it says, given what the enclosing
@@ -304,10 +314,11 @@ per line.
 closures that are passed a closure, closures with and without arguments
 of their own, second names for them, closures returned from functions,
 branches, loops over a pool's files, and every operation with and without
-its confirmation), writes each as NucleScript and for `nsl-check`, and
-fails if the two checkers differ on whether a program is accepted or on
-its worst effect. CI runs 1,000 on every push. A run of 20,000 on 26
-November 2026 accepted 9,639 and found no disagreement; the same 20,000
+its confirmation, and now and then a call that passes one closure too
+many), writes each as NucleScript and for `nsl-check`, which also checks
+shapes, and fails if the two checkers differ on whether a program is
+accepted or on its worst effect. CI runs 1,000 on every push. A run of
+20,000 on 26 November 2026 accepted 9,551 and found no disagreement; the same 20,000
 against the Rust checker as it was at v0.1.85, before the two closure
 fixes above, give 6, each a program it accepted and the rules reject.
 
@@ -346,9 +357,10 @@ one on each side:
   take closures without ceilings as arguments; a closure parameter with a
   ceiling of its own (`fn(k: Fn() -> Void confirm hardware)`) is left out,
   as is a closure parameter reusing a name in scope. It also leaves out
-  generics, whose instantiations change no effect, enums other than as a
-  source of closures it cannot see into, and value shapes: promise 4 rests
-  on testing alone.
+  generics, whose instantiations change no effect, and enums other than
+  as a source of closures it cannot see into. Of promise 4 it covers
+  closures' arity only: the shapes of pools, `Result` values and enums
+  rest on testing alone.
 - **The generator leaves pool expressions out** (`consensus_vote`,
   `synthesise`, `sequence`): they never run, existing only while
   checking, so the monitor has nothing to watch. Their rules are covered

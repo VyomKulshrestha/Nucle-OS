@@ -1044,7 +1044,8 @@ ceiling into one. All eight are fixed. A proof in
 in CI, shows that the rules keep the confirmation, effect-report and
 ceiling promises for a core of the language that includes loops over a
 pool's files, early returns through `?`, and closures that take closures
-as arguments. Writing those rules found that a closure handed to a
+as arguments, and that a program in it whose calls pass each closure as
+many closures as it takes never reaches a call it cannot make. Writing those rules found that a closure handed to a
 parameter was dropped from the effect report, so a delete passed that way
 was called Pure and ran under `confirm hardware`. A checker Lean can run,
 proved to follow the rules, is compared with the Rust checker on generated
