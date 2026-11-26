@@ -215,6 +215,10 @@ struct TypeChecker {
     /// are being checked, so a generic function that calls itself is not
     /// instantiated forever; see `check_instantiation`.
     instantiating: HashSet<String>,
+    /// The profiles a generic body is being checked with, while
+    /// `check_instantiation` checks it concretely: a `let` annotation
+    /// naming a type parameter means that profile there.
+    type_substitution: HashMap<String, PoolState>,
     report: TypeReport,
 }
 
@@ -681,6 +685,18 @@ impl TypeChecker {
     }
 
     fn check_let(&mut self, binding: &LetDecl) {
+        // Checked as one instance of a generic body, an annotation naming
+        // a type parameter means the profile it stands for there.
+        if !self.type_substitution.is_empty() {
+            let annotation = substitute_annotation(&binding.annotation, &self.type_substitution);
+            if annotation != binding.annotation {
+                return self.check_let_resolved(&LetDecl { annotation, ..binding.clone() });
+            }
+        }
+        self.check_let_resolved(binding);
+    }
+
+    fn check_let_resolved(&mut self, binding: &LetDecl) {
         if self.pool_bindings.contains_key(&binding.name)
             || self.pools.contains_key(&binding.name)
             || self.result_bindings.contains_key(&binding.name)
@@ -2430,6 +2446,7 @@ impl TypeChecker {
             enums: self.enums.clone(),
             enum_bindings: self.enum_bindings.clone(),
             instantiating: self.instantiating.clone(),
+            type_substitution: self.type_substitution.clone(),
             ..Default::default()
         }
     }
@@ -2463,9 +2480,10 @@ impl TypeChecker {
         if self.instantiating.contains(&instance) {
             return;
         }
-        let check = |this: &TypeChecker, params: &[FnParam]| -> Vec<Diagnostic> {
+        let check = |this: &TypeChecker, params: &[FnParam], types: &HashMap<String, PoolState>| -> Vec<Diagnostic> {
             let mut checker = make_checker(this);
             checker.instantiating.insert(instance.clone());
+            checker.type_substitution = types.clone();
             if let TypeExpr::Result(ok, err) = return_type {
                 checker.enclosing_result_return = Some(((**ok).clone(), (**err).clone()));
             }
@@ -2477,9 +2495,9 @@ impl TypeChecker {
             }
             checker.report.diagnostics
         };
-        let generic = check(self, params);
+        let generic = check(self, params, &HashMap::new());
         let concrete_params: Vec<FnParam> = params.iter().map(|p| FnParam { name: p.name.clone(), ty: substitute_pool_state(&p.ty, substitution) }).collect();
-        for diagnostic in check(self, &concrete_params) {
+        for diagnostic in check(self, &concrete_params, substitution) {
             if generic.iter().any(|g| g.code == diagnostic.code && g.span == diagnostic.span) {
                 continue;
             }
@@ -3063,6 +3081,18 @@ fn substitute_expr(expr: &Expr, binding: &str, value: &str, literal: bool) -> Ex
             variant: variant.clone(),
             payload: payload.as_ref().map(|inner| Box::new(substitute_expr(inner, binding, value, literal))),
         },
+    }
+}
+
+/// A `let` annotation with its type parameters replaced by the profiles
+/// they stand for: a `Pool<P>`, also inside a `Result`. A `Fn(...)` type is
+/// left alone, since a generic closure's literal keeps its own `P`.
+fn substitute_annotation(ty: &TypeExpr, substitution: &HashMap<String, PoolState>) -> TypeExpr {
+    match ty {
+        TypeExpr::Result(ok, err) => {
+            TypeExpr::Result(Box::new(substitute_annotation(ok, substitution)), Box::new(substitute_annotation(err, substitution)))
+        }
+        _ => substitute_pool_state(ty, substitution),
     }
 }
 

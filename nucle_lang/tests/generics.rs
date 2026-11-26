@@ -377,3 +377,20 @@ let quiet: Void = archive_via(illumina_archive)
     assert_eq!(found.len(), 1, "{:?}", diagnostics(&src));
     assert!(found[0].message.starts_with("in archive_via<P = Nanopore>, line 7: in archive_any<P = Nanopore>, line 5: "), "{}", found[0].message);
 }
+
+#[test]
+fn a_let_annotated_with_a_type_parameter_takes_each_instance_profile() {
+    // Checked again for each profile it is called with, the body used to
+    // compare the substituted parameter with the annotation as written, so
+    // `held` was reported as a `Pool<P>` holding a `Pool<Illumina>`.
+    let src = format!(
+        "{POOLS}fn keep<P>(source: Pool<P>) returns Void {{
+    let held: Pool<P> = source
+    retrieve from held
+}}
+let kept: Void = keep(illumina_archive)
+let also: Void = keep(nanopore_archive)
+"
+    );
+    assert!(diagnostic_codes(&src).is_empty(), "{:?}", diagnostics(&src));
+}

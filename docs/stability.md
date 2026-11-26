@@ -64,6 +64,13 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.93:** fix. A `let` in a generic
+  function annotated with the function's type parameter (`let held:
+  Pool<P> = source`) checks at every call. The check that runs the body
+  again with each call's profile compared the profile with the
+  annotation as written, so every call was rejected with
+  `E-BINDING-TYPE-MISMATCH`; programs 1.0 rejected for this are now
+  accepted. None of the 33 programs in the 1.0 corpus changed.
 - **26 November 2026, NucleOS v0.1.87:** soundness fix. A closure bound
   by `let` that calls one of its own arguments no longer fits an effect
   ceiling, as a closure literal that does already did not; a program 1.0
