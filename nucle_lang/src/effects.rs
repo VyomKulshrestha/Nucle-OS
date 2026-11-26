@@ -229,9 +229,15 @@ pub fn expr_effects(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable
 /// A call through a parameter or a closure the analysis cannot see into
 /// has no body here to say which arguments it calls, so every closure
 /// passed to it counts: the closure it holds may call any of them, and no
-/// other call site knows they reach it.
+/// other call site knows they reach it. A callee held to a ceiling is the
+/// exception, since a closure that calls its arguments fits no ceiling.
 fn closure_args_effect(name: &str, args: &[Expr], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> EffectSet {
     let Some(callee) = funcs.get(name).or_else(|| closures.get(name)) else {
+        // Unless it is held to a ceiling: a closure that calls its
+        // arguments fits none, so one that fits never runs them.
+        if fn_param_effects.get(name).is_some_and(|e| !e.is_empty() && *e != EffectSet::all()) {
+            return EffectSet::default();
+        }
         return args.iter().fold(EffectSet::default(), |acc, arg| {
             let effect = match arg {
                 Expr::Closure { params, body, .. } => body_effects(body, funcs, closures, &scoped_fn_param_effects(params, fn_param_effects), resolving).0,
