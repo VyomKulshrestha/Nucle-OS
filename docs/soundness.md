@@ -268,10 +268,15 @@ the rule the parameter defect above broke. A closure's own parameters are
 in its U when it calls them, so one that calls its arguments fits no
 ceiling. A call to a closure adds what the closures it passes do when the
 closure may call them: one with parameters of its own, or a parameter's
-closure, may; a closure held to a ceiling may not. A closure's parameters
-are named apart from the parameters the closures in scope may run, the
-usual convention, which the generator below follows; the Rust checker also
-allows reusing a name, which the core leaves out. A function's effect may be any set
+closure, may; a closure held to a ceiling may not. A closure's parameter
+may reuse any name in scope and then hides it; a closure in scope that
+runs the outer parameter of that name counts, inside the body, as doing
+anything, since the name there means the closure's own parameter. The
+Rust checker resolves such a call to the inner parameter instead, and
+still counts the outer parameter's closure at the call that passed it in.
+The generator below reuses names only where no closure in scope runs the
+outer one, so the two checkers agree there; elsewhere the core is the
+stricter of the two. A function's effect may be any set
 its body's R fits in; the least fixed point the checker computes is one.
 
 | Theorem | Promise |
@@ -356,7 +361,7 @@ one on each side:
   catches a slip only where the generator reaches. The core's closures
   take closures without ceilings as arguments; a closure parameter with a
   ceiling of its own (`fn(k: Fn() -> Void confirm hardware)`) is left out,
-  as is a closure parameter reusing a name in scope. It also leaves out
+  It also leaves out
   generics, whose instantiations change no effect, and enums other than
   as a source of closures it cannot see into. Of promise 4 it covers
   closures' arity only: the shapes of pools, `Result` values and enums

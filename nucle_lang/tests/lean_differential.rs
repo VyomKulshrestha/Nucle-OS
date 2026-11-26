@@ -147,12 +147,26 @@ impl Gen {
         St::Op(self.op())
     }
 
-    /// Names for a closure's own parameters, sometimes none.
-    fn own_params(&mut self) -> Vec<String> {
+    /// Names for a closure's own parameters, sometimes none. When
+    /// everything in `scope` is a parameter, one of those names is now and
+    /// then reused, so the closure's parameter hides it.
+    fn own_params(&mut self, scope: &[(String, usize)]) -> Vec<String> {
         if !self.chance(0.4) {
             return Vec::new();
         }
-        (0..self.rng.gen_range(1..3)).map(|_| self.name("k")).collect()
+        let only_params = !scope.is_empty() && scope.iter().all(|(x, _)| x.starts_with('q') || x.starts_with('k'));
+        let mut params: Vec<String> = Vec::new();
+        for _ in 0..self.rng.gen_range(1..3) {
+            if only_params && self.chance(0.4) {
+                let reused = scope[self.rng.gen_range(0..scope.len())].0.clone();
+                if !params.contains(&reused) {
+                    params.push(reused);
+                    continue;
+                }
+            }
+            params.push(self.name("k"));
+        }
+        params
     }
 
     /// One closure from `scope` for each arity in `arities`, to pass to a
@@ -185,8 +199,8 @@ impl Gen {
                 4 | 5 if depth > 0 => {
                     let x = self.name("c");
                     let ceiling = self.ceiling();
-                    let params = self.own_params();
-                    let mut body_scope = scope.to_vec();
+                    let params = self.own_params(scope);
+                    let mut body_scope: Vec<(String, usize)> = scope.iter().filter(|(x, _)| !params.contains(x)).cloned().collect();
                     body_scope.extend(params.iter().map(|p| (p.clone(), 0)));
                     let body = self.stmt(&body_scope, depth - 1);
                     let mut inner = scope.to_vec();
@@ -205,7 +219,7 @@ impl Gen {
                 7 if depth > 0 => {
                     let x = self.name("o");
                     let ceiling = self.ceiling();
-                    let params = self.own_params();
+                    let params = self.own_params(&[]);
                     // Written inside a function of its own, the body sees
                     // only its own parameters.
                     let own: Vec<(String, usize)> = params.iter().map(|p| (p.clone(), 0)).collect();
@@ -312,10 +326,22 @@ impl Writer {
             }
             St::Closure(x, k, params, body, rest) => {
                 self.types.insert(x.clone(), (params.len(), *k));
+                // A parameter may hide a name in scope; its type comes back after.
+                let hidden: Vec<(String, Option<(usize, Ceil)>)> = params.iter().map(|p| (p.clone(), self.types.get(p).copied())).collect();
                 for p in params {
                     self.types.insert(p.clone(), (0, Ceil::None));
                 }
                 let b = self.stmt(body, &deeper);
+                for (p, old) in hidden {
+                    match old {
+                        Some(t) => {
+                            self.types.insert(p, t);
+                        }
+                        None => {
+                            self.types.remove(&p);
+                        }
+                    }
+                }
                 let ty = fn_type(params.len(), *k);
                 format!("{indent}let {x}: {ty} = fn({}) -> Void {{\n{b}{indent}}}\n{}", param_list(params), self.stmt(rest, indent))
             }
