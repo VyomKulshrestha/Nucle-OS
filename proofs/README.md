@@ -36,7 +36,7 @@ NSL_LEAN_CHECKER=proofs/.lake/build/bin/nsl-check cargo test -p nucle_lang --tes
 
 `lake build` fetches the toolchain named in `lean-toolchain` (Lean 4.35.0)
 and needs no other package. `Axioms.lean` prints the axioms each theorem
-rests on: `propext`, and `Quot.sound` for the checker's (through function
-extensionality). CI fails if `sorryAx` ever appears.
+rests on: `propext`, and `Quot.sound` (through function extensionality)
+for all but `program_confirmed`. CI fails if `sorryAx` ever appears.
 `NSL_DIFFERENTIAL_PROGRAMS` sets how many programs the comparison runs
 (1,000 by default).

@@ -8,9 +8,10 @@ effect ceiling, other names for closures, closures the checker cannot see
 into (returned by a function, taken out of an enum), calls to closures,
 named functions taking closure arguments, with or without ceilings, loops
 over a pool's files (zero or more passes), and an early return through `?`
-(`stop`), which ends the function or closure it is in. Closures take no
-arguments of their own. Pools, files, `Result` and the rest add no effects
-of their own, so they are left out.
+(`stop`), which ends the function or closure it is in. Closures take
+closures as arguments of their own, without ceilings, and a call passes
+them. Pools, files, `Result` and the rest add no effects of their own, so
+they are left out.
 
 The static rules give a statement two things: `R`, the effects it may have
 itself, and `U`, the parameters without a ceiling whose closures it may run.
@@ -118,14 +119,17 @@ inductive Stmt where
   | seq (s₁ s₂ : Stmt)
   /-- An `if` or `match`: either side may run. -/
   | choice (s₁ s₂ : Stmt)
-  /-- `let x: Fn() -> Void [confirm k] = fn() -> Void { body }`, then `rest`. -/
-  | letClosure (x : Name) (k : Option Ceiling) (body rest : Stmt)
-  /-- `let x: Fn() -> Void = y`, then `rest`. -/
+  /-- `let x: Fn(...) -> Void [confirm k] = fn(p₁: Fn() -> Void, ...) -> Void
+  { body }`, then `rest`: a closure whose own parameters `ps` take
+  closures and have no ceiling. -/
+  | letClosure (x : Name) (k : Option Ceiling) (ps : List Name) (body rest : Stmt)
+  /-- `let x: Fn(...) -> Void = y`, then `rest`. -/
   | letAlias (x y : Name) (rest : Stmt)
   /-- A closure the checker cannot see into, such as one returned by a
   function: `body` is what it does, which the rules do not look at. -/
-  | letOpaque (x : Name) (k : Option Ceiling) (body rest : Stmt)
-  | callClosure (x : Name)
+  | letOpaque (x : Name) (k : Option Ceiling) (ps : List Name) (body rest : Stmt)
+  /-- `x(a₁, ...)`: a call to a closure, passing it closures. -/
+  | callClosure (x : Name) (args : List Name)
   | callFun (f : Name) (args : List Name)
   /-- `for f in files of pool { body }`: the body runs zero or more times. -/
   | loop (body : Stmt)
@@ -141,12 +145,15 @@ structure FunDecl where
 
 abbrev Program := Name → Option FunDecl
 
+/-- A closure's own parameters, as parameters without ceilings. -/
+def unann (ps : List Name) : List (Name × Option Ceiling) := ps.map fun p => (p, none)
+
 /-! ## Running a statement -/
 
-/-- A closure value: its body, the environment it captured, and the ceilings
-of the slots it was bound into. -/
+/-- A closure value: its own parameters, its body, the environment it
+captured, and the ceilings of the slots it was bound into. -/
 inductive Val where
-  | closure (body : Stmt) (env : List (Name × Val)) (ceilings : List Ceiling)
+  | closure (ps : List Name) (body : Stmt) (env : List (Name × Val)) (ceilings : List Ceiling)
 
 abbrev Env := List (Name × Val)
 
@@ -158,7 +165,7 @@ def lookup {α : Type} : List (Name × α) → Name → Option α
 def Val.underCeiling (v : Val) : Option Ceiling → Val
   | none => v
   | some c => match v with
-    | .closure body env ks => .closure body env (c :: ks)
+    | .closure ps body env ks => .closure ps body env (c :: ks)
 
 /-- One operation that ran. -/
 structure Event where
@@ -187,17 +194,20 @@ inductive Eval (P : Program) : Env → List Ceiling → Stmt → List Event → 
   | seqStop {ρ cs s₁ s₂ t₁} : Eval P ρ cs s₁ t₁ true → Eval P ρ cs (.seq s₁ s₂) t₁ true
   | choiceLeft {ρ cs s₁ s₂ t b} : Eval P ρ cs s₁ t b → Eval P ρ cs (.choice s₁ s₂) t b
   | choiceRight {ρ cs s₁ s₂ t b} : Eval P ρ cs s₂ t b → Eval P ρ cs (.choice s₁ s₂) t b
-  | letClosure {ρ cs x k body rest t b} :
-      Eval P ((x, .closure body ρ k.toList) :: ρ) cs rest t b →
-      Eval P ρ cs (.letClosure x k body rest) t b
+  | letClosure {ρ cs x k ps body rest t b} :
+      Eval P ((x, .closure ps body ρ k.toList) :: ρ) cs rest t b →
+      Eval P ρ cs (.letClosure x k ps body rest) t b
   | letAlias {ρ cs x y rest v t b} : lookup ρ y = some v →
       Eval P ((x, v) :: ρ) cs rest t b → Eval P ρ cs (.letAlias x y rest) t b
-  | letOpaque {ρ cs x k body rest t b} :
-      Eval P ((x, .closure body ρ k.toList) :: ρ) cs rest t b →
-      Eval P ρ cs (.letOpaque x k body rest) t b
-  | callClosure {ρ cs x body ρ' ks t b} :
-      lookup ρ x = some (.closure body ρ' ks) → Eval P ρ' (ks ++ cs) body t b →
-      Eval P ρ cs (.callClosure x) t false
+  | letOpaque {ρ cs x k ps body rest t b} :
+      Eval P ((x, .closure ps body ρ k.toList) :: ρ) cs rest t b →
+      Eval P ρ cs (.letOpaque x k ps body rest) t b
+  /-- The closure runs in the environment it captured, with its own
+  parameters bound to the arguments. -/
+  | callClosure {ρ cs x args ps body ρ' ks ρa t b} :
+      lookup ρ x = some (.closure ps body ρ' ks) → BindArgs ρ (unann ps) args ρa →
+      Eval P (ρa ++ ρ') (ks ++ cs) body t b →
+      Eval P ρ cs (.callClosure x args) t false
   | callFun {ρ cs f args d ρf t b} : P f = some d → BindArgs ρ d.params args ρf →
       Eval P ρf cs d.body t b → Eval P ρ cs (.callFun f args) t false
   | loopDone {ρ cs body} : Eval P ρ cs (.loop body) [] false
@@ -207,20 +217,52 @@ inductive Eval (P : Program) : Env → List Ceiling → Stmt → List Event → 
 
 /-! ## The rules -/
 
-/-- What a name in scope stands for: a closure whose effects `R` and used
-parameters `U` are known (a closure literal, a slot with a ceiling, an
-untraceable closure), or a parameter without a ceiling. -/
+/-- What a name in scope stands for: a closure whose effects `R`, used
+parameters `U` and own parameters `ps` are known (a closure literal, a slot
+with a ceiling, an untraceable closure), or a parameter without a ceiling.
+`U` may name the closure's own parameters, which each call fills. -/
 inductive Binding where
-  | known (R : Effs) (U : List Name)
+  | known (R : Effs) (U : List Name) (ps : List Name)
   | param (p : Name)
 
 def Binding.R : Binding → Effs
-  | .known R _ => R
+  | .known R _ _ => R
   | .param _ => Effs.none
 
+/-- Every parameter without a ceiling whose closure a call may run, the
+closure's own included. -/
 def Binding.U : Binding → List Name
-  | .known _ U => U
+  | .known _ U _ => U
   | .param p => [p]
+
+def Binding.ps : Binding → List Name
+  | .known _ _ ps => ps
+  | .param _ => []
+
+/-- The names in `U` that are not among `ps`. -/
+def outerOf (U ps : List Name) : List Name := U.filter fun q => decide (q ∉ ps)
+
+/-- The parameters a call may run closures of that the call does not fill:
+the enclosing function's, or an enclosing closure's. -/
+def Binding.outer (b : Binding) : List Name := outerOf b.U b.ps
+
+/-- Whether the closure may call its own arguments. A parameter's closure
+may. -/
+def Binding.callsOwn : Binding → Bool
+  | .known _ U ps => U.any fun q => decide (q ∈ ps)
+  | .param _ => true
+
+/-- Whether a call must count the closures it passes: a closure with
+parameters of its own, or a parameter's closure, may run them. A slot with
+a ceiling may not, since a closure that calls its arguments fits none. -/
+def Binding.mayCallArgs : Binding → Bool
+  | .known _ _ ps => !ps.isEmpty
+  | .param _ => true
+
+/-- What the closures passed to a call add to it. -/
+def argEffs (b : Binding) (R : Effs) : Effs := if b.mayCallArgs then R else Effs.none
+
+def argUses (b : Binding) (U : List Name) : List Name := if b.mayCallArgs then U else []
 
 abbrev Ctx := List (Name × Binding)
 
@@ -228,7 +270,7 @@ abbrev Ctx := List (Name × Binding)
 holds closures doing at most `σ p`. -/
 def bigU (σ : Name → Effs) (U : List Name) : Effs := fun e => ∃ p, p ∈ U ∧ σ p e
 
-def Binding.sem (b : Binding) (σ : Name → Effs) : Effs := Effs.union b.R (bigU σ b.U)
+def Binding.sem (b : Binding) (σ : Name → Effs) : Effs := Effs.union b.R (bigU σ b.outer)
 
 /-- What a closure the rules cannot see into may do: anything, unless the
 type it comes through names a ceiling. -/
@@ -236,9 +278,21 @@ def opaqueEffs : Option Ceiling → Effs
   | none => Effs.all
   | some c => c.allows
 
+/-- What an untraceable closure may call of its own arguments: any of them,
+unless a ceiling says it calls none. -/
+def opaqueU : Option Ceiling → List Name → List Name
+  | none, ps => ps
+  | some _, _ => []
+
+/-- The own parameters an untraceable closure's binding records: none under
+a ceiling, which it does not call. -/
+def opaquePs : Option Ceiling → List Name → List Name
+  | none, ps => ps
+  | some _, _ => []
+
 def paramBinding (p : Name) : Option Ceiling → Binding
   | none => .param p
-  | some c => .known c.allows []
+  | some c => .known c.allows [] []
 
 def paramCtx : List (Name × Option Ceiling) → Ctx
   | [] => []
@@ -254,10 +308,22 @@ a parameter with a ceiling must fit it; the others add their effects. -/
 inductive ArgsOk (Γ : Ctx) : List (Name × Option Ceiling) → List Name → Effs → List Name → Prop
   | nil : ArgsOk Γ [] [] Effs.none []
   | unannotated {p a ps as b R U} : lookup Γ a = some b → ArgsOk Γ ps as R U →
-      ArgsOk Γ ((p, none) :: ps) (a :: as) (Effs.union b.R R) (b.U ++ U)
+      ArgsOk Γ ((p, none) :: ps) (a :: as) (Effs.union b.R R) (b.outer ++ U)
   | annotated {p c a ps as b R U} : lookup Γ a = some b → b.U = [] →
       Effs.Sub b.R c.allows → ArgsOk Γ ps as R U →
       ArgsOk Γ ((p, some c) :: ps) (a :: as) R U
+
+/-- The closures passed to a closure call: each may be run, so each adds its
+effects. -/
+inductive ArgsAll (Γ : Ctx) : List Name → Effs → List Name → Prop
+  | nil : ArgsAll Γ [] Effs.none []
+  | cons {a as b R U} : lookup Γ a = some b → ArgsAll Γ as R U →
+      ArgsAll Γ (a :: as) (Effs.union b.R R) (b.outer ++ U)
+
+/-- A closure's own parameters are named apart from the parameters the
+closures in scope may run, so a use of one is never taken for the other. -/
+def Fresh (ps : List Name) (Γ : Ctx) : Prop :=
+  ∀ y b, (y, b) ∈ Γ → ∀ q, q ∈ b.outer → q ∉ ps
 
 /-- `Typed P Φ Γ s R U`: `s` may have the effects `R` and run the closures
 of the parameters `U`. `Φ f` is the effect of calling `f`, its own body's
@@ -268,17 +334,20 @@ inductive Typed (P : Program) (Φ : Name → Effs) : Ctx → Stmt → Effs → L
       Typed P Φ Γ (.seq s₁ s₂) (Effs.union R₁ R₂) (U₁ ++ U₂)
   | choice {Γ s₁ s₂ R₁ R₂ U₁ U₂} : Typed P Φ Γ s₁ R₁ U₁ → Typed P Φ Γ s₂ R₂ U₂ →
       Typed P Φ Γ (.choice s₁ s₂) (Effs.union R₁ R₂) (U₁ ++ U₂)
-  | letClosure {Γ x k body rest Rb Ub R U} :
-      Typed P Φ Γ body Rb Ub → Fits k Rb Ub →
-      Typed P Φ ((x, .known Rb Ub) :: Γ) rest R U →
-      Typed P Φ Γ (.letClosure x k body rest) R U
+  | letClosure {Γ x k ps body rest Rb Ub R U} : Fresh ps Γ →
+      Typed P Φ (paramCtx (unann ps) ++ Γ) body Rb Ub → Fits k Rb Ub →
+      Typed P Φ ((x, .known Rb Ub ps) :: Γ) rest R U →
+      Typed P Φ Γ (.letClosure x k ps body rest) R U
   | letAlias {Γ x y rest b R U} : lookup Γ y = some b →
       Typed P Φ ((x, b) :: Γ) rest R U → Typed P Φ Γ (.letAlias x y rest) R U
-  | letOpaque {Γ x k body rest Rb Ub R U} :
-      Typed P Φ Γ body Rb Ub → Fits k Rb Ub →
-      Typed P Φ ((x, .known (opaqueEffs k) []) :: Γ) rest R U →
-      Typed P Φ Γ (.letOpaque x k body rest) R U
-  | callClosure {Γ x b} : lookup Γ x = some b → Typed P Φ Γ (.callClosure x) b.R b.U
+  | letOpaque {Γ x k ps body rest Rb Ub R U} : Fresh ps Γ →
+      Typed P Φ (paramCtx (unann ps) ++ Γ) body Rb Ub → Fits k Rb Ub →
+      Typed P Φ ((x, .known (opaqueEffs k) (opaqueU k ps) (opaquePs k ps)) :: Γ) rest R U →
+      Typed P Φ Γ (.letOpaque x k ps body rest) R U
+  /-- A call may do what the closure does, and what the closures passed to
+  it do if it may call them. -/
+  | callClosure {Γ x args b R U} : lookup Γ x = some b → ArgsAll Γ args R U →
+      Typed P Φ Γ (.callClosure x args) (Effs.union b.R (argEffs b R)) (b.outer ++ argUses b U)
   | callFun {Γ f args d R U} : P f = some d → ArgsOk Γ d.params args R U →
       Typed P Φ Γ (.callFun f args) (Effs.union (Φ f) R) U
   /-- A loop may do whatever its body does, any number of times. -/
@@ -293,19 +362,22 @@ def ProgramOk (P : Program) (Φ : Name → Effs) : Prop :=
 /-! ## What a value may do -/
 
 mutual
-/-- `ValOk P Φ B v`: running `v` performs only effects in `B`, and only
-effects each of its ceilings allows. -/
-inductive ValOk (P : Program) (Φ : Name → Effs) : Effs → Val → Prop
-  | closure {B Γ σ body env ks R U} :
-      Typed P Φ Γ body R U → EnvOk P Φ Γ env σ →
-      Effs.Sub (Effs.union R (bigU σ U)) B →
-      (∀ c, c ∈ ks → Effs.Sub (Effs.union R (bigU σ U)) c.allows) →
-      ValOk P Φ B (.closure body env ks)
+/-- `ValOk P Φ B o v`: running `v` performs only effects in `B`, besides
+those of the closures passed to it; it calls none of those unless `o`; and
+under each of its ceilings it calls none of them and does only what the
+ceiling allows. -/
+inductive ValOk (P : Program) (Φ : Name → Effs) : Effs → Bool → Val → Prop
+  | closure {B o Γ σ ps body env ks R U} :
+      Fresh ps Γ → Typed P Φ (paramCtx (unann ps) ++ Γ) body R U → EnvOk P Φ Γ env σ →
+      Effs.Sub (Effs.union R (bigU σ (outerOf U ps))) B →
+      (o = false → ∀ q, q ∈ U → q ∉ ps) →
+      (∀ c, c ∈ ks → (∀ q, q ∈ U → q ∉ ps) ∧ Effs.Sub (Effs.union R (bigU σ U)) c.allows) →
+      ValOk P Φ B o (.closure ps body env ks)
 
 /-- Each name's value does at most what its binding says. -/
 inductive EnvOk (P : Program) (Φ : Name → Effs) : Ctx → Env → (Name → Effs) → Prop
   | nil {σ} : EnvOk P Φ [] [] σ
-  | cons {x b v Γ ρ σ} : ValOk P Φ (b.sem σ) v → EnvOk P Φ Γ ρ σ →
+  | cons {x b v Γ ρ σ} : ValOk P Φ (b.sem σ) b.callsOwn v → EnvOk P Φ Γ ρ σ →
       EnvOk P Φ ((x, b) :: Γ) ((x, v) :: ρ) σ
 end
 
@@ -347,12 +419,58 @@ theorem mem_toList {k : Option Ceiling} {c : Ceiling} (h : c ∈ k.toList) : k =
     simp [Option.toList] at h
     rw [h]
 
-theorem ValOk.mono {P Φ B B' v} (h : ValOk P Φ B v) (hs : Effs.Sub B B') : ValOk P Φ B' v := by
+theorem mem_outerOf {q : Name} {U ps : List Name} : q ∈ outerOf U ps ↔ q ∈ U ∧ q ∉ ps := by
+  simp [outerOf, List.mem_filter]
+
+/-- With none of its own parameters used, a closure's outer uses are all
+of its uses. -/
+theorem bigU_sub_outerOf {σ : Name → Effs} {U ps : List Name} (h : ∀ q, q ∈ U → q ∉ ps) :
+    Effs.Sub (bigU σ U) (bigU σ (outerOf U ps)) := by
+  intro e ⟨p, hp, hσ⟩
+  exact ⟨p, mem_outerOf.mpr ⟨hp, h p hp⟩, hσ⟩
+
+theorem callsOwn_false {b : Binding} (h : b.callsOwn = false) : ∀ q, q ∈ b.U → q ∉ b.ps := by
+  cases b with
+  | known R U ps =>
+    intro q hq hps
+    have hany : (U.any fun q => decide (q ∈ ps)) = true :=
+      List.any_eq_true.mpr ⟨q, hq, decide_eq_true hps⟩
+    simp only [Binding.callsOwn] at h
+    rw [h] at hany
+    cases hany
+  | param p => simp [Binding.callsOwn] at h
+
+theorem callsOwn_of_U_nil {b : Binding} (h : b.U = []) : b.callsOwn = false := by
+  cases b with
+  | known R U ps =>
+    simp only [Binding.U] at h
+    subst h
+    rfl
+  | param p => simp [Binding.U] at h
+
+/-- A binding with no outer uses does at most its own effects. -/
+theorem sem_of_outer_nil {b : Binding} {σ : Name → Effs} (h : b.outer = []) :
+    Effs.Sub (b.sem σ) b.R := by
+  intro e he
+  rcases he with hR | ⟨q, hq, _⟩
+  · exact hR
+  · rw [h] at hq
+    cases hq
+
+theorem outer_of_U_nil {b : Binding} (h : b.U = []) : b.outer = [] := by
+  simp [Binding.outer, outerOf, h]
+
+theorem param_mem_outer (p : Name) : p ∈ (Binding.param p).outer := by
+  simp [Binding.outer, outerOf, Binding.U, Binding.ps]
+
+theorem ValOk.mono {P Φ B B' o o' v} (h : ValOk P Φ B o v) (hs : Effs.Sub B B')
+    (ho : o' = false → o = false) : ValOk P Φ B' o' v := by
   cases h with
-  | closure ht henv hb hc => exact ValOk.closure ht henv (Effs.Sub.trans hb hs) hc
+  | closure hf ht henv hb hown hc =>
+    exact ValOk.closure hf ht henv (Effs.Sub.trans hb hs) (fun h' => hown (ho h')) hc
 
 theorem EnvOk.find {P Φ σ x v} : ∀ {Γ ρ}, EnvOk P Φ Γ ρ σ → NucleScript.lookup ρ x = some v →
-    ∃ b, NucleScript.lookup Γ x = some b ∧ ValOk P Φ (b.sem σ) v := by
+    ∃ b, NucleScript.lookup Γ x = some b ∧ ValOk P Φ (b.sem σ) b.callsOwn v := by
   intro Γ ρ h hl
   induction ρ generalizing Γ with
   | nil => simp [NucleScript.lookup] at hl
@@ -368,6 +486,41 @@ theorem EnvOk.find {P Φ σ x v} : ∀ {Γ ρ}, EnvOk P Φ Γ ρ σ → NucleScr
       · simp [NucleScript.lookup, hyx] at hl
         obtain ⟨b', hb', hv'⟩ := ih hrest hl
         exact ⟨b', by simp [NucleScript.lookup, hyx, hb'], hv'⟩
+
+theorem EnvOk.append {P Φ σ Γ₂ ρ₂} (h₂ : EnvOk P Φ Γ₂ ρ₂ σ) :
+    ∀ {ρ₁ Γ₁}, EnvOk P Φ Γ₁ ρ₁ σ → EnvOk P Φ (Γ₁ ++ Γ₂) (ρ₁ ++ ρ₂) σ := by
+  intro ρ₁
+  induction ρ₁ with
+  | nil =>
+    intro Γ₁ h₁
+    cases h₁
+    exact h₂
+  | cons xv ρ ih =>
+    intro Γ₁ h₁
+    cases h₁ with
+    | cons hv hr => exact EnvOk.cons hv (ih hr)
+
+/-- An environment keeps its meaning under a new `σ` that agrees on every
+parameter its bindings use. -/
+theorem EnvOk.congr {P Φ σ σ'} : ∀ {ρ Γ}, EnvOk P Φ Γ ρ σ →
+    (∀ y b, (y, b) ∈ Γ → ∀ q, q ∈ b.outer → σ' q = σ q) → EnvOk P Φ Γ ρ σ' := by
+  intro ρ
+  induction ρ with
+  | nil =>
+    intro Γ h _
+    cases h
+    exact EnvOk.nil
+  | cons xv ρ ih =>
+    intro Γ h hσ
+    cases h with
+    | @cons x b v Γ' _ _ hv hr =>
+      refine EnvOk.cons (hv.mono ?_ (fun h => h)) (ih hr (fun y b' hyb => hσ y b' (List.mem_cons_of_mem _ hyb)))
+      intro e he
+      rcases he with hR | ⟨q, hq, hqe⟩
+      · exact Or.inl hR
+      · refine Or.inr ⟨q, hq, ?_⟩
+        rw [hσ x b (by simp) q hq]
+        exact hqe
 
 /-- The callee's environment does what the arguments' bindings say, with
 every parameter without a ceiling bounded by all the closures they pass. -/
@@ -386,9 +539,9 @@ theorem bindArgs_ok {P Φ Γ ρ σ} (henv : EnvOk P Φ Γ ρ σ) :
       rw [hlb] at hb'
       cases hb'
       refine EnvOk.cons ?_ (ih ht ?_)
-      · refine hv.mono ?_
+      · refine hv.mono ?_ (fun h => by simp [paramBinding, Binding.callsOwn] at h)
         intro e he
-        refine Or.inr ⟨p, List.mem_singleton.mpr rfl, hB e ?_⟩
+        refine Or.inr ⟨p, param_mem_outer p, hB e ?_⟩
         rcases he with hR | hU
         · exact Or.inl (Or.inl hR)
         · exact Or.inr (bigU_append_left σ _ _ e hU)
@@ -401,17 +554,57 @@ theorem bindArgs_ok {P Φ Γ ρ σ} (henv : EnvOk P Φ Γ ρ σ) :
       rw [hlb] at hb'
       cases hb'
       refine EnvOk.cons ?_ (ih ht hB)
-      -- The value takes on the ceiling, which its effects fit.
+      -- The value takes on the ceiling, which its effects fit, and it calls
+      -- none of its own arguments, since its binding uses no parameter.
+      have hbR := sem_of_outer_nil (σ := σ) (outer_of_U_nil hU)
       cases hv with
-      | closure ht' henv' hb hc =>
-        refine ValOk.closure ht' henv' ?_ ?_
+      | closure hf ht' henv' hb hown hc =>
+        have hno := hown (callsOwn_of_U_nil hU)
+        refine ValOk.closure hf ht' henv' ?_ (fun _ => hno) ?_
         · intro e he
-          exact Or.inl (fits_sem hU hR e (hb e he))
+          exact Or.inl (hR e (hbR e (hb e he)))
         · intro c' hc'
           rcases List.mem_cons.mp hc' with heq | hin
           · subst heq
-            exact Effs.Sub.trans hb (fits_sem hU hR)
+            refine ⟨hno, ?_⟩
+            intro e he
+            refine hR e (hbR e (hb e ?_))
+            rcases he with h₁ | h₂
+            · exact Or.inl h₁
+            · exact Or.inr (bigU_sub_outerOf hno e h₂)
           · exact hc c' hin
+
+/-- A closure's own parameters, bound to the closures a call passes, each
+do at most what all of those closures do. -/
+theorem argsAll_bind {P Φ Γ ρ σ σ'' A} (henv : EnvOk P Φ Γ ρ σ) :
+    ∀ {qs as ρa}, BindArgs ρ qs as ρa →
+    (∀ p k, (p, k) ∈ qs → k = none ∧ Effs.Sub A (σ'' p)) →
+    ∀ {R U}, ArgsAll Γ as R U → Effs.Sub (Effs.union R (bigU σ U)) A →
+    EnvOk P Φ (paramCtx qs) ρa σ'' := by
+  intro qs as ρa hbind
+  induction hbind with
+  | nil => intro _ _ _ _ _; exact EnvOk.nil
+  | @cons p k a ps as v ρf hl hrest ih =>
+    intro hqs R U ha hA
+    obtain ⟨hk, hpA⟩ := hqs p k (by simp)
+    subst hk
+    cases ha with
+    | cons hlb ht =>
+      obtain ⟨b', hb', hv⟩ := henv.find hl
+      rw [hlb] at hb'
+      cases hb'
+      refine EnvOk.cons ?_ (ih (fun p' k' h => hqs p' k' (List.mem_cons_of_mem _ h)) ht ?_)
+      · refine hv.mono ?_ (fun h => by simp [paramBinding, Binding.callsOwn] at h)
+        intro e he
+        refine Or.inr ⟨p, param_mem_outer p, hpA e (hA e ?_)⟩
+        rcases he with hR | hU
+        · exact Or.inl (Or.inl hR)
+        · exact Or.inr (bigU_append_left σ _ _ e hU)
+      · intro e he
+        apply hA e
+        rcases he with hR | hU
+        · exact Or.inl (Or.inr hR)
+        · exact Or.inr (bigU_append_right σ _ _ e hU)
 
 /-! ## Soundness -/
 
@@ -492,15 +685,15 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
       rcases he with hR | hU
       · exact Or.inl (Or.inr hR)
       · exact Or.inr (bigU_append_right σ _ _ _ hU)
-  | @letClosure ρ cs x k body rest t b _ ih =>
+  | @letClosure ρ cs x k ps body rest t b _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
-    | letClosure hb hfit hr =>
+    | letClosure hfresh hb hfit hr =>
       refine ih hr (EnvOk.cons ?_ henv) ev hev
-      refine ValOk.closure hb henv (Effs.Sub.refl _) ?_
+      refine ValOk.closure hfresh hb henv (Effs.Sub.refl _) (fun h => callsOwn_false h) ?_
       intro c hc
       obtain ⟨hU, hR⟩ := hfit c (mem_toList hc)
-      exact fits_sem hU hR
+      exact ⟨fun q hq => (by rw [hU] at hq; cases hq), fits_sem hU hR⟩
   | letAlias hl _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
@@ -509,38 +702,101 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
       rw [hlb] at hb'
       cases hb'
       exact ih hr (EnvOk.cons hv henv) ev hev
-  | @letOpaque ρ cs x k body rest t b _ ih =>
+  | @letOpaque ρ cs x k ps body rest t b _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
-    | letOpaque hb hfit hr =>
+    | letOpaque hfresh hb hfit hr =>
       refine ih hr (EnvOk.cons ?_ henv) ev hev
-      refine ValOk.closure hb henv ?_ ?_
+      refine ValOk.closure hfresh hb henv ?_ ?_ ?_
       · intro e he
         cases k with
         | none => exact Or.inl trivial
         | some c =>
           obtain ⟨hU, hR⟩ := hfit c rfl
-          exact Or.inl (fits_sem hU hR e he)
+          refine Or.inl (hR e ?_)
+          rcases he with h₁ | ⟨q, hq, _⟩
+          · exact h₁
+          · rw [hU] at hq
+            simp [outerOf] at hq
+      · intro h q hq hps
+        cases k with
+        | none =>
+          simp only [Binding.callsOwn, opaqueU, opaquePs, List.any_eq_false] at h
+          exact h q hps (decide_eq_true hps)
+        | some c =>
+          obtain ⟨hU, _⟩ := hfit c rfl
+          rw [hU] at hq
+          cases hq
       · intro c hc
         obtain ⟨hU, hR⟩ := hfit c (mem_toList hc)
-        exact fits_sem hU hR
-  | callClosure hl _ ih =>
+        exact ⟨fun q hq => (by rw [hU] at hq; cases hq), fits_sem hU hR⟩
+  | @callClosure ρ cs x args ps body ρ' ks ρa t b hl hbind _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
-    | callClosure hlb =>
+    | @callClosure _ _ _ bx Ra Ua hlb hargs =>
       obtain ⟨b', hb', hv⟩ := henv.find hl
       rw [hlb] at hb'
       cases hb'
       cases hv with
-      | closure htb henvb hbound hceil =>
-        obtain ⟨he, hc⟩ := ih htb henvb ev hev
-        refine ⟨hbound _ he, ?_⟩
-        intro c hcin
-        rcases hc c hcin with hks | hall
-        · rcases List.mem_append.mp hks with hk | hcs
-          · exact Or.inr (hceil c hk _ he)
-          · exact Or.inl hcs
-        · exact Or.inr hall
+      | @closure _ _ Γc σc _ _ _ _ Rb Ub hfresh htb henvc hbound hown hceil =>
+        -- The closure's own parameters hold the arguments; everything it
+        -- captured keeps its meaning, since its parameters are named apart.
+        obtain ⟨σ'', hin, hout⟩ : ∃ σ'' : Name → Effs,
+            (∀ q, q ∈ ps → σ'' q = Effs.union Ra (bigU σ Ua)) ∧ (∀ q, q ∉ ps → σ'' q = σc q) :=
+          ⟨fun q => if q ∈ ps then Effs.union Ra (bigU σ Ua) else σc q,
+            fun q h => by simp [h], fun q h => by simp [h]⟩
+        have henva : EnvOk P Φ (paramCtx (unann ps)) ρa σ'' := by
+          refine argsAll_bind henv hbind ?_ hargs (Effs.Sub.refl _)
+          intro p k hpk
+          simp only [unann, List.mem_map] at hpk
+          obtain ⟨q, hq, hqe⟩ := hpk
+          cases hqe
+          refine ⟨rfl, ?_⟩
+          rw [hin _ hq]
+          exact Effs.Sub.refl _
+        have henvc' : EnvOk P Φ Γc ρ' σ'' :=
+          henvc.congr (fun y b' hyb q hq => hout q (hfresh y b' hyb q hq))
+        obtain ⟨he, hc⟩ := ih htb (EnvOk.append henvc' henva) ev hev
+        have lift : ∀ e, Effs.union Rb (bigU σc (outerOf Ub ps)) e →
+            Effs.union (Effs.union bx.R (argEffs bx Ra)) (bigU σ (bx.outer ++ argUses bx Ua)) e := by
+          intro e h'
+          rcases hbound e h' with hR | hU
+          · exact Or.inl (Or.inl hR)
+          · exact Or.inr (bigU_append_left σ _ _ e hU)
+        refine ⟨?_, ?_⟩
+        · rcases he with hR | ⟨q, hq, hqe⟩
+          · exact lift _ (Or.inl hR)
+          · by_cases hqp : q ∈ ps
+            · -- A use of its own parameter: the callee may call its
+              -- arguments, so the call counts them.
+              cases hm : bx.mayCallArgs with
+              | false =>
+                have hco : bx.callsOwn = false := by
+                  cases bx with
+                  | known R' U' ps' =>
+                    simp only [Binding.mayCallArgs, Bool.not_eq_false', List.isEmpty_iff] at hm
+                    subst hm
+                    simp [Binding.callsOwn]
+                  | param p => simp [Binding.mayCallArgs] at hm
+                exact absurd hqp (hown hco q hq)
+              | true =>
+                rw [hin q hqp] at hqe
+                rcases hqe with hR | hU
+                · exact Or.inl (Or.inr (by simp [argEffs, hm]; exact hR))
+                · exact Or.inr (bigU_append_right σ _ _ _ (by simp only [argUses, hm, ite_true]; exact hU))
+            · rw [hout q hqp] at hqe
+              exact lift _ (Or.inr ⟨q, mem_outerOf.mpr ⟨hq, hqp⟩, hqe⟩)
+        · intro c hcin
+          rcases hc c hcin with hks | hall
+          · rcases List.mem_append.mp hks with hk | hcs
+            · obtain ⟨hno, hsub⟩ := hceil c hk
+              refine Or.inr (hsub _ ?_)
+              rcases he with hR | ⟨q, hq, hqe⟩
+              · exact Or.inl hR
+              · rw [hout q (hno q hq)] at hqe
+                exact Or.inr ⟨q, hq, hqe⟩
+            · exact Or.inl hcs
+          · exact Or.inr hall
   | @callFun ρ cs f args d ρf t b hf hbind _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
@@ -588,20 +844,20 @@ inductive Confirmed : Stmt → Prop
   | op {o} : o.confirmed = true → Confirmed (.op o)
   | seq {s₁ s₂} : Confirmed s₁ → Confirmed s₂ → Confirmed (.seq s₁ s₂)
   | choice {s₁ s₂} : Confirmed s₁ → Confirmed s₂ → Confirmed (.choice s₁ s₂)
-  | letClosure {x k body rest} : Confirmed body → Confirmed rest →
-      Confirmed (.letClosure x k body rest)
+  | letClosure {x k ps body rest} : Confirmed body → Confirmed rest →
+      Confirmed (.letClosure x k ps body rest)
   | letAlias {x y rest} : Confirmed rest → Confirmed (.letAlias x y rest)
-  | letOpaque {x k body rest} : Confirmed body → Confirmed rest →
-      Confirmed (.letOpaque x k body rest)
-  | callClosure {x} : Confirmed (.callClosure x)
+  | letOpaque {x k ps body rest} : Confirmed body → Confirmed rest →
+      Confirmed (.letOpaque x k ps body rest)
+  | callClosure {x args} : Confirmed (.callClosure x args)
   | callFun {f args} : Confirmed (.callFun f args)
   | loop {body} : Confirmed body → Confirmed (.loop body)
   | stop : Confirmed .stop
 
 mutual
 inductive ValConfirmed : Val → Prop
-  | closure {body env ks} : Confirmed body → EnvConfirmed env →
-      ValConfirmed (.closure body env ks)
+  | closure {ps body env ks} : Confirmed body → EnvConfirmed env →
+      ValConfirmed (.closure ps body env ks)
 
 inductive EnvConfirmed : Env → Prop
   | nil : EnvConfirmed []
@@ -624,6 +880,16 @@ theorem EnvConfirmed.find {x v} : ∀ {ρ}, EnvConfirmed ρ → NucleScript.look
         exact hw
       · simp [NucleScript.lookup, hyx] at hl
         exact ih hrest hl
+
+theorem EnvConfirmed.append {ρ₂} (h₂ : EnvConfirmed ρ₂) :
+    ∀ {ρ₁}, EnvConfirmed ρ₁ → EnvConfirmed (ρ₁ ++ ρ₂) := by
+  intro ρ₁
+  induction ρ₁ with
+  | nil => intro _; exact h₂
+  | cons xv ρ ih =>
+    intro h₁
+    cases h₁ with
+    | cons hv hr => exact EnvConfirmed.cons hv (ih hr)
 
 theorem bindArgs_confirmed {ρ} (h : EnvConfirmed ρ) :
     ∀ {ps as ρf}, BindArgs ρ ps as ρf → EnvConfirmed ρf := by
@@ -698,11 +964,11 @@ theorem eval_confirmed {P} (hP : ProgramConfirmed P) :
     cases hc with
     | letOpaque hb hr =>
       exact ih hr (EnvConfirmed.cons (ValConfirmed.closure hb henv) henv) ev hev
-  | callClosure hl _ ih =>
+  | callClosure hl hbind _ ih =>
     intro _ henv ev hev
     have hv := henv.find hl
     cases hv with
-    | closure hb he => exact ih hb he ev hev
+    | closure hb he => exact ih hb (EnvConfirmed.append he (bindArgs_confirmed henv hbind)) ev hev
   | @callFun ρ cs f args d ρf t b hf hbind _ ih =>
     intro _ henv ev hev
     exact ih (hP f d hf) (bindArgs_confirmed henv hbind) ev hev

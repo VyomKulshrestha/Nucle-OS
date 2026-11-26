@@ -17,9 +17,9 @@ prefix form:
     <ceiling> ::= none | hw | syn | sqn | key
     <stmt>    ::= op <store | sim | get | del1 | del0 | syn1 | syn0 | sqn1 | sqn0>
                 | seq <stmt> <stmt> | alt <stmt> <stmt>
-                | clo <x> <ceiling> <stmt> <stmt> | alias <x> <y> <stmt>
-                | opq <x> <ceiling> <stmt> <stmt>
-                | call <x> | callf <f> <n> <arg> ...
+                | clo <x> <ceiling> <n> <param> ... <stmt> <stmt> | alias <x> <y> <stmt>
+                | opq <x> <ceiling> <n> <param> ... <stmt> <stmt>
+                | call <x> <n> <arg> ... | callf <f> <n> <arg> ...
                 | loop <stmt> | stop
 
 `del0` is a delete without its confirmation, `syn1`/`sqn1` a synthesis or
@@ -63,20 +63,24 @@ partial def parseStmt : List String → Option (Stmt × List String)
     let (a, r₁) ← parseStmt rest
     let (b, r₂) ← parseStmt r₁
     pure (.choice a b, r₂)
-  | "clo" :: x :: c :: rest => do
+  | "clo" :: x :: c :: n :: rest => do
     let k ← parseCeiling c
-    let (body, r₁) ← parseStmt rest
+    let (ps, r₀) ← takeN (← n.toNat?) rest
+    let (body, r₁) ← parseStmt r₀
     let (s, r₂) ← parseStmt r₁
-    pure (.letClosure x k body s, r₂)
+    pure (.letClosure x k ps body s, r₂)
   | "alias" :: x :: y :: rest => do
     let (s, r) ← parseStmt rest
     pure (.letAlias x y s, r)
-  | "opq" :: x :: c :: rest => do
+  | "opq" :: x :: c :: n :: rest => do
     let k ← parseCeiling c
-    let (body, r₁) ← parseStmt rest
+    let (ps, r₀) ← takeN (← n.toNat?) rest
+    let (body, r₁) ← parseStmt r₀
     let (s, r₂) ← parseStmt r₁
-    pure (.letOpaque x k body s, r₂)
-  | "call" :: x :: rest => some (.callClosure x, rest)
+    pure (.letOpaque x k ps body s, r₂)
+  | "call" :: x :: n :: rest => do
+    let (args, r) ← takeN (← n.toNat?) rest
+    pure (.callClosure x args, r)
   | "stop" :: rest => some (.stop, rest)
   | "loop" :: rest => do
     let (body, r) ← parseStmt rest
