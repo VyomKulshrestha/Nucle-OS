@@ -64,6 +64,10 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.94:** fix. A parameter of enum type
+  can be given a second name (`let again: Job = job`); it was reported as
+  an undeclared variable. Programs 1.0 rejected for this are now
+  accepted. None of the 33 programs in the 1.0 corpus changed.
 - **26 November 2026, NucleOS v0.1.93:** fix. A `let` in a generic
   function annotated with the function's type parameter (`let held:
   Pool<P> = source`) checks at every call. The check that runs the body

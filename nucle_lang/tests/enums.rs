@@ -433,3 +433,27 @@ fn a_ceiling_on_an_enum_payload_is_checked_when_the_value_is_built() {
     assert!(result.steps.iter().any(|s| s.contains("removed") && s.contains("sample_a.txt")), "steps: {:?}", result.steps);
     assert!(nucle_lang::take_run_trace().faults.is_empty());
 }
+
+#[test]
+fn an_enum_parameter_can_be_given_a_second_name() {
+    // A parameter of enum type was registered for `match` but not as a
+    // binding, so a `let` naming it again reported it undeclared. The
+    // comparison with the Lean rules found it.
+    let src = format!(
+        "{RECOVERY_PLAN}{POOL}fn keep() returns Void {{
+    retrieve from archive
+}}
+fn pick(plan: RecoveryPlan) returns Void {{
+    let again: RecoveryPlan = plan
+    let done: Void = match again {{
+        Retry => keep(),
+        _ => keep(),
+    }}
+}}
+let chosen: RecoveryPlan = RecoveryPlan::Retry
+let ran: Void = pick(chosen)
+"
+    );
+    assert!(diagnostic_codes(&src).is_empty(), "{:?}", check_source(&src).diagnostics);
+    compile(&src).expect("a second name for an enum parameter compiles");
+}

@@ -2388,6 +2388,14 @@ impl TypeChecker {
             // `TypeChecker::enum_bindings`'s own doc comment.
             TypeExpr::Enum(enum_name) => {
                 self.enum_bindings.insert(param.name.clone(), enum_name.clone());
+                // Its declared type, so `let held: Job = job` can give the
+                // parameter a second name.
+                self.bindings.insert(param.name.clone(), LetDecl {
+                    name: param.name.clone(),
+                    annotation: param.ty.clone(),
+                    expr: Expr::Variable(param.name.clone()),
+                    span,
+                });
             }
             TypeExpr::Result(ok, err) => {
                 self.result_bindings.insert(param.name.clone(), ((**ok).clone(), (**err).clone()));
