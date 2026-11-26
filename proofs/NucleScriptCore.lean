@@ -5,11 +5,12 @@ A core of NucleScript with the parts its effect rules are about:
 operations with effects and confirmations, sequencing, branches (an `if` or
 a `match`: either side may run), closures bound by `let` with or without an
 effect ceiling, other names for closures, closures the checker cannot see
-into (returned by a function, taken out of an enum), calls to closures, and
-named functions taking closure arguments, with or without ceilings. Closures
-take no arguments of their own. Pools, files, `Result` and the rest add no
-effects of their own (an early return through `?` only skips operations),
-so they are left out.
+into (returned by a function, taken out of an enum), calls to closures,
+named functions taking closure arguments, with or without ceilings, loops
+over a pool's files (zero or more passes), and an early return through `?`
+(`stop`), which ends the function or closure it is in. Closures take no
+arguments of their own. Pools, files, `Result` and the rest add no effects
+of their own, so they are left out.
 
 The static rules give a statement two things: `R`, the effects it may have
 itself, and `U`, the parameters without a ceiling whose closures it may run.
@@ -126,6 +127,11 @@ inductive Stmt where
   | letOpaque (x : Name) (k : Option Ceiling) (body rest : Stmt)
   | callClosure (x : Name)
   | callFun (f : Name) (args : List Name)
+  /-- `for f in files of pool { body }`: the body runs zero or more times. -/
+  | loop (body : Stmt)
+  /-- A `?` meeting an `Err`: the enclosing function or closure returns
+  here, and nothing after it in that function or closure runs. -/
+  | stop
 
 /-- A named function: its closure parameters, each with or without a
 ceiling, and its body. Named functions capture nothing. -/
@@ -167,29 +173,37 @@ inductive BindArgs (ρ : Env) : List (Name × Option Ceiling) → List Name → 
       lookup ρ a = some v → BindArgs ρ ps as ρf →
       BindArgs ρ ((p, k) :: ps) (a :: as) ((p, v.underCeiling k) :: ρf)
 
-/-- `Eval P ρ cs s t`: in environment `ρ`, under the ceilings `cs` of the
-closure calls in progress, `s` can run and perform the events `t`. -/
-inductive Eval (P : Program) : Env → List Ceiling → Stmt → List Event → Prop
+/-- `Eval P ρ cs s t b`: in environment `ρ`, under the ceilings `cs` of the
+closure calls in progress, `s` can run and perform the events `t`; `b` says
+whether it stopped at a `?` (`stop`), so that what follows in the same
+function or closure does not run. A call returns normally either way. -/
+inductive Eval (P : Program) : Env → List Ceiling → Stmt → List Event → Bool → Prop
   | opEffect {ρ cs o e} : o.effect = some e →
-      Eval P ρ cs (.op o) [⟨e, o.confirmed, cs⟩]
-  | opPure {ρ cs o} : o.effect = none → Eval P ρ cs (.op o) []
-  | seq {ρ cs s₁ s₂ t₁ t₂} : Eval P ρ cs s₁ t₁ → Eval P ρ cs s₂ t₂ →
-      Eval P ρ cs (.seq s₁ s₂) (t₁ ++ t₂)
-  | choiceLeft {ρ cs s₁ s₂ t} : Eval P ρ cs s₁ t → Eval P ρ cs (.choice s₁ s₂) t
-  | choiceRight {ρ cs s₁ s₂ t} : Eval P ρ cs s₂ t → Eval P ρ cs (.choice s₁ s₂) t
-  | letClosure {ρ cs x k body rest t} :
-      Eval P ((x, .closure body ρ k.toList) :: ρ) cs rest t →
-      Eval P ρ cs (.letClosure x k body rest) t
-  | letAlias {ρ cs x y rest v t} : lookup ρ y = some v →
-      Eval P ((x, v) :: ρ) cs rest t → Eval P ρ cs (.letAlias x y rest) t
-  | letOpaque {ρ cs x k body rest t} :
-      Eval P ((x, .closure body ρ k.toList) :: ρ) cs rest t →
-      Eval P ρ cs (.letOpaque x k body rest) t
-  | callClosure {ρ cs x body ρ' ks t} :
-      lookup ρ x = some (.closure body ρ' ks) → Eval P ρ' (ks ++ cs) body t →
-      Eval P ρ cs (.callClosure x) t
-  | callFun {ρ cs f args d ρf t} : P f = some d → BindArgs ρ d.params args ρf →
-      Eval P ρf cs d.body t → Eval P ρ cs (.callFun f args) t
+      Eval P ρ cs (.op o) [⟨e, o.confirmed, cs⟩] false
+  | opPure {ρ cs o} : o.effect = none → Eval P ρ cs (.op o) [] false
+  | stop {ρ cs} : Eval P ρ cs .stop [] true
+  | seq {ρ cs s₁ s₂ t₁ t₂ b} : Eval P ρ cs s₁ t₁ false → Eval P ρ cs s₂ t₂ b →
+      Eval P ρ cs (.seq s₁ s₂) (t₁ ++ t₂) b
+  | seqStop {ρ cs s₁ s₂ t₁} : Eval P ρ cs s₁ t₁ true → Eval P ρ cs (.seq s₁ s₂) t₁ true
+  | choiceLeft {ρ cs s₁ s₂ t b} : Eval P ρ cs s₁ t b → Eval P ρ cs (.choice s₁ s₂) t b
+  | choiceRight {ρ cs s₁ s₂ t b} : Eval P ρ cs s₂ t b → Eval P ρ cs (.choice s₁ s₂) t b
+  | letClosure {ρ cs x k body rest t b} :
+      Eval P ((x, .closure body ρ k.toList) :: ρ) cs rest t b →
+      Eval P ρ cs (.letClosure x k body rest) t b
+  | letAlias {ρ cs x y rest v t b} : lookup ρ y = some v →
+      Eval P ((x, v) :: ρ) cs rest t b → Eval P ρ cs (.letAlias x y rest) t b
+  | letOpaque {ρ cs x k body rest t b} :
+      Eval P ((x, .closure body ρ k.toList) :: ρ) cs rest t b →
+      Eval P ρ cs (.letOpaque x k body rest) t b
+  | callClosure {ρ cs x body ρ' ks t b} :
+      lookup ρ x = some (.closure body ρ' ks) → Eval P ρ' (ks ++ cs) body t b →
+      Eval P ρ cs (.callClosure x) t false
+  | callFun {ρ cs f args d ρf t b} : P f = some d → BindArgs ρ d.params args ρf →
+      Eval P ρf cs d.body t b → Eval P ρ cs (.callFun f args) t false
+  | loopDone {ρ cs body} : Eval P ρ cs (.loop body) [] false
+  | loopStep {ρ cs body t₁ t₂ b} : Eval P ρ cs body t₁ false → Eval P ρ cs (.loop body) t₂ b →
+      Eval P ρ cs (.loop body) (t₁ ++ t₂) b
+  | loopStop {ρ cs body t} : Eval P ρ cs body t true → Eval P ρ cs (.loop body) t true
 
 /-! ## The rules -/
 
@@ -267,6 +281,9 @@ inductive Typed (P : Program) (Φ : Name → Effs) : Ctx → Stmt → Effs → L
   | callClosure {Γ x b} : lookup Γ x = some b → Typed P Φ Γ (.callClosure x) b.R b.U
   | callFun {Γ f args d R U} : P f = some d → ArgsOk Γ d.params args R U →
       Typed P Φ Γ (.callFun f args) (Effs.union (Φ f) R) U
+  /-- A loop may do whatever its body does, any number of times. -/
+  | loop {Γ body R U} : Typed P Φ Γ body R U → Typed P Φ Γ (.loop body) R U
+  | stop {Γ} : Typed P Φ Γ .stop Effs.none []
 
 /-- Every function's body is accepted, with its effect within its
 signature. -/
@@ -402,12 +419,37 @@ theorem bindArgs_ok {P Φ Γ ρ σ} (henv : EnvOk P Φ Γ ρ σ) :
 parameters' closures bounded by `σ`) and allowed by every ceiling in force
 that the statement itself did not inherit. -/
 theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
-    ∀ {ρ cs s t}, Eval P ρ cs s t →
+    ∀ {ρ cs s t b}, Eval P ρ cs s t b →
     ∀ {Γ R U σ}, Typed P Φ Γ s R U → EnvOk P Φ Γ ρ σ →
     ∀ ev, ev ∈ t →
       (Effs.union R (bigU σ U)) ev.effect ∧ (∀ c, c ∈ ev.ceilings → c ∈ cs ∨ c.allows ev.effect) := by
-  intro ρ cs s t h
+  intro ρ cs s t b h
   induction h with
+  | stop =>
+    intro _ _ _ _ _ _ ev hev
+    cases hev
+  | seqStop _ ih =>
+    intro Γ R U σ ht henv ev hev
+    cases ht with
+    | seq h₁ _ =>
+      obtain ⟨he, hc⟩ := ih h₁ henv ev hev
+      refine ⟨?_, hc⟩
+      rcases he with hR | hU
+      · exact Or.inl (Or.inl hR)
+      · exact Or.inr (bigU_append_left σ _ _ _ hU)
+  | loopDone =>
+    intro _ _ _ _ _ _ ev hev
+    cases hev
+  | loopStep _ _ ih₁ ih₂ =>
+    intro Γ R U σ ht henv ev hev
+    rcases List.mem_append.mp hev with hev | hev
+    · cases ht with
+      | loop hb => exact ih₁ hb henv ev hev
+    · exact ih₂ ht henv ev hev
+  | loopStop _ ih =>
+    intro Γ R U σ ht henv ev hev
+    cases ht with
+    | loop hb => exact ih hb henv ev hev
   | opEffect he =>
     intro Γ R U σ ht _ ev hev
     cases ht
@@ -450,7 +492,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
       rcases he with hR | hU
       · exact Or.inl (Or.inr hR)
       · exact Or.inr (bigU_append_right σ _ _ _ hU)
-  | @letClosure ρ cs x k body rest t _ ih =>
+  | @letClosure ρ cs x k body rest t b _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
     | letClosure hb hfit hr =>
@@ -467,7 +509,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
       rw [hlb] at hb'
       cases hb'
       exact ih hr (EnvOk.cons hv henv) ev hev
-  | @letOpaque ρ cs x k body rest t _ ih =>
+  | @letOpaque ρ cs x k body rest t b _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
     | letOpaque hb hfit hr =>
@@ -499,7 +541,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
           · exact Or.inr (hceil c hk _ he)
           · exact Or.inl hcs
         · exact Or.inr hall
-  | @callFun ρ cs f args d ρf t hf hbind _ ih =>
+  | @callFun ρ cs f args d ρf t b hf hbind _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
     | callFun hf' hargs =>
@@ -519,8 +561,8 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
 
 /-- A whole program, a statement run from nothing under no ceilings,
 performs only effects its rules report. -/
-theorem program_effects_sound {P Φ s t R U} (hP : ProgramOk P Φ)
-    (h : Eval P [] [] s t) (ht : Typed P Φ [] s R U) :
+theorem program_effects_sound {P Φ s t b R U} (hP : ProgramOk P Φ)
+    (h : Eval P [] [] s t b) (ht : Typed P Φ [] s R U) :
     ∀ ev, ev ∈ t → R ev.effect := by
   intro ev hev
   rcases (eval_sound hP h ht (EnvOk.nil (σ := fun _ => Effs.none)) ev hev).1 with hR | hU
@@ -530,8 +572,8 @@ theorem program_effects_sound {P Φ s t R U} (hP : ProgramOk P Φ)
 
 /-- Every operation a whole program performs is allowed by every ceiling of
 the closure calls it runs inside. -/
-theorem program_ceilings_sound {P Φ s t R U} (hP : ProgramOk P Φ)
-    (h : Eval P [] [] s t) (ht : Typed P Φ [] s R U) :
+theorem program_ceilings_sound {P Φ s t b R U} (hP : ProgramOk P Φ)
+    (h : Eval P [] [] s t b) (ht : Typed P Φ [] s R U) :
     ∀ ev, ev ∈ t → ∀ c, c ∈ ev.ceilings → c.allows ev.effect := by
   intro ev hev c hc
   rcases (eval_sound hP h ht (EnvOk.nil (σ := fun _ => Effs.none)) ev hev).2 c hc with hnil | hall
@@ -553,6 +595,8 @@ inductive Confirmed : Stmt → Prop
       Confirmed (.letOpaque x k body rest)
   | callClosure {x} : Confirmed (.callClosure x)
   | callFun {f args} : Confirmed (.callFun f args)
+  | loop {body} : Confirmed body → Confirmed (.loop body)
+  | stop : Confirmed .stop
 
 mutual
 inductive ValConfirmed : Val → Prop
@@ -598,10 +642,26 @@ theorem bindArgs_confirmed {ρ} (h : EnvConfirmed ρ) :
 def ProgramConfirmed (P : Program) : Prop := ∀ f d, P f = some d → Confirmed d.body
 
 theorem eval_confirmed {P} (hP : ProgramConfirmed P) :
-    ∀ {ρ cs s t}, Eval P ρ cs s t → Confirmed s → EnvConfirmed ρ →
+    ∀ {ρ cs s t b}, Eval P ρ cs s t b → Confirmed s → EnvConfirmed ρ →
     ∀ ev, ev ∈ t → ev.confirmed = true := by
-  intro ρ cs s t h
+  intro ρ cs s t b h
   induction h with
+  | stop => intro _ _ ev hev; cases hev
+  | seqStop _ ih =>
+    intro hc henv ev hev
+    cases hc with
+    | seq h₁ _ => exact ih h₁ henv ev hev
+  | loopDone => intro _ _ ev hev; cases hev
+  | loopStep _ _ ih₁ ih₂ =>
+    intro hc henv ev hev
+    rcases List.mem_append.mp hev with hev | hev
+    · cases hc with
+      | loop hb => exact ih₁ hb henv ev hev
+    · exact ih₂ hc henv ev hev
+  | loopStop _ ih =>
+    intro hc henv ev hev
+    cases hc with
+    | loop hb => exact ih hb henv ev hev
   | opEffect _ =>
     intro hc _ ev hev
     rw [List.mem_singleton] at hev
@@ -643,13 +703,13 @@ theorem eval_confirmed {P} (hP : ProgramConfirmed P) :
     have hv := henv.find hl
     cases hv with
     | closure hb he => exact ih hb he ev hev
-  | @callFun ρ cs f args d ρf t hf hbind _ ih =>
+  | @callFun ρ cs f args d ρf t b hf hbind _ ih =>
     intro _ henv ev hev
     exact ih (hP f d hf) (bindArgs_confirmed henv hbind) ev hev
 
 /-- A whole program whose operations and function bodies all carry their
 confirmations performs only confirmed operations. -/
-theorem program_confirmed {P s t} (hP : ProgramConfirmed P) (h : Eval P [] [] s t)
+theorem program_confirmed {P s t b} (hP : ProgramConfirmed P) (h : Eval P [] [] s t b)
     (hc : Confirmed s) : ∀ ev, ev ∈ t → ev.confirmed = true :=
   eval_confirmed hP h hc EnvConfirmed.nil
 

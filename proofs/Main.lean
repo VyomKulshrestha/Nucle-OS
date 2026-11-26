@@ -20,6 +20,7 @@ prefix form:
                 | clo <x> <ceiling> <stmt> <stmt> | alias <x> <y> <stmt>
                 | opq <x> <ceiling> <stmt> <stmt>
                 | call <x> | callf <f> <n> <arg> ...
+                | loop <stmt> | stop
 
 `del0` is a delete without its confirmation, `syn1`/`sqn1` a synthesis or
 sequencing with one, and so on.
@@ -76,6 +77,10 @@ partial def parseStmt : List String → Option (Stmt × List String)
     let (s, r₂) ← parseStmt r₁
     pure (.letOpaque x k body s, r₂)
   | "call" :: x :: rest => some (.callClosure x, rest)
+  | "stop" :: rest => some (.stop, rest)
+  | "loop" :: rest => do
+    let (body, r) ← parseStmt rest
+    pure (.loop body, r)
   | "callf" :: f :: n :: rest => do
     let (args, r) ← takeN (← n.toNat?) rest
     pure (.callFun f args, r)

@@ -197,6 +197,8 @@ def argsCheck (Γ : CCtx) : List (Name × Option Ceiling) → List Name → Opti
 
 def check (P : Program) (Φ : Name → BEffs) : CCtx → Stmt → Option (BEffs × List Name)
   | _, .op o => some (BEffs.ofEff o.effect, [])
+  | _, .stop => some (BEffs.none, [])
+  | Γ, .loop body => check P Φ Γ body
   | Γ, .seq s₁ s₂ =>
     match check P Φ Γ s₁, check P Φ Γ s₂ with
     | some (R₁, U₁), some (R₂, U₂) => some (R₁.union R₂, U₁ ++ U₂)
@@ -271,6 +273,16 @@ theorem check_sound {P : Program} {Φ : Name → BEffs} :
     Typed P (fun f => (Φ f).toEffs) (CCtx.toCtx Γ) s R.toEffs U := by
   intro s
   induction s with
+  | stop =>
+    intro Γ R U h
+    simp [check] at h
+    obtain ⟨rfl, rfl⟩ := h
+    rw [BEffs.toEffs_none]
+    exact Typed.stop
+  | loop body ih =>
+    intro Γ R U h
+    simp only [check] at h
+    exact Typed.loop (ih h)
   | op o =>
     intro Γ R U h
     simp [check] at h
@@ -388,6 +400,8 @@ def confirmedB : Stmt → Bool
   | .letOpaque _ _ body rest => confirmedB body && confirmedB rest
   | .callClosure _ => true
   | .callFun _ _ => true
+  | .loop body => confirmedB body
+  | .stop => true
 
 theorem confirmedB_sound : ∀ {s}, confirmedB s = true → Confirmed s
   | .op o, h => Confirmed.op h
@@ -406,6 +420,8 @@ theorem confirmedB_sound : ∀ {s}, confirmedB s = true → Confirmed s
     exact Confirmed.letOpaque (confirmedB_sound h.1) (confirmedB_sound h.2)
   | .callClosure _, _ => Confirmed.callClosure
   | .callFun _ _, _ => Confirmed.callFun
+  | .loop _, h => Confirmed.loop (confirmedB_sound h)
+  | .stop, _ => Confirmed.stop
 
 /-- Every function body in `fs` carries its confirmations. -/
 def programConfirmedB (P : Program) (fs : List Name) : Bool :=
@@ -424,21 +440,21 @@ theorem programConfirmedB_sound {P : Program} {fs : List Name}
 
 /-! ## What an accepted program keeps -/
 
-theorem accept_effects_sound {P : Program} {Φ : Name → BEffs} {fs : List Name} {s R U t}
+theorem accept_effects_sound {P : Program} {Φ : Name → BEffs} {fs : List Name} {s R U t b}
     (hcover : ∀ f d, P f = some d → f ∈ fs) (hok : programOkB P Φ fs = true)
-    (hc : check P Φ [] s = some (R, U)) (h : Eval P [] [] s t) :
+    (hc : check P Φ [] s = some (R, U)) (h : Eval P [] [] s t b) :
     ∀ ev, ev ∈ t → R.toEffs ev.effect :=
   program_effects_sound (programOkB_sound hcover hok) h (check_sound (Γ := []) hc)
 
-theorem accept_ceilings_sound {P : Program} {Φ : Name → BEffs} {fs : List Name} {s R U t}
+theorem accept_ceilings_sound {P : Program} {Φ : Name → BEffs} {fs : List Name} {s R U t b}
     (hcover : ∀ f d, P f = some d → f ∈ fs) (hok : programOkB P Φ fs = true)
-    (hc : check P Φ [] s = some (R, U)) (h : Eval P [] [] s t) :
+    (hc : check P Φ [] s = some (R, U)) (h : Eval P [] [] s t b) :
     ∀ ev, ev ∈ t → ∀ c, c ∈ ev.ceilings → c.allows ev.effect :=
   program_ceilings_sound (programOkB_sound hcover hok) h (check_sound (Γ := []) hc)
 
-theorem accept_confirmed {P : Program} {fs : List Name} {s t}
+theorem accept_confirmed {P : Program} {fs : List Name} {s t b}
     (hcover : ∀ f d, P f = some d → f ∈ fs) (hok : programConfirmedB P fs = true)
-    (hc : confirmedB s = true) (h : Eval P [] [] s t) :
+    (hc : confirmedB s = true) (h : Eval P [] [] s t b) :
     ∀ ev, ev ∈ t → ev.confirmed = true :=
   program_confirmed (programConfirmedB_sound hcover hok) h (confirmedB_sound hc)
 
