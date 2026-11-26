@@ -4,6 +4,27 @@ use crate::ast::{DeleteOp, Declaration, Effect, Expr, FnEffectAnnotation, FnPara
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+thread_local! {
+    /// The enum variants whose payload is a closure, set from the program
+    /// being analysed by [`set_closure_payloads`]: a `match` arm that binds
+    /// one of these knows its binding is a closure.
+    static CLOSURE_PAYLOADS: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
+}
+
+/// Records which enum variants of `program` carry a closure, for the
+/// `match` arms that take one out (see [`expr_effects`]).
+pub fn set_closure_payloads(program: &Program) {
+    let payloads: HashSet<String> = program
+        .declarations
+        .iter()
+        .filter_map(|decl| if let Declaration::Enum(e) = decl { Some(e) } else { None })
+        .flat_map(|e| e.variants.iter())
+        .filter(|v| matches!(v.payload, Some(TypeExpr::Fn(..))))
+        .map(|v| v.name.clone())
+        .collect();
+    CLOSURE_PAYLOADS.with(|p| *p.borrow_mut() = payloads);
+}
+
 /// Maps a function's declared name to its declaration, built once per
 /// program and threaded through effect classification so a call site can
 /// see what the callee's body actually does instead of assuming `Pure`.
@@ -173,9 +194,24 @@ pub fn expr_effects(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable
         // analysis has never modeled "this branch might not run" (an
         // `If`'s untaken branch already counts), so a `Destructive`
         // operation in any one arm still requires confirmation.
-        Expr::Match { scrutinee, arms } => arms
-            .iter()
-            .fold(expr_effects(scrutinee, funcs, closures, fn_param_effects, resolving), |acc, arm| acc.union(expr_effects(&arm.body, funcs, closures, fn_param_effects, resolving))),
+        // A closure an arm takes out of the enum is one the analysis cannot
+        // see into: a call through it has every effect, as before, and so
+        // does a call it is passed to.
+        Expr::Match { scrutinee, arms } => arms.iter().fold(expr_effects(scrutinee, funcs, closures, fn_param_effects, resolving), |acc, arm| {
+            let closure_binding = match (&arm.variant, &arm.binding) {
+                (Some(variant), Some(binding)) if CLOSURE_PAYLOADS.with(|p| p.borrow().contains(variant)) => Some(binding),
+                _ => None,
+            };
+            let arm_effects = match closure_binding {
+                Some(binding) => {
+                    let mut scoped = fn_param_effects.clone();
+                    scoped.insert(binding.clone(), EffectSet::all());
+                    expr_effects(&arm.body, funcs, closures, &scoped, resolving)
+                }
+                None => expr_effects(&arm.body, funcs, closures, fn_param_effects, resolving),
+            };
+            acc.union(arm_effects)
+        }),
     }
 }
 
@@ -189,9 +225,23 @@ pub fn expr_effects(expr: &Expr, funcs: &FunctionTable, closures: &FunctionTable
 /// callee's body already counts their declared ceiling. Joined whether or
 /// not the callee calls the parameter on every path, the same
 /// over-approximation an untaken `if` branch gets.
+///
+/// A call through a parameter or a closure the analysis cannot see into
+/// has no body here to say which arguments it calls, so every closure
+/// passed to it counts: the closure it holds may call any of them, and no
+/// other call site knows they reach it.
 fn closure_args_effect(name: &str, args: &[Expr], funcs: &FunctionTable, closures: &FunctionTable, fn_param_effects: &ParamEffects, resolving: &mut ResolvingSet) -> EffectSet {
     let Some(callee) = funcs.get(name).or_else(|| closures.get(name)) else {
-        return EffectSet::default();
+        return args.iter().fold(EffectSet::default(), |acc, arg| {
+            let effect = match arg {
+                Expr::Closure { params, body, .. } => body_effects(body, funcs, closures, &scoped_fn_param_effects(params, fn_param_effects), resolving).0,
+                Expr::Variable(bound) if funcs.contains_key(bound) || closures.contains_key(bound) || fn_param_effects.contains_key(bound) => {
+                    function_call_effects(bound, funcs, closures, fn_param_effects, resolving).0
+                }
+                _ => EffectSet::default(),
+            };
+            acc.union(effect)
+        });
     };
     callee.params.iter().zip(args).fold(EffectSet::default(), |acc, (param, arg)| {
         if !matches!(param.ty, TypeExpr::Fn(_, _, None)) {
@@ -453,8 +503,8 @@ fn block_effect(block: &[Declaration], funcs: &FunctionTable, closures: &Functio
 /// it: a closure literal by its body; another name for a closure or
 /// parameter already in scope, as that one; any other value of an
 /// annotated `Fn(...) -> T confirm ...` type, by its ceiling, which the
-/// checker enforced where the value was bound. Anything else stays
-/// unknown, so a call through it has every effect.
+/// checker enforced where the value was bound; any other `Fn` value as
+/// doing anything. Other values are not callable.
 pub fn bind_callable(scope: &mut FunctionTable, ceilings: &mut ParamEffects, decl: &Declaration) {
     let Declaration::Let(LetDecl { name, annotation, expr, .. }) = decl else { return };
     match expr {
@@ -477,11 +527,18 @@ pub fn bind_callable(scope: &mut FunctionTable, ceilings: &mut ParamEffects, dec
             let ceiling = ceilings[other];
             ceilings.insert(name.clone(), ceiling);
         }
-        _ => {
-            if let TypeExpr::Fn(_, _, Some(ceiling)) = annotation {
+        _ => match annotation {
+            TypeExpr::Fn(_, _, Some(ceiling)) => {
                 ceilings.insert(name.clone(), ceiling.allowed());
             }
-        }
+            // A closure the analysis cannot see into: a call through it
+            // has every effect either way, and naming it here lets a call
+            // it is passed to count it as well.
+            TypeExpr::Fn(_, _, None) => {
+                ceilings.insert(name.clone(), EffectSet::all());
+            }
+            _ => {}
+        },
     }
 }
 
@@ -680,6 +737,7 @@ pub fn decl_effect_info(decl: &Declaration, funcs: &FunctionTable, closures: &Fu
 }
 
 pub fn effect_summary(program: &Program) -> EffectSummary {
+    set_closure_payloads(program);
     let funcs = function_table(program);
     let (mut closures, mut ceilings) = (FunctionTable::new(), HashMap::new());
     let mut declarations = Vec::new();

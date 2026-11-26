@@ -258,6 +258,7 @@ impl TypeChecker {
     fn check(&mut self, program: &Program) -> Program {
         let expanded = crate::imports::expand_imports(program);
         let program = &expanded;
+        crate::effects::set_closure_payloads(program);
         self.predeclare_functions(program);
         let mut declarations = Vec::new();
         for declaration in &program.declarations {
@@ -1060,7 +1061,11 @@ impl TypeChecker {
                     (Some(effect), _) => {
                         self.fn_param_effects.insert(binding.name.clone(), effect.allowed());
                     }
-                    _ => {}
+                    // Untraceable: every effect, which a call it is passed
+                    // to must count too.
+                    (None, _) => {
+                        self.fn_param_effects.insert(binding.name.clone(), crate::effects::EffectSet::all());
+                    }
                 }
             }
             self.bindings.insert(binding.name.clone(), binding.clone());
@@ -2005,7 +2010,11 @@ impl TypeChecker {
         let confirmed_enough = actual_effect == Effect::Pure || actual_confirmed;
         // Every kind of effect the closure may have must fit, not just its
         // worst: one that stores and deletes fits neither ceiling.
-        let untraceable = matches!(expr, Expr::Variable(name) if !self.closure_decls.contains_key(name) && !visible.contains_key(name) && !self.functions.contains_key(name));
+        // No ceiling allows all three kinds of effect, so a name entered
+        // with all three is a closure the checker cannot see into.
+        let untraceable = matches!(expr, Expr::Variable(name) if !self.closure_decls.contains_key(name)
+            && !self.functions.contains_key(name)
+            && visible.get(name).is_none_or(|effects| *effects == crate::effects::EffectSet::all()));
         if untraceable {
             let Expr::Variable(name) = expr else { unreachable!() };
             self.report.error(span, "E-FN-EFFECT-ARG-MISMATCH", format!(

@@ -132,3 +132,39 @@ fn a_parameter_without_a_ceiling_fits_no_ceiling() {
     let codes = diagnostic_codes(&src);
     assert_eq!(codes.iter().filter(|c| *c == "E-FN-EFFECT-ARG-MISMATCH").count(), 2, "{codes:?}");
 }
+
+/// A function that hands a closure to its parameter: whatever closure the
+/// parameter holds may call it, and no other call site sees it go there.
+const HANDS_ON: &str = "fn apply(g: Fn(Fn() -> Void) -> Void) returns Void {\n    let wipe: Fn() -> Void = fn() -> Void {\n        delete \"a.txt\" from archive confirm physical_key\n    }\n    let r: Void = g(wipe)\n}\n";
+const CALLS_ITS_ARGUMENT: &str = "fn(k: Fn() -> Void) -> Void {\n    let x: Void = k()\n}";
+
+/// The delete it hands on was dropped: `nucle explain` called the call
+/// Pure, and running it deleted.
+#[test]
+fn a_closure_passed_to_a_parameter_counts_at_that_call() {
+    let src = format!("{POOL}{HANDS_ON}let w: Void = apply({CALLS_ITS_ARGUMENT})\n");
+    assert_eq!(effect_of(&src, "w"), Effect::Destructive);
+    assert!(diagnostic_codes(&src).iter().all(|c| !c.starts_with("E-")), "{:?}", diagnostic_codes(&src));
+}
+
+/// ...so under a `confirm hardware` ceiling it is refused, where before it
+/// ran a delete there.
+#[test]
+fn a_closure_passed_to_a_parameter_counts_under_a_ceiling() {
+    let src = format!(
+        "{POOL}{HANDS_ON}fn only_hardware(job: Fn() -> Void confirm hardware) returns Void {{\n    let r: Void = job()\n}}\n\
+         let z: Void = only_hardware(fn() -> Void {{\n    let w: Void = apply({CALLS_ITS_ARGUMENT})\n}})\n"
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()), "{:?}", diagnostic_codes(&src));
+}
+
+/// The same through a closure taken out of an enum and handed on.
+#[test]
+fn a_closure_from_an_enum_passed_to_a_parameter_counts_too() {
+    let src = format!(
+        "{POOL}enum Task {{\n    Run(Fn() -> Void),\n}}\n\
+         fn via(g: Fn(Fn() -> Void) -> Void) returns Void {{\n    let t: Task = Task::Run(fn() -> Void {{\n        delete \"a.txt\" from archive confirm physical_key\n    }})\n    let r: Void = match t {{\n        Run(job) => g(job),\n    }}\n}}\n\
+         let w: Void = via({CALLS_ITS_ARGUMENT})\n"
+    );
+    assert_eq!(effect_of(&src, "w"), Effect::Destructive);
+}
