@@ -323,10 +323,28 @@ inductive ArgsAll (Γ : Ctx) : List Name → Effs → List Name → Prop
   | cons {a as b R U} : lookup Γ a = some b → ArgsAll Γ as R U →
       ArgsAll Γ (a :: as) (Effs.union b.R R) (b.outer ++ U)
 
-/-- A closure's own parameters are named apart from the parameters the
-closures in scope may run, so a use of one is never taken for the other. -/
+/-- No closure the body can see by name runs a parameter named like one of
+the closure's own: such a use would be taken for the closure's own. -/
 def Fresh (ps : List Name) (Γ : Ctx) : Prop :=
-  ∀ y b, (y, b) ∈ Γ → ∀ q, q ∈ b.outer → q ∉ ps
+  ∀ y b, lookup Γ y = some b → y ∉ ps → ∀ q, q ∈ b.outer → q ∉ ps
+
+/-- A binding that may do anything, calling its own arguments if it has
+any. -/
+def weakB : Binding → Binding
+  | .known _ _ ps => .known Effs.all ps ps
+  | .param _ => .known Effs.all ["*"] ["*"]
+
+/-- How a binding in scope is seen inside a closure whose own parameters
+are `ps`: unchanged, unless it is still visible and runs an outer parameter
+that a name in `ps` now hides, in which case it may do anything. -/
+def weakenB (ps : List Name) (y : Name) (b : Binding) : Binding :=
+  if (decide (y ∉ ps) && b.outer.any fun q => decide (q ∈ ps)) = true then weakB b else b
+
+/-- The context a closure body is checked in, before its own parameters
+are added: a closure parameter may reuse any name in scope. -/
+def weaken (ps : List Name) : Ctx → Ctx
+  | [] => []
+  | (y, b) :: Γ => (y, weakenB ps y b) :: weaken ps Γ
 
 /-- `Typed P Φ Γ s R U`: `s` may have the effects `R` and run the closures
 of the parameters `U`. `Φ f` is the effect of calling `f`, its own body's
@@ -337,14 +355,14 @@ inductive Typed (P : Program) (Φ : Name → Effs) : Ctx → Stmt → Effs → L
       Typed P Φ Γ (.seq s₁ s₂) (Effs.union R₁ R₂) (U₁ ++ U₂)
   | choice {Γ s₁ s₂ R₁ R₂ U₁ U₂} : Typed P Φ Γ s₁ R₁ U₁ → Typed P Φ Γ s₂ R₂ U₂ →
       Typed P Φ Γ (.choice s₁ s₂) (Effs.union R₁ R₂) (U₁ ++ U₂)
-  | letClosure {Γ x k ps body rest Rb Ub R U} : Fresh ps Γ →
-      Typed P Φ (paramCtx (unann ps) ++ Γ) body Rb Ub → Fits k Rb Ub →
+  | letClosure {Γ x k ps body rest Rb Ub R U} :
+      Typed P Φ (paramCtx (unann ps) ++ weaken ps Γ) body Rb Ub → Fits k Rb Ub →
       Typed P Φ ((x, .known Rb Ub ps) :: Γ) rest R U →
       Typed P Φ Γ (.letClosure x k ps body rest) R U
   | letAlias {Γ x y rest b R U} : lookup Γ y = some b →
       Typed P Φ ((x, b) :: Γ) rest R U → Typed P Φ Γ (.letAlias x y rest) R U
-  | letOpaque {Γ x k ps body rest Rb Ub R U} : Fresh ps Γ →
-      Typed P Φ (paramCtx (unann ps) ++ Γ) body Rb Ub → Fits k Rb Ub →
+  | letOpaque {Γ x k ps body rest Rb Ub R U} :
+      Typed P Φ (paramCtx (unann ps) ++ weaken ps Γ) body Rb Ub → Fits k Rb Ub →
       Typed P Φ ((x, .known (opaqueEffs k) (opaqueU k ps) (opaquePs k ps)) :: Γ) rest R U →
       Typed P Φ Γ (.letOpaque x k ps body rest) R U
   /-- A call may do what the closure does, and what the closures passed to
@@ -371,17 +389,20 @@ under each of its ceilings it calls none of them and does only what the
 ceiling allows. -/
 inductive ValOk (P : Program) (Φ : Name → Effs) : Effs → Bool → Val → Prop
   | closure {B o Γ σ ps body env ks R U} :
-      Fresh ps Γ → Typed P Φ (paramCtx (unann ps) ++ Γ) body R U → EnvOk P Φ Γ env σ →
+      Fresh ps Γ → Typed P Φ (paramCtx (unann ps) ++ Γ) body R U → EnvOk P Φ [] Γ env σ →
       Effs.Sub (Effs.union R (bigU σ (outerOf U ps))) B →
       (o = false → ∀ q, q ∈ U → q ∉ ps) →
       (∀ c, c ∈ ks → (∀ q, q ∈ U → q ∉ ps) ∧ Effs.Sub (Effs.union R (bigU σ U)) c.allows) →
       ValOk P Φ B o (.closure ps body env ks)
 
-/-- Each name's value does at most what its binding says. -/
-inductive EnvOk (P : Program) (Φ : Name → Effs) : Ctx → Env → (Name → Effs) → Prop
-  | nil {σ} : EnvOk P Φ [] [] σ
-  | cons {x b v Γ ρ σ} : ValOk P Φ (b.sem σ) b.callsOwn v → EnvOk P Φ Γ ρ σ →
-      EnvOk P Φ ((x, b) :: Γ) ((x, v) :: ρ) σ
+/-- Each name's value does at most what its binding says. A name already
+in `seen` is hidden by an earlier one, so nothing is asked of it. -/
+inductive EnvOk (P : Program) (Φ : Name → Effs) : List Name → Ctx → Env → (Name → Effs) → Prop
+  | nil {seen σ} : EnvOk P Φ seen [] [] σ
+  | cons {seen x b v Γ ρ σ} : ValOk P Φ (b.sem σ) b.callsOwn v →
+      EnvOk P Φ (x :: seen) Γ ρ σ → EnvOk P Φ seen ((x, b) :: Γ) ((x, v) :: ρ) σ
+  | hidden {seen x b v Γ ρ σ} : x ∈ seen →
+      EnvOk P Φ (x :: seen) Γ ρ σ → EnvOk P Φ seen ((x, b) :: Γ) ((x, v) :: ρ) σ
 end
 
 /-! ## Lemmas -/
@@ -472,13 +493,19 @@ theorem ValOk.mono {P Φ B B' o o' v} (h : ValOk P Φ B o v) (hs : Effs.Sub B B'
   | closure hf ht henv hb hown hc =>
     exact ValOk.closure hf ht henv (Effs.Sub.trans hb hs) (fun h' => hown (ho h')) hc
 
-theorem EnvOk.find {P Φ σ x v} : ∀ {Γ ρ}, EnvOk P Φ Γ ρ σ → NucleScript.lookup ρ x = some v →
+theorem EnvOk.find {P Φ σ x v} : ∀ {seen Γ ρ}, EnvOk P Φ seen Γ ρ σ → x ∉ seen →
+    NucleScript.lookup ρ x = some v →
     ∃ b, NucleScript.lookup Γ x = some b ∧ ValOk P Φ (b.sem σ) b.callsOwn v := by
-  intro Γ ρ h hl
-  induction ρ generalizing Γ with
+  intro seen Γ ρ h hx hl
+  induction ρ generalizing Γ seen with
   | nil => simp [NucleScript.lookup] at hl
   | cons yw ρ ih =>
     obtain ⟨y, w⟩ := yw
+    have hx' : y ≠ x → x ∉ y :: seen := by
+      intro hyx hm
+      rcases List.mem_cons.mp hm with h' | h'
+      · exact hyx h'.symm
+      · exact hx h'
     cases h with
     | cons hw hrest =>
       by_cases hyx : y = x
@@ -487,56 +514,178 @@ theorem EnvOk.find {P Φ σ x v} : ∀ {Γ ρ}, EnvOk P Φ Γ ρ σ → NucleScr
         subst hl
         exact ⟨_, by simp [NucleScript.lookup], hw⟩
       · simp [NucleScript.lookup, hyx] at hl
-        obtain ⟨b', hb', hv'⟩ := ih hrest hl
+        obtain ⟨b', hb', hv'⟩ := ih hrest (hx' hyx) hl
+        exact ⟨b', by simp [NucleScript.lookup, hyx, hb'], hv'⟩
+    | hidden hs hrest =>
+      by_cases hyx : y = x
+      · subst hyx
+        exact absurd hs hx
+      · simp [NucleScript.lookup, hyx] at hl
+        obtain ⟨b', hb', hv'⟩ := ih hrest (hx' hyx) hl
         exact ⟨b', by simp [NucleScript.lookup, hyx, hb'], hv'⟩
 
-theorem EnvOk.append {P Φ σ Γ₂ ρ₂} (h₂ : EnvOk P Φ Γ₂ ρ₂ σ) :
-    ∀ {ρ₁ Γ₁}, EnvOk P Φ Γ₁ ρ₁ σ → EnvOk P Φ (Γ₁ ++ Γ₂) (ρ₁ ++ ρ₂) σ := by
-  intro ρ₁
-  induction ρ₁ with
-  | nil =>
-    intro Γ₁ h₁
-    cases h₁
-    exact h₂
-  | cons xv ρ ih =>
-    intro Γ₁ h₁
-    cases h₁ with
-    | cons hv hr => exact EnvOk.cons hv (ih hr)
-
-/-- An environment keeps its meaning under a new `σ` that agrees on every
-parameter its bindings use. -/
-theorem EnvOk.congr {P Φ σ σ'} : ∀ {ρ Γ}, EnvOk P Φ Γ ρ σ →
-    (∀ y b, (y, b) ∈ Γ → ∀ q, q ∈ b.outer → σ' q = σ q) → EnvOk P Φ Γ ρ σ' := by
+theorem EnvOk.mono_seen {P Φ σ} : ∀ {ρ seen seen' Γ}, EnvOk P Φ seen Γ ρ σ →
+    (∀ q, q ∈ seen → q ∈ seen') → EnvOk P Φ seen' Γ ρ σ := by
   intro ρ
   induction ρ with
   | nil =>
-    intro Γ h _
+    intro seen seen' Γ h _
     cases h
     exact EnvOk.nil
   | cons xv ρ ih =>
-    intro Γ h hσ
+    intro seen seen' Γ h hs
+    have hs' : ∀ x, ∀ q, q ∈ x :: seen → q ∈ x :: seen' := by
+      intro x q hq
+      rcases List.mem_cons.mp hq with h' | h'
+      · subst h'
+        simp
+      · exact List.mem_cons_of_mem _ (hs q h')
     cases h with
-    | @cons x b v Γ' _ _ hv hr =>
-      refine EnvOk.cons (hv.mono ?_ (fun h => h)) (ih hr (fun y b' hyb => hσ y b' (List.mem_cons_of_mem _ hyb)))
-      intro e he
-      rcases he with hR | ⟨q, hq, hqe⟩
-      · exact Or.inl hR
-      · refine Or.inr ⟨q, hq, ?_⟩
-        rw [hσ x b (by simp) q hq]
-        exact hqe
+    | cons hw hr => exact EnvOk.cons hw (ih hr (hs' _))
+    | hidden hd hr => exact EnvOk.hidden (hs _ hd) (ih hr (hs' _))
+
+theorem EnvOk.append {P Φ σ Γ₂ ρ₂} :
+    ∀ {ρ₁ seen Γ₁}, EnvOk P Φ seen Γ₁ ρ₁ σ →
+    EnvOk P Φ ((Γ₁.map Prod.fst).reverse ++ seen) Γ₂ ρ₂ σ →
+    EnvOk P Φ seen (Γ₁ ++ Γ₂) (ρ₁ ++ ρ₂) σ := by
+  intro ρ₁
+  induction ρ₁ with
+  | nil =>
+    intro seen Γ₁ h₁ h₂
+    cases h₁
+    simpa using h₂
+  | cons xv ρ ih =>
+    intro seen Γ₁ h₁ h₂
+    cases h₁ with
+    | cons hw hr =>
+      refine EnvOk.cons hw (ih hr ?_)
+      simpa [List.map_cons, List.reverse_cons, List.append_assoc] using h₂
+    | hidden hd hr =>
+      refine EnvOk.hidden hd (ih hr ?_)
+      simpa [List.map_cons, List.reverse_cons, List.append_assoc] using h₂
+
+/-- An environment keeps its meaning under a new `σ` that agrees on every
+parameter its visible bindings use. -/
+theorem EnvOk.congr {P Φ σ σ'} : ∀ {ρ seen Γ}, EnvOk P Φ seen Γ ρ σ →
+    (∀ y b, NucleScript.lookup Γ y = some b → y ∉ seen → ∀ q, q ∈ b.outer → σ' q = σ q) →
+    EnvOk P Φ seen Γ ρ σ' := by
+  intro ρ
+  induction ρ with
+  | nil =>
+    intro seen Γ h _
+    cases h
+    exact EnvOk.nil
+  | cons xv ρ ih =>
+    intro seen Γ h hσ
+    have tail : ∀ (x : Name) (b : Binding) (Γ' : Ctx),
+        (∀ (y : Name) (b₁ : Binding), NucleScript.lookup ((x, b) :: Γ') y = some b₁ → y ∉ seen →
+          ∀ q, q ∈ b₁.outer → σ' q = σ q) →
+        ∀ (y : Name) (b' : Binding), NucleScript.lookup Γ' y = some b' → y ∉ x :: seen →
+          ∀ q, q ∈ b'.outer → σ' q = σ q := by
+      intro x b Γ' hσ y b' hyb hy q hq
+      have hyx : y ≠ x := fun h => hy (by simp [h])
+      have hl : NucleScript.lookup ((x, b) :: Γ') y = some b' := by
+        simp [NucleScript.lookup, Ne.symm hyx, hyb]
+      exact hσ y b' hl (fun h => hy (List.mem_cons_of_mem _ h)) q hq
+    cases h with
+    | @cons _ x b v Γ' _ _ hv hr =>
+      by_cases hxs : x ∈ seen
+      · exact EnvOk.hidden hxs (ih hr (tail x b Γ' hσ))
+      · refine EnvOk.cons (hv.mono ?_ (fun h => h)) (ih hr (tail x b Γ' hσ))
+        intro e he
+        rcases he with hR | ⟨q, hq, hqe⟩
+        · exact Or.inl hR
+        · refine Or.inr ⟨q, hq, ?_⟩
+          rw [hσ x b (by simp [NucleScript.lookup]) hxs q hq]
+          exact hqe
+    | @hidden _ x b v Γ' _ _ hd hr => exact EnvOk.hidden hd (ih hr (tail x b Γ' hσ))
+
+theorem lookup_weaken (ps : List Name) (y : Name) :
+    ∀ Γ : Ctx, NucleScript.lookup (weaken ps Γ) y = (NucleScript.lookup Γ y).map (weakenB ps y)
+  | [] => rfl
+  | (z, b) :: Γ => by
+    by_cases hzy : z = y
+    · subst hzy
+      simp [weaken, NucleScript.lookup]
+    · simp [weaken, NucleScript.lookup, hzy, lookup_weaken ps y Γ]
+
+theorem fresh_weaken (ps : List Name) (Γ : Ctx) : Fresh ps (weaken ps Γ) := by
+  intro y b hl hy q hq hqp
+  rw [lookup_weaken] at hl
+  cases hb : NucleScript.lookup Γ y with
+  | none =>
+    rw [hb] at hl
+    cases hl
+  | some b₀ =>
+    rw [hb] at hl
+    simp only [Option.map_some, Option.some.injEq] at hl
+    subst hl
+    unfold weakenB at hq
+    by_cases hc : (decide (y ∉ ps) && b₀.outer.any fun q => decide (q ∈ ps)) = true
+    · rw [if_pos hc] at hq
+      cases b₀ with
+      | known R U ps' =>
+        simp only [weakB, Binding.outer, Binding.U, Binding.ps] at hq
+        exact (mem_outerOf.mp hq).2 (mem_outerOf.mp hq).1
+      | param p =>
+        simp only [weakB, Binding.outer, Binding.U, Binding.ps] at hq
+        exact (mem_outerOf.mp hq).2 (mem_outerOf.mp hq).1
+    · rw [if_neg hc] at hq
+      apply hc
+      simp only [Bool.and_eq_true, decide_eq_true_eq]
+      exact ⟨hy, List.any_eq_true.mpr ⟨q, hq, decide_eq_true hqp⟩⟩
+
+theorem weakenB_ok {P Φ σ ps y b v} (h : ValOk P Φ (b.sem σ) b.callsOwn v) :
+    ValOk P Φ ((weakenB ps y b).sem σ) (weakenB ps y b).callsOwn v := by
+  unfold weakenB
+  by_cases hc : (decide (y ∉ ps) && b.outer.any fun q => decide (q ∈ ps)) = true
+  · rw [if_pos hc]
+    cases b with
+    | known R U ps' =>
+      refine h.mono (fun e _ => Or.inl trivial) ?_
+      intro hco
+      cases ps' with
+      | nil => simp [Binding.callsOwn]
+      | cons p ps'' => simp [weakB, Binding.callsOwn] at hco
+    | param p =>
+      refine h.mono (fun e _ => Or.inl trivial) ?_
+      intro hco
+      simp [weakB, Binding.callsOwn] at hco
+  · rw [if_neg hc]
+    exact h
+
+theorem EnvOk.weaken {P Φ σ ps} : ∀ {ρ seen Γ}, EnvOk P Φ seen Γ ρ σ →
+    EnvOk P Φ seen (NucleScript.weaken ps Γ) ρ σ := by
+  intro ρ
+  induction ρ with
+  | nil =>
+    intro seen Γ h
+    cases h
+    exact EnvOk.nil
+  | cons xv ρ ih =>
+    intro seen Γ h
+    cases h with
+    | cons hv hr => exact EnvOk.cons (weakenB_ok hv) (ih hr)
+    | hidden hd hr => exact EnvOk.hidden hd (ih hr)
+
+theorem paramCtx_unann_names : ∀ ps : List Name, (paramCtx (unann ps)).map Prod.fst = ps
+  | [] => rfl
+  | p :: ps => by
+    show (paramCtx ((p, none) :: unann ps)).map Prod.fst = p :: ps
+    simp only [paramCtx, List.map_cons, paramCtx_unann_names ps]
 
 /-- The callee's environment does what the arguments' bindings say, with
 every parameter without a ceiling bounded by all the closures they pass. -/
-theorem bindArgs_ok {P Φ Γ ρ σ} (henv : EnvOk P Φ Γ ρ σ) :
-    ∀ {ps as ρf}, BindArgs ρ ps as ρf → ∀ {R U B}, ArgsOk Γ ps as R U →
+theorem bindArgs_ok {P Φ Γ ρ σ} (henv : EnvOk P Φ [] Γ ρ σ) :
+    ∀ {ps as ρf}, BindArgs ρ ps as ρf → ∀ {R U B seen}, ArgsOk Γ ps as R U →
     Effs.Sub (Effs.union R (bigU σ U)) B →
-    EnvOk P Φ (paramCtx ps) ρf (fun _ => B) := by
+    EnvOk P Φ seen (paramCtx ps) ρf (fun _ => B) := by
   intro ps as ρf hbind
   induction hbind with
-  | nil => intro _ _ _ _ _; exact EnvOk.nil
+  | nil => intro _ _ _ _ _ _; exact EnvOk.nil
   | @cons p k a ps as v ρf hl hrest ih =>
-    intro R U B ha hB
-    obtain ⟨b', hb', hv⟩ := henv.find hl
+    intro R U B seen ha hB
+    obtain ⟨b', hb', hv⟩ := henv.find (by simp) hl
     cases ha with
     | unannotated hlb ht =>
       rw [hlb] at hb'
@@ -579,21 +728,21 @@ theorem bindArgs_ok {P Φ Γ ρ σ} (henv : EnvOk P Φ Γ ρ σ) :
 
 /-- A closure's own parameters, bound to the closures a call passes, each
 do at most what all of those closures do. -/
-theorem argsAll_bind {P Φ Γ ρ σ σ'' A} (henv : EnvOk P Φ Γ ρ σ) :
+theorem argsAll_bind {P Φ Γ ρ σ σ'' A} (henv : EnvOk P Φ [] Γ ρ σ) :
     ∀ {qs as ρa}, BindArgs ρ qs as ρa →
     (∀ p k, (p, k) ∈ qs → k = none ∧ Effs.Sub A (σ'' p)) →
-    ∀ {R U}, ArgsAll Γ as R U → Effs.Sub (Effs.union R (bigU σ U)) A →
-    EnvOk P Φ (paramCtx qs) ρa σ'' := by
+    ∀ {R U seen}, ArgsAll Γ as R U → Effs.Sub (Effs.union R (bigU σ U)) A →
+    EnvOk P Φ seen (paramCtx qs) ρa σ'' := by
   intro qs as ρa hbind
   induction hbind with
-  | nil => intro _ _ _ _ _; exact EnvOk.nil
+  | nil => intro _ _ _ _ _ _; exact EnvOk.nil
   | @cons p k a ps as v ρf hl hrest ih =>
-    intro hqs R U ha hA
+    intro hqs R U seen ha hA
     obtain ⟨hk, hpA⟩ := hqs p k (by simp)
     subst hk
     cases ha with
     | cons hlb ht =>
-      obtain ⟨b', hb', hv⟩ := henv.find hl
+      obtain ⟨b', hb', hv⟩ := henv.find (by simp) hl
       rw [hlb] at hb'
       cases hb'
       refine EnvOk.cons ?_ (ih (fun p' k' h => hqs p' k' (List.mem_cons_of_mem _ h)) ht ?_)
@@ -616,7 +765,7 @@ parameters' closures bounded by `σ`) and allowed by every ceiling in force
 that the statement itself did not inherit. -/
 theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
     ∀ {ρ cs s t b}, Eval P ρ cs s t b →
-    ∀ {Γ R U σ}, Typed P Φ Γ s R U → EnvOk P Φ Γ ρ σ →
+    ∀ {Γ R U σ}, Typed P Φ Γ s R U → EnvOk P Φ [] Γ ρ σ →
     ∀ ev, ev ∈ t →
       (Effs.union R (bigU σ U)) ev.effect ∧ (∀ c, c ∈ ev.ceilings → c ∈ cs ∨ c.allows ev.effect) := by
   intro ρ cs s t b h
@@ -691,9 +840,9 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
   | @letClosure ρ cs x k ps body rest t b _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
-    | letClosure hfresh hb hfit hr =>
-      refine ih hr (EnvOk.cons ?_ henv) ev hev
-      refine ValOk.closure hfresh hb henv (Effs.Sub.refl _) (fun h => callsOwn_false h) ?_
+    | letClosure hb hfit hr =>
+      refine ih hr (EnvOk.cons ?_ (henv.mono_seen (by simp))) ev hev
+      refine ValOk.closure (fresh_weaken ps Γ) hb henv.weaken (Effs.Sub.refl _) (fun h => callsOwn_false h) ?_
       intro c hc
       obtain ⟨hU, hR⟩ := hfit c (mem_toList hc)
       exact ⟨fun q hq => (by rw [hU] at hq; cases hq), fits_sem hU hR⟩
@@ -701,16 +850,16 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
     intro Γ R U σ ht henv ev hev
     cases ht with
     | letAlias hlb hr =>
-      obtain ⟨b', hb', hv⟩ := henv.find hl
+      obtain ⟨b', hb', hv⟩ := henv.find (by simp) hl
       rw [hlb] at hb'
       cases hb'
-      exact ih hr (EnvOk.cons hv henv) ev hev
+      exact ih hr (EnvOk.cons hv (henv.mono_seen (by simp))) ev hev
   | @letOpaque ρ cs x k ps body rest t b _ ih =>
     intro Γ R U σ ht henv ev hev
     cases ht with
-    | letOpaque hfresh hb hfit hr =>
-      refine ih hr (EnvOk.cons ?_ henv) ev hev
-      refine ValOk.closure hfresh hb henv ?_ ?_ ?_
+    | letOpaque hb hfit hr =>
+      refine ih hr (EnvOk.cons ?_ (henv.mono_seen (by simp))) ev hev
+      refine ValOk.closure (fresh_weaken ps Γ) hb henv.weaken ?_ ?_ ?_
       · intro e he
         cases k with
         | none => exact Or.inl trivial
@@ -737,7 +886,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
     intro Γ R U σ ht henv ev hev
     cases ht with
     | @callClosure _ _ _ bx Ra Ua hlb hargs =>
-      obtain ⟨b', hb', hv⟩ := henv.find hl
+      obtain ⟨b', hb', hv⟩ := henv.find (by simp) hl
       rw [hlb] at hb'
       cases hb'
       cases hv with
@@ -748,7 +897,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
             (∀ q, q ∈ ps → σ'' q = Effs.union Ra (bigU σ Ua)) ∧ (∀ q, q ∉ ps → σ'' q = σc q) :=
           ⟨fun q => if q ∈ ps then Effs.union Ra (bigU σ Ua) else σc q,
             fun q h => by simp [h], fun q h => by simp [h]⟩
-        have henva : EnvOk P Φ (paramCtx (unann ps)) ρa σ'' := by
+        have henva : EnvOk P Φ [] (paramCtx (unann ps)) ρa σ'' := by
           refine argsAll_bind henv hbind ?_ hargs (Effs.Sub.refl _)
           intro p k hpk
           simp only [unann, List.mem_map] at hpk
@@ -757,9 +906,13 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
           refine ⟨rfl, ?_⟩
           rw [hin _ hq]
           exact Effs.Sub.refl _
-        have henvc' : EnvOk P Φ Γc ρ' σ'' :=
-          henvc.congr (fun y b' hyb q hq => hout q (hfresh y b' hyb q hq))
-        obtain ⟨he, hc⟩ := ih htb (EnvOk.append henvc' henva) ev hev
+        have henvc' : EnvOk P Φ ps.reverse Γc ρ' σ'' :=
+          (henvc.mono_seen (by simp)).congr
+            (fun y b' hyb hy q hq => hout q (hfresh y b' hyb (by simpa using hy) q hq))
+        have henvc'' : EnvOk P Φ (((paramCtx (unann ps)).map Prod.fst).reverse ++ []) Γc ρ' σ'' := by
+          rw [paramCtx_unann_names, List.append_nil]
+          exact henvc'
+        obtain ⟨he, hc⟩ := ih htb (EnvOk.append henva henvc'') ev hev
         have lift : ∀ e, Effs.union Rb (bigU σc (outerOf Ub ps)) e →
             Effs.union (Effs.union bx.R (argEffs bx Ra)) (bigU σ (bx.outer ++ argUses bx Ua)) e := by
           intro e h'
@@ -807,7 +960,7 @@ theorem eval_sound {P Φ} (hP : ProgramOk P Φ) :
       rw [hf] at hf'
       cases hf'
       obtain ⟨Rb, Ub, htb, hsig⟩ := hP f d hf
-      have henvf := bindArgs_ok henv hbind hargs (Effs.Sub.refl _)
+      have henvf := bindArgs_ok (seen := []) henv hbind hargs (Effs.Sub.refl _)
       obtain ⟨he, hc⟩ := ih htb henvf ev hev
       refine ⟨?_, hc⟩
       rcases he with hR | hU

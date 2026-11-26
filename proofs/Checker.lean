@@ -213,19 +213,31 @@ theorem fitsB_sound {k : Option Ceiling} {R : BEffs} {U : List Name} (h : fitsB 
   rw [Ceiling.ballows_toEffs] at this
   exact this
 
-/-- A closure's own parameters are named apart from every parameter the
-bindings in scope may run. -/
-def freshB (ps : List Name) (Γ : CCtx) : Bool :=
-  Γ.all fun yb => yb.2.outer.all fun q => decide (q ∉ ps)
+def CBinding.weak : CBinding → CBinding
+  | .known _ _ ps => .known BEffs.all ps ps
+  | .param _ => .known BEffs.all ["*"] ["*"]
 
-theorem freshB_sound {ps : List Name} {Γ : CCtx} (h : freshB ps Γ = true) :
-    Fresh ps (CCtx.toCtx Γ) := by
-  intro y b hyb q hq
-  obtain ⟨c, hc, rfl⟩ := CCtx.mem_toCtx hyb
-  rw [CBinding.toBinding_outer] at hq
-  have h₁ := List.all_eq_true.mp h (y, c) hc
-  have h₂ := List.all_eq_true.mp h₁ q hq
-  simpa using h₂
+/-- `weakenB`, computed. -/
+def cweakenB (ps : List Name) (y : Name) (b : CBinding) : CBinding :=
+  if (decide (y ∉ ps) && b.outer.any fun q => decide (q ∈ ps)) = true then b.weak else b
+
+def cweaken (ps : List Name) : CCtx → CCtx
+  | [] => []
+  | (y, b) :: Γ => (y, cweakenB ps y b) :: cweaken ps Γ
+
+theorem toBinding_cweakenB (ps : List Name) (y : Name) (b : CBinding) :
+    (cweakenB ps y b).toBinding = weakenB ps y b.toBinding := by
+  unfold cweakenB weakenB
+  rw [CBinding.toBinding_outer]
+  by_cases hc : (decide (y ∉ ps) && b.outer.any fun q => decide (q ∈ ps)) = true
+  · rw [if_pos hc, if_pos hc]
+    cases b <;> simp [CBinding.weak, weakB, CBinding.toBinding, BEffs.toEffs_all]
+  · rw [if_neg hc, if_neg hc]
+
+theorem toCtx_cweaken (ps : List Name) : ∀ Γ : CCtx, CCtx.toCtx (cweaken ps Γ) = weaken ps (CCtx.toCtx Γ)
+  | [] => rfl
+  | (y, b) :: Γ => by
+    simp only [cweaken, weaken, CCtx.toCtx, toBinding_cweakenB, toCtx_cweaken ps Γ]
 
 /-- The closures passed to a closure call. -/
 def argsAllCheck (Γ : CCtx) : List Name → Option (BEffs × List Name)
@@ -260,22 +272,18 @@ def check (P : Program) (Φ : Name → BEffs) : CCtx → Stmt → Option (BEffs 
     | some (R₁, U₁), some (R₂, U₂) => some (R₁.union R₂, U₁ ++ U₂)
     | _, _ => none
   | Γ, .letClosure x k ps body rest =>
-    if freshB ps Γ then
-      match check P Φ (cparamCtx (unann ps) ++ Γ) body with
-      | some (Rb, Ub) => if fitsB k Rb Ub then check P Φ ((x, .known Rb Ub ps) :: Γ) rest else none
-      | none => none
-    else none
+    match check P Φ (cparamCtx (unann ps) ++ cweaken ps Γ) body with
+    | some (Rb, Ub) => if fitsB k Rb Ub then check P Φ ((x, .known Rb Ub ps) :: Γ) rest else none
+    | none => none
   | Γ, .letAlias x y rest =>
     match lookup Γ y with
     | some b => check P Φ ((x, b) :: Γ) rest
     | none => none
   | Γ, .letOpaque x k ps body rest =>
-    if freshB ps Γ then
-      match check P Φ (cparamCtx (unann ps) ++ Γ) body with
-      | some (Rb, Ub) =>
-        if fitsB k Rb Ub then check P Φ ((x, .known (opaqueB k) (opaqueU k ps) (opaquePs k ps)) :: Γ) rest else none
-      | none => none
-    else none
+    match check P Φ (cparamCtx (unann ps) ++ cweaken ps Γ) body with
+    | some (Rb, Ub) =>
+      if fitsB k Rb Ub then check P Φ ((x, .known (opaqueB k) (opaqueU k ps) (opaquePs k ps)) :: Γ) rest else none
+    | none => none
   | Γ, .callClosure x args =>
     match lookup Γ x, argsAllCheck Γ args with
     | some b, some (R, U) =>
@@ -389,16 +397,12 @@ theorem check_sound {P : Program} {Φ : Name → BEffs} :
     intro Γ R U h
     simp only [check] at h
     split at h
-    · rename_i hfresh
+    · rename_i Rb Ub hb
       split at h
-      · rename_i Rb Ub hb
-        split at h
-        · rename_i hfit
-          have htb := ihb hb
-          rw [CCtx.toCtx_append, cparamCtx_toCtx] at htb
-          exact Typed.letClosure (freshB_sound hfresh) htb (fitsB_sound hfit)
-            (ihr (Γ := (x, .known Rb Ub ps) :: Γ) h)
-        · cases h
+      · rename_i hfit
+        have htb := ihb hb
+        rw [CCtx.toCtx_append, cparamCtx_toCtx, toCtx_cweaken] at htb
+        exact Typed.letClosure htb (fitsB_sound hfit) (ihr (Γ := (x, .known Rb Ub ps) :: Γ) h)
       · cases h
     · cases h
   | letAlias x y rest ih =>
@@ -412,17 +416,14 @@ theorem check_sound {P : Program} {Φ : Name → BEffs} :
     intro Γ R U h
     simp only [check] at h
     split at h
-    · rename_i hfresh
+    · rename_i Rb Ub hb
       split at h
-      · rename_i Rb Ub hb
-        split at h
-        · rename_i hfit
-          have htb := ihb hb
-          rw [CCtx.toCtx_append, cparamCtx_toCtx] at htb
-          have hr := ihr (Γ := (x, .known (opaqueB k) (opaqueU k ps) (opaquePs k ps)) :: Γ) h
-          simp only [CCtx.toCtx, CBinding.toBinding, opaqueB_toEffs] at hr
-          exact Typed.letOpaque (freshB_sound hfresh) htb (fitsB_sound hfit) hr
-        · cases h
+      · rename_i hfit
+        have htb := ihb hb
+        rw [CCtx.toCtx_append, cparamCtx_toCtx, toCtx_cweaken] at htb
+        have hr := ihr (Γ := (x, .known (opaqueB k) (opaqueU k ps) (opaquePs k ps)) :: Γ) h
+        simp only [CCtx.toCtx, CBinding.toBinding, opaqueB_toEffs] at hr
+        exact Typed.letOpaque htb (fitsB_sound hfit) hr
       · cases h
     · cases h
   | callClosure x args =>
