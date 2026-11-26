@@ -248,7 +248,8 @@ shape its values have there. The core has:
   written;
 - sequencing, and branches of which either side may run (`if`, `match`);
 - closures bound by `let`, with or without a ceiling, taking closures as
-  arguments of their own, and other names for them;
+  arguments of their own, each with or without a ceiling of its own, and
+  other names for them;
 - closures the rules cannot see into, such as one returned by a function,
   with or without a ceiling on the type they come through;
 - calls to closures, passing them closures, and named functions that take
@@ -268,8 +269,14 @@ the rule the parameter defect above broke. A closure's own parameters are
 in its U when it calls them, so one that calls its arguments fits no
 ceiling. A call to a closure adds what the closures it passes do when the
 closure may call them: one with parameters of its own, or a parameter's
-closure, may; a closure held to a ceiling may not. A closure's parameter
-may reuse any name in scope and then hides it; a closure in scope that
+closure, may; a closure held to a ceiling may not. A closure's own
+parameter with a ceiling works like a function's: what it is passed must
+fit, a call through it may do what the ceiling allows, and a closure that
+calls it can still fit a ceiling that allows as much. A call to a closure
+the rules can see counts only what it passes to parameters without a
+ceiling; a call through a parameter counts everything it passes, as the
+Rust checker does. A closure's parameter may reuse any name in scope and
+then hides it; a closure in scope that
 runs the outer parameter of that name counts, inside the body, as doing
 anything, since the name there means the closure's own parameter. The
 Rust checker resolves such a call to the inner parameter instead, and
@@ -286,13 +293,14 @@ its body's R fits in; the least fixed point the checker computes is one.
 | `program_ceilings_sound` | 3: every operation is allowed by the ceiling of each closure call it ran inside |
 | `program_shapes_sound` | 4, for the core: no run reaches a call it cannot make |
 
-In the core every value is a closure, so a value's shape is how many
-closures it takes. A program is shaped when every call passes its closure
-or function that many, each of the shape the parameter wants, and names
-only what is in scope; `program_shapes_sound` proves that a shaped
-program never reaches a call to a name with no value, a call with the
-wrong number of closures, or a call to an unknown function. A function's
-parameters record how many closures their closures take.
+In the core every value is a closure, so a value's shape is its type: the
+ceilings of the closures it takes. A program is shaped when every call
+passes its closure or function closures of the types its parameters want,
+and names only what is in scope; `program_shapes_sound` proves that a
+shaped program never reaches a call to a name with no value, a call with
+the wrong number of closures, a call to a closure whose parameters have
+other ceilings than its type says, or a call to an unknown function. A
+function's parameters record the types of the closures they hold.
 
 The proof needs one invariant the rules do not state: a closure value does
 at most what the binding holding it says, given what the enclosing
@@ -317,15 +325,18 @@ per line.
 `nucle_lang/tests/lean_differential.rs` generates programs in the core
 (functions taking closures with and without each ceiling, some of them
 closures that are passed a closure, closures with and without arguments
-of their own, second names for them, closures returned from functions,
+of their own, those arguments with and without ceilings, second names
+for them, closures returned from functions,
 branches, loops over a pool's files, and every operation with and without
 its confirmation, and now and then a call that passes one closure too
 many), writes each as NucleScript and for `nsl-check`, which also checks
 shapes, and fails if the two checkers differ on whether a program is
 accepted or on its worst effect. CI runs 1,000 on every push. A run of
-20,000 on 26 November 2026 accepted 9,551 and found no disagreement; the same 20,000
-against the Rust checker as it was at v0.1.85, before the two closure
-fixes above, give 6, each a program it accepted and the rules reject.
+20,000 on 26 November 2026 accepted 9,500 and found no disagreement; 4,855
+of them give a closure's own parameter a ceiling, and 1,114 of those are
+accepted. The same 20,000 against the Rust checker as it was at v0.1.85,
+before the two closure fixes above, give 3, each a program it accepted
+and the rules reject.
 
 Its first run found 40 disagreements, all programs the Lean rules accept
 and the Rust checker rejected. Beyond mistakes in how the test wrote
@@ -358,13 +369,10 @@ one on each side:
   written by hand from `effects.rs` and `typeck.rs`. The two are tied by
   testing, not by proof: the differential test checks that the Rust
   checker gives the rules' verdict on generated core programs, which
-  catches a slip only where the generator reaches. The core's closures
-  take closures without ceilings as arguments; a closure parameter with a
-  ceiling of its own (`fn(k: Fn() -> Void confirm hardware)`) is left out,
-  It also leaves out
+  catches a slip only where the generator reaches. The core leaves out
   generics, whose instantiations change no effect, and enums other than
   as a source of closures it cannot see into. Of promise 4 it covers
-  closures' arity only: the shapes of pools, `Result` values and enums
+  closures' types only: the shapes of pools, `Result` values and enums
   rest on testing alone.
 - **The generator leaves pool expressions out** (`consensus_vote`,
   `synthesise`, `sequence`): they never run, existing only while

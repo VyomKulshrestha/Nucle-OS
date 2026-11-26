@@ -69,24 +69,30 @@ enum St {
     /// Either side may run: written in NucleScript as a `match` whose arms
     /// call one helper function each.
     Alt(Box<St>, Box<St>),
-    /// A closure with its own parameters, each taking a closure.
-    Closure(String, Ceil, Vec<String>, Box<St>, Box<St>),
+    /// A closure with its own parameters, each taking a closure, with or
+    /// without a ceiling.
+    Closure(String, Ceil, Vec<(String, Ceil)>, Box<St>, Box<St>),
     Alias(String, String, Box<St>),
     /// A closure the checker cannot see into: written as a function that
     /// returns it.
-    Opaque(String, Ceil, Vec<String>, Box<St>, Box<St>),
-    /// A call to a closure, passing it closures that take none.
-    Call(String, Vec<String>),
+    Opaque(String, Ceil, Vec<(String, Ceil)>, Box<St>, Box<St>),
+    /// A call to a closure, passing it closures that take none, with the
+    /// ceilings of the closure's parameters as its type gives them.
+    Call(String, Vec<String>, Vec<Ceil>),
     CallFn(String, Vec<String>),
     /// Runs zero or more times: written as a loop over a pool's files.
     Loop(Box<St>),
 }
 
+/// The type of a closure, as far as calls go: the ceilings of the closures
+/// it takes, `Ceil::None` for one without.
+type Ty = Vec<Ceil>;
+
 struct Function {
     name: String,
-    /// Each parameter's name, ceiling, and how many closures the closure
-    /// it takes is passed when called.
-    params: Vec<(String, Ceil, usize)>,
+    /// Each parameter's name, ceiling, and the type of the closure it
+    /// takes.
+    params: Vec<(String, Ceil, Ty)>,
     body: St,
 }
 
@@ -147,35 +153,36 @@ impl Gen {
         St::Op(self.op())
     }
 
-    /// Names for a closure's own parameters, sometimes none. When
-    /// everything in `scope` is a parameter, one of those names is now and
-    /// then reused, so the closure's parameter hides it.
-    fn own_params(&mut self, scope: &[(String, usize)]) -> Vec<String> {
+    /// A closure's own parameters, sometimes none, each with a ceiling now
+    /// and then. When everything in `scope` is a parameter, one of those
+    /// names is now and then reused, so the closure's parameter hides it.
+    fn own_params(&mut self, scope: &[(String, Ty)]) -> Vec<(String, Ceil)> {
         if !self.chance(0.4) {
             return Vec::new();
         }
         let only_params = !scope.is_empty() && scope.iter().all(|(x, _)| x.starts_with('q') || x.starts_with('k'));
-        let mut params: Vec<String> = Vec::new();
+        let mut params: Vec<(String, Ceil)> = Vec::new();
         for _ in 0..self.rng.gen_range(1..3) {
+            let ceiling = if self.chance(0.5) { self.ceiling() } else { Ceil::None };
             if only_params && self.chance(0.4) {
                 let reused = scope[self.rng.gen_range(0..scope.len())].0.clone();
-                if !params.contains(&reused) {
-                    params.push(reused);
+                if !params.iter().any(|(p, _)| *p == reused) {
+                    params.push((reused, ceiling));
                     continue;
                 }
             }
-            params.push(self.name("k"));
+            params.push((self.name("k"), ceiling));
         }
         params
     }
 
-    /// One closure from `scope` for each arity in `arities`, to pass to a
-    /// call, or `None` if the scope has none of some arity.
-    fn args(&mut self, scope: &[(String, usize)], arities: &[usize]) -> Option<Vec<String>> {
-        arities
+    /// One closure from `scope` of each type in `types`, to pass to a call,
+    /// or `None` if the scope has none of some type.
+    fn args(&mut self, scope: &[(String, Ty)], types: &[Ty]) -> Option<Vec<String>> {
+        types
             .iter()
-            .map(|&arity| {
-                let fitting: Vec<String> = scope.iter().filter(|(_, a)| *a == arity).map(|(x, _)| x.clone()).collect();
+            .map(|ty| {
+                let fitting: Vec<String> = scope.iter().filter(|(_, t)| t == ty).map(|(x, _)| x.clone()).collect();
                 if fitting.is_empty() {
                     None
                 } else {
@@ -186,8 +193,8 @@ impl Gen {
     }
 
     /// A statement in a scope holding the callable names `scope`, each with
-    /// the number of closures it takes.
-    fn stmt(&mut self, scope: &[(String, usize)], depth: u32) -> St {
+    /// its type.
+    fn stmt(&mut self, scope: &[(String, Ty)], depth: u32) -> St {
         loop {
             match self.rng.gen_range(0..11) {
                 10 if depth > 0 => return St::Loop(Box::new(self.stmt(scope, depth - 1))),
@@ -200,19 +207,19 @@ impl Gen {
                     let x = self.name("c");
                     let ceiling = self.ceiling();
                     let params = self.own_params(scope);
-                    let mut body_scope: Vec<(String, usize)> = scope.iter().filter(|(x, _)| !params.contains(x)).cloned().collect();
-                    body_scope.extend(params.iter().map(|p| (p.clone(), 0)));
+                    let mut body_scope: Vec<(String, Ty)> = scope.iter().filter(|(x, _)| !params.iter().any(|(p, _)| p == x)).cloned().collect();
+                    body_scope.extend(params.iter().map(|(p, _)| (p.clone(), Vec::new())));
                     let body = self.stmt(&body_scope, depth - 1);
                     let mut inner = scope.to_vec();
-                    inner.push((x.clone(), params.len()));
+                    inner.push((x.clone(), params.iter().map(|(_, c)| *c).collect()));
                     let rest = self.stmt(&inner, depth - 1);
                     return St::Closure(x, ceiling, params, Box::new(body), Box::new(rest));
                 }
                 6 if depth > 0 && !scope.is_empty() => {
                     let x = self.name("a");
-                    let (y, arity) = scope[self.rng.gen_range(0..scope.len())].clone();
+                    let (y, ty) = scope[self.rng.gen_range(0..scope.len())].clone();
                     let mut inner = scope.to_vec();
-                    inner.push((x.clone(), arity));
+                    inner.push((x.clone(), ty));
                     let rest = self.stmt(&inner, depth - 1);
                     return St::Alias(x, y, Box::new(rest));
                 }
@@ -222,29 +229,29 @@ impl Gen {
                     let params = self.own_params(&[]);
                     // Written inside a function of its own, the body sees
                     // only its own parameters.
-                    let own: Vec<(String, usize)> = params.iter().map(|p| (p.clone(), 0)).collect();
+                    let own: Vec<(String, Ty)> = params.iter().map(|(p, _)| (p.clone(), Vec::new())).collect();
                     let body = if own.is_empty() { self.closed(1) } else { self.stmt(&own, 1) };
                     let mut inner = scope.to_vec();
-                    inner.push((x.clone(), params.len()));
+                    inner.push((x.clone(), params.iter().map(|(_, c)| *c).collect()));
                     let rest = self.stmt(&inner, depth - 1);
                     return St::Opaque(x, ceiling, params, Box::new(body), Box::new(rest));
                 }
                 8 if !scope.is_empty() => {
-                    let (x, arity) = scope[self.rng.gen_range(0..scope.len())].clone();
-                    let Some(mut args) = self.args(scope, &vec![0; arity]) else { continue };
+                    let (x, ty) = scope[self.rng.gen_range(0..scope.len())].clone();
+                    let Some(mut args) = self.args(scope, &vec![Vec::new(); ty.len()]) else { continue };
                     // Now and then a call passes one closure too many, which
                     // both checkers must refuse.
                     if self.chance(0.02) {
-                        if let Some(extra) = self.args(scope, &[0]) {
+                        if let Some(extra) = self.args(scope, &[Vec::new()]) {
                             args.extend(extra);
                         }
                     }
-                    return St::Call(x, args);
+                    return St::Call(x, args, ty);
                 }
                 9 if !self.functions.is_empty() => {
                     let f = &self.functions[self.rng.gen_range(0..self.functions.len())];
-                    let (name, arities): (String, Vec<usize>) = (f.name.clone(), f.params.iter().map(|(_, _, a)| *a).collect());
-                    let Some(args) = self.args(scope, &arities) else { continue };
+                    let (name, types): (String, Vec<Ty>) = (f.name.clone(), f.params.iter().map(|(_, _, t)| t.clone()).collect());
+                    let Some(args) = self.args(scope, &types) else { continue };
                     return St::CallFn(name, args);
                 }
                 _ => continue,
@@ -256,10 +263,16 @@ impl Gen {
         for _ in 0..self.rng.gen_range(0..4) {
             let name = self.name("f");
             // A parameter sometimes takes a closure that is itself passed a
-            // closure: `g: Fn(Fn() -> Void) -> Void`.
-            let params: Vec<(String, Ceil, usize)> =
-                (0..self.rng.gen_range(0..3)).map(|i| (format!("q{i}"), self.ceiling(), usize::from(self.chance(0.3)))).collect();
-            let scope: Vec<(String, usize)> = params.iter().map(|(p, _, a)| (p.clone(), *a)).collect();
+            // closure: `g: Fn(Fn() -> Void) -> Void`, or with a ceiling,
+            // `g: Fn(Fn() -> Void confirm synthesis) -> Void`.
+            let params: Vec<(String, Ceil, Ty)> = (0..self.rng.gen_range(0..3))
+                .map(|i| {
+                    let ceiling = self.ceiling();
+                    let ty = if self.chance(0.3) { vec![if self.chance(0.5) { self.ceiling() } else { Ceil::None }] } else { Vec::new() };
+                    (format!("q{i}"), ceiling, ty)
+                })
+                .collect();
+            let scope: Vec<(String, Ty)> = params.iter().map(|(p, _, t)| (p.clone(), t.clone())).collect();
             let body = self.stmt(&scope, 2);
             self.functions.push(Function { name, params, body });
         }
@@ -272,19 +285,24 @@ impl Gen {
 struct Writer {
     helpers: Vec<String>,
     next: usize,
-    /// The type of each callable name (closures it takes, ceiling), so
-    /// another name for it can repeat that type.
-    types: std::collections::HashMap<String, (usize, Ceil)>,
+    /// The type of each callable name and its ceiling, so another name for
+    /// it can repeat them.
+    types: std::collections::HashMap<String, (Ty, Ceil)>,
 }
 
-/// The NucleScript type of a closure taking `arity` closures.
-fn fn_type(arity: usize, k: Ceil) -> String {
-    format!("Fn({}) -> Void{}", vec!["Fn() -> Void"; arity].join(", "), k.nsl())
+/// The NucleScript type of a closure of type `ty` held to `k`.
+fn fn_type(ty: &[Ceil], k: Ceil) -> String {
+    format!("Fn({}) -> Void{}", ty.iter().map(|c| format!("Fn() -> Void{}", c.nsl())).collect::<Vec<_>>().join(", "), k.nsl())
 }
 
 /// A closure literal's parameter list.
-fn param_list(params: &[String]) -> String {
-    params.iter().map(|p| format!("{p}: Fn() -> Void")).collect::<Vec<_>>().join(", ")
+fn param_list(params: &[(String, Ceil)]) -> String {
+    params.iter().map(|(p, c)| format!("{p}: Fn() -> Void{}", c.nsl())).collect::<Vec<_>>().join(", ")
+}
+
+/// A closure's type, from its own parameters.
+fn own_type(params: &[(String, Ceil)]) -> Ty {
+    params.iter().map(|(_, c)| *c).collect()
 }
 
 impl Writer {
@@ -325,11 +343,11 @@ impl Writer {
                 format!("{indent}let {side}: Side = Side::L\n{indent}let {v}: Void = match {side} {{\n{indent}    L => {fa}(),\n{indent}    R => {fb}(),\n{indent}}}\n")
             }
             St::Closure(x, k, params, body, rest) => {
-                self.types.insert(x.clone(), (params.len(), *k));
+                self.types.insert(x.clone(), (own_type(params), *k));
                 // A parameter may hide a name in scope; its type comes back after.
-                let hidden: Vec<(String, Option<(usize, Ceil)>)> = params.iter().map(|p| (p.clone(), self.types.get(p).copied())).collect();
-                for p in params {
-                    self.types.insert(p.clone(), (0, Ceil::None));
+                let hidden: Vec<(String, Option<(Ty, Ceil)>)> = params.iter().map(|(p, _)| (p.clone(), self.types.get(p).cloned())).collect();
+                for (p, c) in params {
+                    self.types.insert(p.clone(), (Vec::new(), *c));
                 }
                 let b = self.stmt(body, &deeper);
                 for (p, old) in hidden {
@@ -342,26 +360,27 @@ impl Writer {
                         }
                     }
                 }
-                let ty = fn_type(params.len(), *k);
+                let ty = fn_type(&own_type(params), *k);
                 format!("{indent}let {x}: {ty} = fn({}) -> Void {{\n{b}{indent}}}\n{}", param_list(params), self.stmt(rest, indent))
             }
             St::Alias(x, y, rest) => {
-                let (arity, k) = self.types.get(y).copied().unwrap_or((0, Ceil::None));
-                self.types.insert(x.clone(), (arity, k));
-                format!("{indent}let {x}: {} = {y}\n{}", fn_type(arity, k), self.stmt(rest, indent))
+                let (ty, k) = self.types.get(y).cloned().unwrap_or((Vec::new(), Ceil::None));
+                let written = fn_type(&ty, k);
+                self.types.insert(x.clone(), (ty, k));
+                format!("{indent}let {x}: {written} = {y}\n{}", self.stmt(rest, indent))
             }
             St::Opaque(x, k, params, body, rest) => {
-                self.types.insert(x.clone(), (params.len(), *k));
-                for p in params {
-                    self.types.insert(p.clone(), (0, Ceil::None));
+                self.types.insert(x.clone(), (own_type(params), *k));
+                for (p, c) in params {
+                    self.types.insert(p.clone(), (Vec::new(), *c));
                 }
                 let maker = self.fresh("make");
                 let b = self.stmt(body, "        ");
-                let ty = fn_type(params.len(), *k);
+                let ty = fn_type(&own_type(params), *k);
                 self.helpers.push(format!("fn {maker}() returns {ty} {{\n    let made: {ty} = fn({}) -> Void {{\n{b}    }}\n}}\n", param_list(params)));
                 format!("{indent}let {x}: {ty} = {maker}()\n{}", self.stmt(rest, indent))
             }
-            St::Call(x, args) => {
+            St::Call(x, args, _) => {
                 let v = self.fresh("done");
                 format!("{indent}let {v}: Void = {x}({})\n", args.join(", "))
             }
@@ -402,7 +421,9 @@ fn lean_stmt(st: &St, out: &mut Vec<String>) {
         }
         St::Closure(x, k, params, body, rest) | St::Opaque(x, k, params, body, rest) => {
             out.extend([if matches!(st, St::Closure(..)) { "clo" } else { "opq" }.to_string(), x.clone(), k.lean().to_string(), params.len().to_string()]);
-            out.extend(params.iter().cloned());
+            for (p, c) in params {
+                out.extend([p.clone(), c.lean().to_string()]);
+            }
             lean_stmt(body, out);
             lean_stmt(rest, out);
         }
@@ -410,9 +431,10 @@ fn lean_stmt(st: &St, out: &mut Vec<String>) {
             out.extend(["alias".to_string(), x.clone(), y.clone()]);
             lean_stmt(rest, out);
         }
-        St::Call(x, args) => {
+        St::Call(x, args, ty) => {
             out.extend(["call".to_string(), x.clone(), args.len().to_string()]);
             out.extend(args.iter().cloned());
+            lean_type(ty, out);
         }
         St::Loop(body) => {
             out.push("loop".to_string());
@@ -425,21 +447,27 @@ fn lean_stmt(st: &St, out: &mut Vec<String>) {
     }
 }
 
+fn lean_type(ty: &[Ceil], out: &mut Vec<String>) {
+    out.push(ty.len().to_string());
+    out.extend(ty.iter().map(|c| c.lean().to_string()));
+}
+
 /// The program as NucleScript and as the Lean checker's input line.
 fn render(gen: &Gen, main: &St) -> (String, String) {
     let mut w = Writer { helpers: Vec::new(), next: 0, types: Default::default() };
     let mut functions = String::new();
     let mut lean = Vec::new();
     for f in &gen.functions {
-        for (p, k, a) in &f.params {
-            w.types.insert(p.clone(), (*a, *k));
+        for (p, k, t) in &f.params {
+            w.types.insert(p.clone(), (t.clone(), *k));
         }
-        let params: Vec<String> = f.params.iter().map(|(p, k, a)| format!("{p}: {}", fn_type(*a, *k))).collect();
+        let params: Vec<String> = f.params.iter().map(|(p, k, t)| format!("{p}: {}", fn_type(t, *k))).collect();
         let body = w.stmt(&f.body, "    ");
         functions.push_str(&format!("fn {}({}) returns Void {{\n{body}}}\n", f.name, params.join(", ")));
         lean.extend(["fn".to_string(), f.name.clone(), f.params.len().to_string()]);
-        for (p, k, a) in &f.params {
-            lean.extend([p.clone(), k.lean().to_string(), a.to_string()]);
+        for (p, k, t) in &f.params {
+            lean.extend([p.clone(), k.lean().to_string()]);
+            lean_type(t, &mut lean);
         }
         lean_stmt(&f.body, &mut lean);
     }
