@@ -2001,9 +2001,16 @@ impl TypeChecker {
                 let scoped = crate::effects::ceiling_view(&crate::effects::scoped_fn_param_effects(params, &visible));
                 crate::effects::body_effects(body, &self.functions, &self.closure_decls, &scoped, &mut HashSet::new())
             }
-            Expr::Variable(name) => {
-                crate::effects::function_call_effects(name, &self.functions, &self.closure_decls, &visible, &mut HashSet::new())
-            }
+            // A closure bound to a name is held to the ceiling the same way
+            // as a literal: its own parameters without a ceiling count as
+            // every effect, since whatever it is passed runs under it.
+            Expr::Variable(name) => match self.closure_decls.get(name) {
+                Some(decl) => {
+                    let scoped = crate::effects::ceiling_view(&crate::effects::scoped_fn_param_effects(&decl.params, &visible));
+                    crate::effects::body_effects(&decl.body, &self.functions, &self.closure_decls, &scoped, &mut HashSet::new())
+                }
+                None => crate::effects::function_call_effects(name, &self.functions, &self.closure_decls, &visible, &mut HashSet::new()),
+            },
             _ => return,
         };
         let actual_effect = actual.worst();

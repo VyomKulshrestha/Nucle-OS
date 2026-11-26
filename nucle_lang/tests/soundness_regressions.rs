@@ -168,3 +168,16 @@ fn a_closure_from_an_enum_passed_to_a_parameter_counts_too() {
     );
     assert_eq!(effect_of(&src, "w"), Effect::Destructive);
 }
+
+/// A closure bound by `let` that calls its own argument fits no ceiling,
+/// as a literal that does already did not: the closure a call passes it
+/// runs under the ceiling. Found by checking the Rust checker against the
+/// Lean rules.
+#[test]
+fn a_let_bound_closure_that_calls_its_argument_fits_no_ceiling() {
+    let src = format!(
+        "{POOL}fn only_sequencing(q: Fn(Fn() -> Void) -> Void confirm sequencing) returns Void {{\n    let wipe: Fn() -> Void = fn() -> Void {{\n        delete \"a.txt\" from archive confirm physical_key\n    }}\n    let r: Void = q(wipe)\n}}\n\
+         let relay: Fn(Fn() -> Void) -> Void = {CALLS_ITS_ARGUMENT}\nlet ran: Void = only_sequencing(relay)\n"
+    );
+    assert!(diagnostic_codes(&src).contains(&"E-FN-EFFECT-ARG-MISMATCH".to_string()), "{:?}", diagnostic_codes(&src));
+}
