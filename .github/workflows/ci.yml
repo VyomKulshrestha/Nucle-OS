@@ -65,3 +65,10 @@ jobs:
         run: |
           lake env lean Axioms.lean | tee axioms.txt
           if grep -q sorryAx axioms.txt; then echo "a theorem rests on sorry"; exit 1; fi
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+      - name: Check the Rust checker against the Lean rules
+        env:
+          NSL_LEAN_CHECKER: ${{ github.workspace }}/proofs/.lake/build/bin/nsl-check
+        run: cargo test -p nucle_lang --test lean_differential -- --nocapture
