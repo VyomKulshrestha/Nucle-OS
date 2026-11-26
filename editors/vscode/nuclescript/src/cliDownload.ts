@@ -17,10 +17,13 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // whenever a newer `v*` release ships with an updated nucle-cli, or a
 // fresh install downloading it will fail to parse -- or silently
 // mis-execute -- any .nsl file using syntax added since the pinned tag.
-// v0.1.89 is the NucleOS release paired with extension v0.1.23. It counts
-// closures handed to a call through a parameter and holds a let-bound
-// closure that calls its argument to ceilings as a literal is held, on top
-// of v0.1.84, paired with extension v0.1.22, which adds
+// v0.1.95 is the NucleOS release paired with extension v0.1.24. It reads a
+// generic body's `Pool<P>` annotations as each call's profile and lets an
+// enum parameter take a second name, on top of v0.1.89, paired with
+// extension v0.1.23, which counts closures handed to a call through a
+// parameter and holds a let-bound closure that calls its argument to
+// ceilings as a literal is held, and v0.1.84, paired with extension
+// v0.1.22, which adds
 // `confirm synthesis`/`confirm sequencing` ceilings, closures stored in
 // enums, `for f in files of pool` loops, warnings from the branch an `if`
 // does not take, measured `consensus_vote` rates and the `nuclescript/std`
@@ -37,7 +40,7 @@ const DEFAULT_CLI_PATH = "nucle-cli";
 // grammar and language server accept. Publish that runtime release before
 // publishing this VSIX. This stays independent of nucle-lsp's
 // extension-versioned release tag.
-const CLI_RELEASE_TAG = "v0.1.89";
+const CLI_RELEASE_TAG = "v0.1.95";
 
 /** The release asset name published for this platform, or `undefined` if
  * none exists (arm64 Linux/Windows) -- caller falls back to asking the

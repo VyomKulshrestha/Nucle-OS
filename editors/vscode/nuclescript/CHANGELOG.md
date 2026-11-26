@@ -4,6 +4,16 @@ All notable changes to the NucleScript VS Code extension are documented
 here. Versions correspond to `editors/vscode/nuclescript/package.json`'s
 `version` field, not the main `Nucle-OS` repository's own versioning.
 
+## [0.1.24]
+
+- A `let` in a generic function annotated with the function's type
+  parameter (`let held: Pool<P> = source`) no longer makes every call to
+  the function an `E-BINDING-TYPE-MISMATCH`.
+- A parameter of enum type can be given a second name (`let again: Job =
+  job`); it was reported as an undeclared variable.
+- Advanced the clean-install `nucle-cli` fallback to the paired NucleOS
+  v0.1.95 runtime.
+
 ## [0.1.23]
 
 - A closure handed to a call through a parameter, or through a closure the
