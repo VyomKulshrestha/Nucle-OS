@@ -169,7 +169,7 @@ const PLAN_DECODE_SAMPLES: usize = 512;
 /// Search states per read in the first, read-by-read pass over a HEDGES
 /// file. On the measured low-fidelity array channel this decodes 94.8% of
 /// single reads in a quarter of the time the full budget takes.
-const HEDGES_PER_READ_EXPANSIONS: usize = 50_000;
+pub(crate) const HEDGES_PER_READ_EXPANSIONS: usize = 50_000;
 
 /// Strands [`hedges_rebuild_data_strands`] decodes read by read before
 /// judging whether that is working, the search states each trial read
@@ -195,7 +195,7 @@ const HEDGES_PER_READ_MIN_SHARE: f64 = 0.25;
 /// than a quarter of the reads tried decode, the rest go straight to
 /// consensus. Strands are independent, so after that trial they are
 /// decoded on every available core.
-fn hedges_rebuild_data_strands(
+pub(crate) fn hedges_rebuild_data_strands(
     data_groups: &[Vec<DnaStrand>],
     parity_groups: &[Vec<DnaStrand>],
     parity_per_stripe: usize,
@@ -307,9 +307,9 @@ pub const STATE_FILE_NAME: &str = "state.json";
 /// was added). The lock doesn't replace the version check; it just makes
 /// check-then-write atomic with respect to any other process's persist().
 const LOCK_FILE_NAME: &str = ".lock";
-const MIN_PRIMER_CAPACITY: usize = 10;
-const PRIMER_LENGTH: usize = 20;
-const PRIMER_SEED: u64 = 42;
+pub(crate) const MIN_PRIMER_CAPACITY: usize = 10;
+pub(crate) const PRIMER_LENGTH: usize = 20;
+pub(crate) const PRIMER_SEED: u64 = 42;
 
 /// The only state that can't be deterministically reconstructed at
 /// `open()` time -- see `NucleOS::open`'s doc comment for why `primers`/

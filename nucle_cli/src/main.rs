@@ -8,6 +8,7 @@ mod hardware_cli;
 mod order_cli;
 mod parity_cli;
 mod reads_cli;
+mod restore_cli;
 mod shelf_life_cli;
 
 use clap::{Parser, Subcommand};
@@ -364,6 +365,19 @@ enum Commands {
         /// Also discard the cluster labels and decode from the reads alone
         #[arg(long)]
         blind: bool,
+    },
+
+    /// Rebuild the files a pool held from sequencing reads alone (FASTQ,
+    /// FASTA or one read per line), using the archive header among them
+    Restore {
+        /// Reads to rebuild from
+        reads: String,
+        /// Directory to write the files into, by the names the header gives
+        #[arg(short, long)]
+        out: String,
+        /// Primer pair the order was flanked with, as FORWARD,REVERSE
+        #[arg(long)]
+        flank: Option<String>,
     },
 
     /// Estimate how long an archive stays readable in storage (Arrhenius decay)
@@ -780,6 +794,7 @@ fn run() {
             cli.json,
         ),
         Commands::Reads { centers, clusters, limit, blind } => reads_cli::cmd_reads(&centers, &clusters, limit, blind, cli.json),
+        Commands::Restore { reads, out, flank } => restore_cli::cmd_restore(&reads, &out, flank.as_deref(), cli.json),
         Commands::ShelfLife { medium, celsius, length, data, parity, copies, target, stored } => shelf_life_cli::cmd_shelf_life(
             shelf_life_cli::ShelfLifeArgs { medium, celsius, length, data, parity, copies, target_percent: target, stored },
             &pool_dir,

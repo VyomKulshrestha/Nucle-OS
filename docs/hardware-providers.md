@@ -110,7 +110,9 @@ bases, melts more than 5 °C from the other (64.9 + 41(GC - 16.4)/N), or
 has its last 12 bases anywhere in the payload on either strand. These are
 rules of thumb; the sequencing lab's own pair is the one to use. `nucle
 bootstrap inspect order.fasta --flank FORWARD,REVERSE` strips the sites
-before reading the header. [`scripts/pilot`](../scripts/pilot/README.md)
+before reading the header, and `nucle restore reads.fastq --flank
+FORWARD,REVERSE --out restored` rebuilds the files from the sequencer's
+reads with no pool directory (HEDGES pools). [`scripts/pilot`](../scripts/pilot/README.md)
 builds a whole pilot run on this: order sheets, a dry run on measured
 channels, and the program that scores the sequencer's reads.
 

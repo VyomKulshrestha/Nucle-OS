@@ -1736,6 +1736,21 @@ every stored strand. `nucle bootstrap export <out.fasta>` writes that FASTA;
 `nucle bootstrap inspect <reads>` recovers the file table from FASTA or one
 sequence per line, with no pool or `state.json`.
 
+`nucle restore <reads> --out <dir>` goes on to the files themselves
+(`nucle_vfs::restore`). It reads the header from the reads, or from the
+consensus of each cluster of reads, polished to the header's fixed strand
+lengths. The primer library is generated from a fixed seed, so a fresh one
+holds the pairs the writing pool gave its files, and each pair picks its
+file's reads out of the rest. HEDGES puts each strand's index in the
+strand, so a file's reads sort themselves: one by one when single reads
+decode (a trial of eight decides), otherwise by clustering and decoding
+each cluster's consensus. They are then voted and Reed-Solomon decoded as
+`dna_read` does, and a file is written only if it hashes to the header's
+record. Ternary, Yin-Yang and Fountain strands are listed but not rebuilt,
+since their order lives in the pool directory. `--flank` cuts the outer
+primer sites of a flanked order sheet off first, and a name in the header
+that would leave the output directory is refused, since it came from DNA.
+
 ### Explicitly out of scope
 
 Beyond durable persistence, concurrency safety, encryption at rest, proactive integrity scanning, per-tenant pool isolation, and rewrite/versioning (above), the following remain deliberate non-goals for the current design:

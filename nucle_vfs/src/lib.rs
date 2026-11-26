@@ -14,6 +14,7 @@ pub mod pool;
 pub mod file;
 pub mod catalog;
 pub mod syscall;
+pub mod restore;
 pub mod migrate;
 pub mod audit;
 pub mod confirm_policy;
