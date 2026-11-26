@@ -18,6 +18,14 @@ authors:
     given-names: Vyom
     affiliation: "Independent Researcher, India"
     orcid: "https://orcid.org/0009-0009-1434-7148"
+doi: 10.5281/zenodo.24552558
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24552558
+    description: "The software, all versions (Zenodo)"
+  - type: doi
+    value: 10.5281/zenodo.24057684
+    description: "The technical report, all versions (Zenodo)"
 repository-code: "https://github.com/VyomKulshrestha/Nucle-OS"
 url: "https://nuclescript.github.io/playground/"
 license: MIT

@@ -3,6 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/VyomKulshrestha/Nucle-OS)](https://github.com/VyomKulshrestha/Nucle-OS/releases)
 [![CI](https://github.com/VyomKulshrestha/Nucle-OS/actions/workflows/ci.yml/badge.svg)](https://github.com/VyomKulshrestha/Nucle-OS/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24552558.svg)](https://doi.org/10.5281/zenodo.24552558)
 
 **A complete software-defined DNA storage operating system.**
 
@@ -1495,7 +1496,9 @@ nuclescript.tex`.
 "Cite this repository". [.zenodo.json](.zenodo.json) describes the
 software to Zenodo, which archives every GitHub release from v0.1.74 on and
 gives each one a DOI, with the technical report linked as its
-documentation.
+documentation. To cite the software, use
+[doi:10.5281/zenodo.24552558](https://doi.org/10.5281/zenodo.24552558),
+which always resolves to the latest release.
 
 ## License
 
