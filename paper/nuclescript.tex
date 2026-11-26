@@ -69,9 +69,9 @@ with Checked Effects and Channel-Typed Pools}
 \author{Vyom Kulshrestha\\
 \small Independent Researcher, India\\
 \small ORCID \href{https://orcid.org/0009-0009-1434-7148}{0009-0009-1434-7148}}
-\date{Technical report, version 3, 26 November 2026\\
-\small NucleScript 1.0, NucleOS v0.1.87\\
-\small \href{https://doi.org/10.5281/zenodo.24556406}{doi:10.5281/zenodo.24556406}}
+\date{Technical report, version 4, 26 November 2026\\
+\small NucleScript 1.0, NucleOS v0.1.95\\
+\small \href{https://doi.org/10.5281/zenodo.24559216}{doi:10.5281/zenodo.24559216}}
 
 \begin{document}
 \maketitle
@@ -94,11 +94,14 @@ monitor runs the shipped examples and generated programs and compares
 what each did with what the checker promised. A Lean~4
 proof shows, for a core calculus with closures that take closures as
 arguments, aliases, closures the checker cannot see into, higher-order
-functions, loops and early returns, that an accepted program performs
-only confirmed operations, only effects the checker reports, and nothing
-a closure's ceiling forbids. A checker extracted from those rules, proved
-to follow them, agrees with the Rust checker on 20,000 generated
-programs. Together these found ten defects in the checker, all fixed. On public data, a
+and generic functions, pools, \nsl{Result} and enum values, loops and
+early returns, that an accepted program performs only confirmed
+operations, only effects the checker reports, and nothing a closure's
+ceiling forbids, and that a well-typed one never reaches a call it cannot
+make or a \nsl{?} or \nsl{match} meeting a value it cannot take. A checker
+extracted from those rules, proved to follow them, agrees with the Rust
+checker on 20,000 generated programs. Together these found twelve
+defects in the checker, all fixed. On public data, a
 NucleScript program decodes 99.73\% and 96.94\% of the strands of two
 Illumina oligo pools with their labels, and 99.73\% and 95.82\% without
 them; the same decoder recovers 94.7\% of 2,000 MinION clusters. No
@@ -142,11 +145,11 @@ far its checker can be trusted. Its contributions are:
   promise for language version~1.0.
 \item A runtime monitor and a random program generator that check the
   checker's promises on running programs (Section~\ref{sec:monitor}).
-\item A proof in Lean~4 \cite{lean4} that the effect and confirmation
-  rules keep three of the checker's four promises for a core calculus of
-  the language, and a checker Lean can run, proved to follow the rules,
-  that is compared with the Rust checker on generated programs
-  (Section~\ref{sec:proof}). With the monitor, this work found ten
+\item A proof in Lean~4 \cite{lean4} that the type and effect rules
+  keep all four of the checker's promises for a core calculus of the
+  language, and a checker Lean can run, proved to follow the rules, that
+  is compared with the Rust checker on generated programs
+  (Section~\ref{sec:proof}). With the monitor, this work found twelve
   defects in the checker, all now fixed.
 \item An evaluation of decoding on public sequencing data
   (Section~\ref{sec:eval}): a MinION dataset and two Illumina oligo pools,
@@ -505,7 +508,7 @@ its later operations.
 
 \paragraph{What it found.} The monitor's first run failed on five shipped
 examples and 159 of the 300 generated programs. Table~\ref{tab:defects}
-lists the ten defects found since. The last three came while writing
+lists the twelve defects found since. Defects 6 to 8 came while writing
 the rules down for the proof of Section~\ref{sec:proof}: the calculus
 made it plain that a closure can leave the scope the effect walk watches,
 and its ceiling rule had to say what a parameter without a ceiling may
@@ -531,6 +534,8 @@ test that fails on the code before its fix.
 8 & A function could pass its own unannotated \nsl{Fn} parameter into a \nsl{confirm hardware} slot, and a caller could then give it a closure that deletes. & calculus, generator \\
 9 & A closure handed to a call through a parameter was dropped from the effect report: a delete passed that way was reported Pure and ran under \nsl{confirm hardware}. & calculus \\
 10 & A closure bound by \nsl{let} that called its own argument fit a ceiling, which a literal that does could not. & Lean checker \\
+11 & A \nsl{let} in a generic function annotated with its type parameter, \nsl{let held: Pool<P> = source}, made every call to the function fail. & calculus \\
+12 & A parameter of enum type could not be given a second name. & Lean checker \\
 \bottomrule
 \end{tabularx}
 \caption{Defects in the checker found by the runtime monitor, by
@@ -544,10 +549,10 @@ comparing the Rust checker with the Lean one
 \label{sec:proof}
 
 Testing shows that the programs run so far kept their promises. To show
-that every accepted program does, the effect and confirmation rules were
-written down in Lean~4 \cite{lean4} for a core of the language, and the
-first three promises proved for it. The rules and theorems take 982 lines
-and the runnable checker of Section~\ref{sec:compare} 576 more, with no
+that every accepted program does, the type, effect and confirmation rules were
+written down in Lean~4 \cite{lean4} for a core of the language, and all
+four promises proved for it. The rules and theorems take 2,247 lines,
+and the runnable checker of Section~\ref{sec:compare} another 883, with no
 library beyond Lean's core; the theorems rest on Lean's standard axioms
 \texttt{propext} and \texttt{Quot.sound}, and CI rebuilds the proof on
 every push and fails if any step rests on \texttt{sorry}.
@@ -559,10 +564,17 @@ Statements are:
 \[
 \begin{array}{rcl}
 s & ::= & \mathsf{op}(o) \mid s_1; s_2 \mid s_1 \oplus s_2
-  \mid \mathsf{let}\ x{:}k = \mathsf{fn}(\bar{q})\{s_b\};\ s
+  \mid \mathsf{let}\ x{:}k = \mathsf{fn}(\bar{q}{:}\bar{k})\{s_b\};\ s
   \mid \mathsf{let}\ x = y;\ s \\
-  & \mid & \mathsf{let}\ x{:}k = \mathsf{opaque}(\bar{q})\{s_b\};\ s
-  \mid x(\bar{y}) \mid f(\bar{y}) \mid \mathsf{loop}\ s \mid \mathsf{stop}
+  & \mid & \mathsf{let}\ x{:}k = \mathsf{opaque}(\bar{q}{:}\bar{k})\{s_b\};\ s
+  \mid x(\bar{y}) \mid f(\bar{y}) \mid \mathsf{loop}\ s \mid \mathsf{stop} \\
+  & \mid & \mathsf{let}\ x = v;\ s \mid \mathsf{let}\ x{:}\tau = y?;\ s
+  \mid \mathsf{match}\ y\ \{t(z) \Rightarrow s_1 \mid s_2\}
+  \mid \mathsf{nomatch}\ y \\
+v & ::= & \mathsf{pool}(P) \mid \mathsf{outcome}(b) \mid E{::}t(b) \\
+\tau & ::= & \mathsf{Fn}(\bar{k}) \mid \mathsf{Pool}\langle P\rangle
+  \mid \mathsf{Pool}\langle\alpha\rangle \mid b
+  \mid \mathsf{Result}\langle\tau, \tau\rangle \mid E
 \end{array}
 \]
 An operation $o$ has an optional effect and a flag saying whether its
@@ -570,13 +582,23 @@ confirmation was written. $s_1 \oplus s_2$ is a branch (\nsl{if} or
 \nsl{match}) of which either side may run. $k$ is an optional ceiling.
 $\mathsf{opaque}\{s_b\}$ is a closure the rules cannot see into, such as
 one returned by a function: $s_b$ is what it does, which the effect rule
-for calls never looks at. Named functions take closure arguments, each
-parameter with or without a ceiling, and capture nothing. A closure takes
-closures $\bar{q}$ as arguments of its own, without ceilings.
-$\mathsf{loop}\ s$ is a loop over a pool's files, which runs $s$ zero or
-more times, and $\mathsf{stop}$ is a \nsl{?} meeting an \nsl{Err}, which
-ends the function or closure it is in. Pools, files and \nsl{Result}
-values add no effects of their own and are left out.
+for calls never looks at. Named functions capture nothing and take
+parameters of any type $\tau$, a closure parameter with or without a
+ceiling; a pool parameter may name a type parameter $\alpha$, and a call
+to such a function carries the profiles the checker inferred for it. A
+closure takes closures $\bar{q}$ as arguments of its own, each with or
+without a ceiling $k_i$, and a call to a closure carries the ceilings its
+type gives the closure's parameters. $\mathsf{loop}\ s$ is a loop over a
+pool's files, which runs $s$ zero or more times, and $\mathsf{stop}$ ends
+the function or closure it is in. Values that are not closures are
+declared pools, the \nsl{Result<b, Str>} a \nsl{store} or \nsl{delete}
+gives back ($\mathsf{outcome}(b)$, after the operation itself), and enum
+variants carrying a plain value $b$ such as a \nsl{Str}.
+$\mathsf{let}\ x{:}\tau = y?$ binds what an \nsl{Ok} holds and returns on
+an \nsl{Err}. A \nsl{match} is a chain of arms: each runs its body on its
+variant and the arms after it otherwise, and the chain ends in a wildcard
+arm or in $\mathsf{nomatch}$, reached when no arm matched. Files,
+strands and sequences add nothing and are left out.
 
 \paragraph{Semantics.} A closure value $\clo(\bar{q}, s_b, \rho, ks)$
 holds its parameters, its body, its captured environment and the
@@ -587,11 +609,13 @@ whether its confirmation was written, and $cs$, as the monitor's trace
 does. The rules that matter are the closure call, which binds the
 closure's parameters to the arguments and runs the body under
 $ks \app cs$, and argument binding, which adds a parameter's ceiling to
-the value's $ks$:
+the value's $ks$. Both check each argument against its parameter's type,
+as the monitor does; there a generic $\mathsf{Pool}\langle\alpha\rangle$
+takes any pool, since a running program no longer knows $\alpha$:
 \begin{mathpar}
 \inferrule
-  {\rho(x) = \clo(\bar{q}, s_b, \rho', ks) \\
-   \rho_a = [q_i \mapsto \rho(y_i)] \\
+  {\rho(x) = \clo(\bar{q}{:}\bar{k}, s_b, \rho', ks) \\
+   \rho_a = [q_i \mapsto \rho(y_i) \text{ under } k_i] \\
    \rho_a \app \rho' \vdash_{ks \app cs} s_b \Downarrow t}
   {\rho \vdash_{cs} x(\bar{y}) \Downarrow t}
 \and
@@ -621,21 +645,21 @@ in its $U$ when it calls them, one that calls its arguments fits no
 ceiling, the rule defect~10 broke. The rules for closures and calls are:
 \begin{mathpar}
 \inferrule
-  {\Gamma, \bar{q}{:}\param \vdash s_b : R_b, U_b \\ \fits(k, R_b, U_b) \\
+  {\Gamma, \bar{q}{:}\bar{k} \vdash s_b : R_b, U_b \\ \fits(k, R_b, U_b) \\
    \Gamma, x{:}\known(R_b, U_b, \bar{q}) \vdash s : R, U}
-  {\Gamma \vdash \mathsf{let}\ x{:}k = \mathsf{fn}(\bar{q})\{s_b\};\ s : R, U}
+  {\Gamma \vdash \mathsf{let}\ x{:}k = \mathsf{fn}(\bar{q}{:}\bar{k})\{s_b\};\ s : R, U}
 \and
 \inferrule
   {\Gamma(y) = b \\ \Gamma, x{:}b \vdash s : R, U}
   {\Gamma \vdash \mathsf{let}\ x = y;\ s : R, U}
 \\
 \inferrule
-  {\Gamma, \bar{q}{:}\param \vdash s_b : R_b, U_b \\ \fits(k, R_b, U_b) \\
+  {\Gamma, \bar{q}{:}\bar{k} \vdash s_b : R_b, U_b \\ \fits(k, R_b, U_b) \\
    \Gamma, x{:}\known(\opq(k), \cdot, \cdot) \vdash s : R, U}
-  {\Gamma \vdash \mathsf{let}\ x{:}k = \mathsf{opaque}(\bar{q})\{s_b\};\ s : R, U}
+  {\Gamma \vdash \mathsf{let}\ x{:}k = \mathsf{opaque}(\bar{q}{:}\bar{k})\{s_b\};\ s : R, U}
 \and
 \inferrule
-  {\Gamma(x) = b \\ \Gamma \vdash \bar{y} : R_a, U_a}
+  {\Gamma(x) = b \\ \Gamma \vdash \bar{y} \triangleright \bar{k} : R_a, U_a}
   {\Gamma \vdash x(\bar{y}) : R(b) \cup R_a,\ \mathit{outer}(b) \app U_a}
 \\
 \inferrule
@@ -647,13 +671,24 @@ with one, which is defect~6's fix. The argument judgment
 $\Gamma \vdash \bar{x} \triangleright \bar{p}{:}\bar{k} : R_a, U_a$ adds
 $R(b)$ and $U(b)$ for each argument bound to $b$ that goes to a parameter
 without a ceiling, and requires $U(b) = [\,]$ and
-$R(b) \subseteq \allowed(c)$ for one with ceiling $c$. In a closure call,
-$\Gamma \vdash \bar{y} : R_a, U_a$ adds every argument's effects and
-outer uses, which defect~9's fix counts too; when $x$ holds a closure with
-a ceiling, which cannot call its arguments, they add nothing. The
-opaque binding's uses are its own parameters without a ceiling and none
-with one. A closure's parameters are named apart from the parameters the
-closures in scope may run, the usual convention. $\Phi(f)$ is the
+$R(b) \subseteq \allowed(c)$ for one with ceiling $c$. A closure call
+checks its arguments against the ceilings $\bar{k}$ of the closure's
+parameters the same way. A call to a closure the rules can see adds what
+goes to its parameters without a ceiling, a call through a parameter adds
+every argument, which defect~9's fix counts too, and when $x$ holds a
+closure with a ceiling, which cannot call its arguments, they add
+nothing. Inside a closure body an own parameter with ceiling $c$ is
+bound as $\known(\allowed(c), [\,], [\,])$, like a function's, so a
+closure held to a ceiling may call it. The opaque binding's uses are its
+own parameters without a ceiling and none with one. A closure's
+parameter may reuse a name in scope; a closure in scope that runs the
+outer parameter of that name counts, inside the body, as doing anything,
+since the name there means the new parameter. A value that is not a
+closure binds its name to $\known(\emptyset, [\,], [\,])$, and so does a
+function's parameter whose type is not a closure's, which the argument
+check keeps from holding one. What \nsl{?} or a \nsl{match} arm takes
+out of a value counts as doing anything, and a \nsl{match} has the
+effects of all its arms. $\Phi(f)$ is the
 effect of calling $f$; a program is accepted when each function body's
 $R$ is within its $\Phi$. The least fixed point the checker computes
 (Table~\ref{tab:rules}) is one such $\Phi$.
@@ -680,6 +715,23 @@ confirmation it needs and $[\,] \vdash_{[\,]} s \Downarrow t$, then
 $\mathit{conf}(ev)$ holds for every $ev \in t$.
 \end{theorem}
 
+\begin{theorem}[Value shapes]
+If every function body of $P$ is shaped and so is $s$, a run of $s$ from
+nothing never gets stuck: it calls no name without a value or that holds
+something other than a closure, passes no argument that does not conform
+to its parameter's type, applies \nsl{?} only to a \nsl{Result} and binds
+what it gives only to a type it conforms to, and never reaches a
+\nsl{match} none of whose arms fits.
+\end{theorem}
+
+A statement is shaped when every call passes values of the types its
+parameters want, after the call's profiles are put for the callee's type
+parameters, every \nsl{let} gives its name the type of its value,
+\nsl{?} meets a \nsl{Result}, and each arm of a \nsl{match} names a
+variant its scrutinee may still be. The arms after an arm see the
+scrutinee at a type with that variant removed, so $\mathsf{nomatch}$ is
+shaped only once every variant has had an arm.
+
 The proof needs an invariant the rules do not state: a closure value does
 at most what the binding that holds it says, given what the enclosing
 function's parameters hold, besides what its own arguments do, and calls
@@ -700,6 +752,9 @@ $\mathit{eff}(ev) \in \llbracket \known(R, U) \rrbracket_\sigma$, and every
 $c \in \mathit{ceil}(ev)$ is in $cs$ or allows $\mathit{eff}(ev)$.
 \end{lemma}
 
+A value that is not a closure satisfies $\mathit{ValOk}_B$ for every
+$B$, and what a \nsl{Result} holds satisfies it for every effect.
+
 The proof is by induction on the evaluation. In the call to a named
 function, the callee's environment matches its parameter context under
 the constant $\sigma_f = \lambda p.\ R_a \cup \bigcup_{q \in U_a}
@@ -707,10 +762,19 @@ the constant $\sigma_f = \lambda p.\ R_a \cup \bigcup_{q \in U_a}
 call passes, which is coarse but enough, and each parameter with a
 ceiling holds a value that took the ceiling on. A closure call extends
 the closure's $\sigma'$ with its own parameters bounded by the arguments,
-which leaves everything it captured meaning what it meant, because its
-parameters are named apart. The theorems follow with
-$\sigma = \lambda p.\ \emptyset$, since a whole program starts with no
-parameters and no ceilings in force.
+which leaves everything it captured meaning what it meant, because what
+the body can see by name runs no parameter its own hide; the context
+hidden names leave behind asks nothing of their values. The theorems
+follow with $\sigma = \lambda p.\ \emptyset$, since a whole program
+starts with no parameters and no ceilings in force.
+
+The shape theorem rests on a second invariant: every name holds a value
+of its type, with each type parameter standing for the profile the call
+gave it. A generic body is checked once with $\alpha$ abstract. A call
+composes the profiles it gives $\alpha$ with those its caller's
+parameters stand for, so the one check covers every instantiation,
+including a generic function calling another with a profile it does not
+know yet.
 
 \subsection{Checking the Rust checker against the rules}
 \label{sec:compare}
@@ -719,7 +783,7 @@ The Lean rules were written by hand from \nsl{effects.rs} and
 \nsl{typeck.rs}, so the two could drift apart. A function
 $\mathit{check}$ computes a statement's $R$ and $U$ or rejects it, and
 $\mathit{check\_sound}$ proves that whatever it returns is a derivation of
-the rules, so the three theorems hold for every program it accepts. It is
+the rules, so the four theorems hold for every program it accepts. It is
 built into a program, \texttt{nsl-check}, and a test generates programs
 in the core, writes each as NucleScript and for \texttt{nsl-check}, and
 fails if the two checkers differ on whether a program is accepted or on
@@ -731,18 +795,36 @@ unsound. Once the core and the generator covered closures that take
 arguments, it found two more: defect~10, which the Rust checker accepted
 unsoundly, and a rule of the Lean core that counted the arguments of a
 call through a slot with a ceiling, which cannot run them; the Rust
-checker had that one right. A run of 20,000 programs on 26 November 2026
-accepted 9,639 and found no disagreement. The same programs against the
-Rust checker as it was before defects~9 and~10 were fixed give six, each a
-program it accepted and the rules reject.
+checker had that one right. Before defects~9 and~10 were fixed, the
+generator of that time found six programs the Rust checker accepted and
+the rules reject.
+
+The generator now also writes closure parameters with ceilings,
+parameters that reuse a name in scope, two pools of different profiles
+passed to functions that take one profile or are generic over it, the
+\nsl{Result}s of stores, deletes and functions, \nsl{?} in functions that
+return a \nsl{Result}, enum values, and \nsl{match}es with an arm for
+each variant or a wildcard, with a wrong profile, a \nsl{?} of the wrong
+type or a missing arm now and then. Writing the value rules found
+defect~11 by hand; the comparison found defect~12, which 151 of 20,000
+programs hit, and a Lean rule that took a pool parameter for a closure,
+so that a closure with a ceiling that passed one on fit no ceiling,
+which three programs hit; the Rust checker had that one right.
+A run of 20,000 programs on 26 November 2026 accepted 10,580 and found no
+disagreement: 4,540 match on an enum or a \nsl{Result}, 447 use \nsl{?},
+756 call a generic function and 2,449 take a pool as a parameter.
 
 \subsection{What the proof does not cover}
 
 The comparison ties the Rust checker to the rules only where the
-generator reaches; it is testing, not proof. The core leaves out closure
-parameters with ceilings of their own, closure parameters that reuse a
-name in scope, generics, enums except as a source of opaque closures, and
-value shapes, so the fourth promise rests on testing alone.
+generator reaches; it is testing, not proof. The core's functions return
+nothing: a call to one returning a \nsl{Result} is taken to give a
+\nsl{Result} of its declared type, so the shape of a returned value
+rests on testing. The core also leaves out \nsl{Ok} and \nsl{Err} written
+out, enum variants carrying more than a plain value (a closure carried by
+an enum is still an opaque closure), closures that take pools, generic
+closures, a second name for a pool or a \nsl{Result}, and strands,
+sequences and files.
 
 \section{Decoding real reads}
 \label{sec:eval}
@@ -874,8 +956,9 @@ follow QuickCheck \cite{quickcheck} and Csmith \cite{csmith}. The proof
 is an induction over a big-step semantics with a semantic invariant on
 closure values, mechanised in Lean \cite{lean4}. The method is standard;
 what the proof adds is the rules it covers, in particular closures the
-checker cannot trace and parameters without a ceiling, both of which the
-implementation got wrong until the rules were written down.
+checker cannot trace, parameters without a ceiling and generic bodies
+checked once for every profile, all of which the implementation got wrong
+until the rules were written down.
 
 \section{Limitations}
 \label{sec:limits}
@@ -888,8 +971,8 @@ implementation got wrong until the rules were written down.
   and, without an account, shows neither its template nor its column
   names, so NucleOS writes a CSV to paste into it. The length and pool
   size limits it checks matched the page on 8 November 2026.
-\item \textbf{The proof covers a core.} See Section~\ref{sec:proof}; the
-  fourth promise and the rest of the language rest on testing.
+\item \textbf{The proof covers a core.} See Section~\ref{sec:proof}:
+  returned values and the rest of the language rest on testing.
 \item \textbf{Error-rate types are estimates.} The rates come from
   published profiles and from the measured channels of one study, and the
   consensus share from three read sets, the MinION one only 50 strands.
@@ -906,7 +989,7 @@ implementation got wrong until the rules were written down.
 
 NucleOS and NucleScript are MIT-licensed at
 \url{https://github.com/VyomKulshrestha/Nucle-OS}, and this report
-describes release v0.1.87. Every release from v0.1.74 is archived on
+describes release v0.1.95. Every release from v0.1.74 is archived on
 Zenodo (all versions:
 \href{https://doi.org/10.5281/zenodo.24552558}{doi:10.5281/zenodo.24552558}). A playground runs in the browser at
 \url{https://nuclescript.github.io/playground/}. In the repository:
@@ -914,10 +997,9 @@ Zenodo (all versions:
 \begin{itemize}[leftmargin=*,itemsep=1pt]
 \item \texttt{proofs/}: the Lean proof and \texttt{nsl-check}, built with
   \texttt{lake build} on Lean 4.35.0.
-\item \texttt{nucle\_lang/tests/soundness.rs} and
-  \texttt{soundness\_regressions.rs}: the monitor's tests and the
-  regressions. The variable \texttt{NSL\_SOUNDNESS\_PROGRAMS} sets the
-  number of generated programs.
+\item \texttt{soundness.rs} and \texttt{soundness\_regressions.rs} in
+  \texttt{nucle\_lang/tests/}: the monitor's tests and the regressions.
+  \texttt{NSL\_SOUNDNESS\_PROGRAMS} sets how many programs are generated.
 \item \texttt{nucle\_lang/tests/lean\_differential.rs}: the comparison of
   the two checkers, which finds \texttt{nsl-check} through the variable
   \texttt{NSL\_LEAN\_CHECKER}.
