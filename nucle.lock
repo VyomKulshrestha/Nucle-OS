@@ -23,6 +23,12 @@
       "version": "0.1.0",
       "import_source": "nuclescript/recovery",
       "checksum": "19eb9b798838977c2583ac3f1b27bc927073860d16f1ce156e098913db5fe9ec"
+    },
+    {
+      "name": "@nuclescript/std",
+      "version": "0.1.0",
+      "import_source": "nuclescript/std",
+      "checksum": "80b7fb8515f010738f56614396dc50ca1493cebe07943e144be785d62bcf8d09"
     }
   ]
 }
