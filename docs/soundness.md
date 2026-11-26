@@ -254,12 +254,48 @@ a few seconds, the theorems rest on no axiom but `propext`, and CI
 rebuilds the proof and fails if any step rests on `sorry`.
 [proofs/README.md](../proofs/README.md) says how to check it.
 
+### Checking the Rust checker against the rules
+
+The Lean rules were written by hand from the Rust code, so the two could
+part without anyone noticing. `proofs/Checker.lean` makes the rules
+something Lean can run: `check` computes a statement's R and U, or rejects
+it, and `check_sound` proves that its answer is a derivation of the rules,
+so the three theorems hold for every program it accepts
+(`accept_effects_sound`, `accept_ceilings_sound`, `accept_confirmed`).
+`nsl-check`, built from `proofs/Main.lean`, runs it on programs written one
+per line.
+
+`nucle_lang/tests/lean_differential.rs` generates programs in the core
+(functions taking closures with and without each ceiling, closures,
+second names for them, closures returned from functions, branches, and
+every operation with and without its confirmation), writes each as
+NucleScript and for `nsl-check`, and fails if the two checkers differ on
+whether a program is accepted or on its worst effect. CI runs 1,000 on
+every push; a run of 20,000 on 26 November 2026 accepted 9,649 and
+found no disagreement.
+
+Its first run found 40 disagreements, all programs the Lean rules accept
+and the Rust checker rejected. Beyond mistakes in how the test wrote
+programs, they came down to two places where `typeck.rs` had drifted from
+the rules and from `effects.rs`, neither of them unsound:
+
+- **A `Fn` parameter could not be given a second name.** `let again:
+  Fn() -> Void = action` reported `action` as an undeclared variable,
+  because only `let`s were looked up. It is accepted now, and the second
+  name must repeat the parameter's type, ceiling included.
+- **A second name declared with a ceiling lost what its closure does.**
+  `let again: Fn() -> Void confirm hardware = keep` was held to the whole
+  ceiling, so a store-only `keep` no longer fit `confirm synthesis` under
+  its second name. It now stands for exactly the closure it names, as it
+  always did in `effects.rs`.
+
 ## What this does not show
 
 - **The proof covers a core, not the implementation.** Its rules were
-  written by hand from `effects.rs` and `typeck.rs`, and nothing ties the
-  two together, so a slip in the Rust that the Lean rules do not share is
-  caught only by the monitor and the tests. The core leaves out closures
+  written by hand from `effects.rs` and `typeck.rs`. The two are tied by
+  testing, not by proof: the differential test checks that the Rust
+  checker gives the rules' verdict on generated core programs, which
+  catches a slip only where the generator reaches. The core leaves out closures
   that take arguments of their own, generics, `Result` and `?`, enums other
   than as a source of closures it cannot see into, and value shapes:
   promise 4 rests on testing alone.

@@ -64,6 +64,13 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.78:** two programs 1.0 rejected are
+  accepted. A `Fn` parameter can be given a second name (`let again:
+  Fn() -> Void = action`), which must repeat its type; and a second name
+  declared with a ceiling stands for exactly the closure it names, so it
+  fits a narrower ceiling the closure fits. Both were found by checking
+  the Rust checker against the Lean rules. No program 1.0 accepted is
+  rejected, and none of the 33 programs in the 1.0 corpus changed.
 - **26 November 2026, NucleOS v0.1.77:** addition. `confirm synthesis`
   and `confirm sequencing` are narrower ceilings beside `confirm hardware`
   on `Fn` types, and confirmations of `synthesise` and `sequence`
