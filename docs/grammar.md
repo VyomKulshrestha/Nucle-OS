@@ -661,6 +661,12 @@ enum RecoveryPlan {
 let plan: RecoveryPlan = RecoveryPlan::Fallback
 ```
 
+- **A payload can be a closure** (`Run(Fn() -> Void)`). It is checked
+  like a closure passed to a `Fn` parameter, so `Run(Fn() -> Void confirm
+  physical_key)` holds its closure to that ceiling where the value is
+  built, and the arm that takes it out (`Run(step) => step()`) can call it
+  or pass it on. With no ceiling on the payload type, the closure counts as
+  doing anything once it is out of the enum.
 - **At most one payload per variant** (`Variant` or `Variant(Type)`,
   never a tuple of several) -- mirroring `Ok(T)`/`Err(E)`'s own existing
   shape. Tuple/struct variants don't exist.

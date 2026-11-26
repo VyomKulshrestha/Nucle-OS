@@ -133,19 +133,24 @@ reported effect, and no fault was recorded. It runs two sets of programs:
     `Pool<Illumina>` that are also called with a Twist pool, and functions
     that recurse until the call-depth limit stops them;
   - `Result` functions using `?` and `match`, `if`, `for`, pipelines and
-    stores with `retain` requirements.
+    stores with `retain` requirements;
+  - an enum whose `match` picks which function runs, an enum that carries
+    a closure (called from its arm, or handed to a higher-order function
+    whose ceiling it cannot meet), a function imported from the
+    `nuclescript/presets` package, and `test` blocks, one in ten of which
+    asserts a bound that does not hold.
 
   About one delete in twenty-five drops its confirmation, and about one
   closure in twenty is given a ceiling its body does not fit, so the
   checker's rejections are exercised too. Some functions take a closure
   without a ceiling and pass it on to one that has a ceiling, by name or
-  inside a closure of their own. Of the 300, 215 were accepted; they ran
-  2,871 stores and 313 deletes.
+  inside a closure of their own. Of the 300, 201 were accepted; they ran
+  2,427 stores and 235 deletes.
 
-A longer run of 5,000 programs (`NSL_SOUNDNESS_PROGRAMS=5000`) on 8
-November 2026 accepted 3,540, ran 48,086 stores and 4,900 deletes, and broke
-no promise. The reports are also close to exact: of the 45,903 top-level
-declarations that ran an operation, 131 were reported with a worse effect
+A longer run of 5,000 programs (`NSL_SOUNDNESS_PROGRAMS=5000`) on 26
+November 2026 accepted 3,356, ran 43,292 stores and 4,209 deletes, and broke
+no promise. The reports are also close to exact: of the 42,220 top-level
+declarations that ran an operation, 315 were reported with a worse effect
 than they performed, most of them calls through a closure the analysis
 cannot trace. The rules allow that: every arm and branch counts
 whether it runs or not, and a run that stops early never reaches its later
@@ -254,11 +259,12 @@ rebuilds the proof and fails if any step rests on `sorry`.
   that take arguments of their own, generics, `Result` and `?`, enums other
   than as a source of closures it cannot see into, and value shapes:
   promise 4 rests on testing alone.
-- **The generator leaves parts of the language out:** enums, package
-  imports, `test` blocks, and pool expressions (`simulate`,
-  `consensus_vote`, `synthesise`, `sequence`), which never run: they exist
-  only while checking. Their rules are covered by the ordinary tests, not
-  by the monitor.
+- **The generator leaves pool expressions out** (`consensus_vote`,
+  `synthesise`, `sequence`): they never run, existing only while
+  checking, so the monitor has nothing to watch. Their rules are covered
+  by the ordinary tests. `test` blocks are generated, but they never run
+  either; the monitor only shows that the checker handles them alongside
+  everything else.
 - **Error-rate types are estimates.** A pool's type carries an error rate
   (`Pool<Illumina, 0.35%>`) that the checker computes from published
   profiles; the runtime has no pool values to compare it with. Whether

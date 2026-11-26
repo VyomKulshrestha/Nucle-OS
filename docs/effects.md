@@ -83,7 +83,9 @@ closure (`let again: Fn() -> Void = wipe`) resolves to the same closure.
 A closure the analysis cannot trace, one returned by a function or taken
 out of an enum, may do anything: a call through it has every effect, and
 it fits no ceiling unless the `Fn` type it comes through names one
-(`returns Fn() -> Void confirm hardware`). A `Fn` parameter without a
+(`returns Fn() -> Void confirm hardware`, or an enum variant declared
+`Run(Fn() -> Void confirm physical_key)`, whose closure is checked against
+that ceiling where the enum value is built). A `Fn` parameter without a
 ceiling is the same inside a ceiling: a function cannot pass it on to a
 `confirm hardware` parameter, or call it inside a closure it passes there,
 because its caller may hand it a closure that deletes.

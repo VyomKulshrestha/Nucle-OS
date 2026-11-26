@@ -64,6 +64,13 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.76:** a closure can be stored in an
+  enum (`Run(Fn() -> Void)`) and called from the arm that takes it out;
+  1.0 rejected the `match` because the payload never type-checked. The
+  closure is now checked where the enum value is built, against the
+  payload type's ceiling if it names one, so a program 1.0 accepted whose
+  closure payload broke a confirmation or that ceiling is now rejected.
+  None of the 33 programs in the 1.0 corpus changed.
 - **26 November 2026, NucleOS v0.1.75:** new warning. An error in the
   branch an `if` does not take is reported as an `E-IF-UNTAKEN-BRANCH`
   warning; it was silently ignored before. No program 1.0 accepted is
