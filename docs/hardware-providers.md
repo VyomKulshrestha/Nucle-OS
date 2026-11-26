@@ -110,7 +110,9 @@ bases, melts more than 5 °C from the other (64.9 + 41(GC - 16.4)/N), or
 has its last 12 bases anywhere in the payload on either strand. These are
 rules of thumb; the sequencing lab's own pair is the one to use. `nucle
 bootstrap inspect order.fasta --flank FORWARD,REVERSE` strips the sites
-before reading the header.
+before reading the header. [`scripts/pilot`](../scripts/pilot/README.md)
+builds a whole pilot run on this: order sheets, a dry run on measured
+channels, and the program that scores the sequencer's reads.
 
 Every sequence must be plain A/C/G/T and every name unique. For IDT the
 command lists the scales that take a pool of that size. The IDT figures are

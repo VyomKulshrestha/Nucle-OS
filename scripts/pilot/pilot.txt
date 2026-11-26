@@ -1,0 +1,6 @@
+NucleScript wet-lab pilot.
+
+This file was written by a NucleScript program, ordered as an oligo pool,
+amplified with one primer pair, sequenced, and read back by the same
+language that wrote it. If you are reading it from DNA, the round trip
+worked.

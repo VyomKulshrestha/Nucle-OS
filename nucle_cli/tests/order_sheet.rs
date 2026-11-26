@@ -134,3 +134,30 @@ fn flanked_oligos_share_one_primer_pair_and_still_describe_themselves() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("100% GC"), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!refused.exists());
 }
+
+/// scripts/pilot/README.md quotes these numbers; they must stay true.
+#[test]
+fn the_pilot_kit_sheet_matches_its_readme() {
+    let kit = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("scripts").join("pilot");
+    let dir = scratch("pilot");
+    for file in ["pilot.nsl", "pilot.txt", "check.nsl"] {
+        std::fs::copy(kit.join(file), dir.join(file)).unwrap();
+    }
+    let pair = "ACGTCAGTGCATGACTGACT,TGCATCAGTCAGACTGCATG";
+    let sheet = dir.join("order.fasta");
+    let v = json(nucle().arg("--json").args(["hardware", "order"]).arg(dir.join("pilot.nsl")).args(["--vendor", "twist", "--flank", pair, "--out"]).arg(&sheet));
+    assert_eq!((v["oligos"].as_u64(), v["shortest"].as_u64(), v["longest"].as_u64()), (Some(23), Some(100), Some(232)));
+    let total: usize = std::fs::read_to_string(&sheet).unwrap().lines().filter(|l| !l.starts_with('>')).map(str::len).sum();
+    assert_eq!(total, 5_144);
+
+    let header = json(nucle().arg("--json").args(["bootstrap", "inspect"]).arg(&sheet).args(["--flank", pair]));
+    let file = &header["files"][0];
+    assert_eq!((file["name"].as_str(), file["size"].as_u64()), (Some("pilot/pilot.txt"), Some(250)));
+    assert_eq!((file["data_strands"].as_u64(), file["parity_strands"].as_u64()), (Some(16), Some(4)));
+
+    let idt = json(nucle().arg("--json").args(["hardware", "order"]).arg(dir.join("pilot.nsl")).args(["--vendor", "idt", "--flank", pair, "--out"]).arg(dir.join("order.csv")));
+    assert_eq!(idt["idt_scales"], serde_json::json!(["50 pmol", "10 pmol"]));
+
+    let checked = nucle().arg("check").arg(dir.join("check.nsl")).output().unwrap();
+    assert!(checked.status.success(), "{}", String::from_utf8_lossy(&checked.stderr));
+}

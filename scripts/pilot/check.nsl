@@ -1,0 +1,7 @@
+// Scores sequencing reads of the pilot pool against what was ordered: the
+// dry run's simulated reads before the order, the sequencer's reads after.
+// Run from this directory once `reads.fastq` and `order.fasta` exist.
+decode reads "reads.fastq" against "order.fasta" {
+    blind,
+    expect recovery > 95%
+}

@@ -1,0 +1,10 @@
+// The pilot archive: one small file in one Twist oligo pool. This is the
+// program the order sheet is written from (see README.md):
+//
+//     nucle hardware order pilot.nsl --vendor twist --flank FORWARD,REVERSE --out order.fasta
+//
+// HEDGES decodes a strand from one noisy read, insertions and deletions
+// included, so the pilot does not hinge on deep coverage.
+pool pilot: DnaPool { codec: Hedges, redundancy: 4x, profile: Twist }
+
+store "pilot.txt" into pilot
