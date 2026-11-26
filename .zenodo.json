@@ -1,7 +1,7 @@
 {
   "upload_type": "software",
   "title": "NucleOS and NucleScript: a software-defined DNA storage engine and its language",
-  "description": "<p>NucleOS encodes files into DNA strands and back: ternary, DNA Fountain, Yin-Yang and HEDGES codecs, Reed-Solomon parity planned from a measured channel, consensus and clustering of real sequencing reads, primer addressing and a versioned virtual filesystem, tested against a noise simulator with channels measured from real oligo pools.</p><p>NucleScript, version 1.0, is its language: pools typed by sequencer profile and error rate, and effects for synthesis, sequencing and deletion whose confirmations are checked at compile time, run against the simulator, with order sheets for Twist and IDT and decoding of real reads at its edges. No NucleScript program has yet driven a real synthesis or sequencing run.</p>",
+  "description": "<p>NucleOS encodes files into DNA strands and back: ternary, DNA Fountain, Yin-Yang and HEDGES codecs, Reed-Solomon parity planned from a measured channel, consensus and clustering of real sequencing reads, primer addressing and a versioned virtual filesystem, tested against a noise simulator with channels measured from real oligo pools.</p><p>NucleScript, version 1.0, is its language: pools typed by sequencer profile and error rate, and effects for synthesis, sequencing and deletion whose confirmations are checked at compile time, run against the simulator, with order sheets for Twist and IDT and decoding of real reads at its edges. A Lean 4 proof covers the effect and confirmation rules for a core of the language. No NucleScript program has yet driven a real synthesis or sequencing run.</p>",
   "creators": [
     {
       "name": "Kulshrestha, Vyom",
@@ -21,6 +21,16 @@
     "DNA Fountain",
     "HEDGES",
     "synthetic biology",
-    "Rust"
+    "Rust",
+    "formal verification",
+    "Lean 4"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.5281/zenodo.24057684",
+      "relation": "isDocumentedBy",
+      "resource_type": "publication-report",
+      "scheme": "doi"
+    }
   ]
 }
