@@ -1,0 +1,30 @@
+// The NucleScript standard library, written in NucleScript: generic
+// helpers that work on a pool of any profile, built from runtime loops,
+// closures and effect ceilings.
+//
+//     import { clear, each_file, prune } from "nuclescript/std"
+
+/// Deletes every file `target` holds when the call runs. Calling it is
+/// Destructive, as the delete inside is.
+fn clear<P>(target: Pool<P>) returns Void {
+    for f in files of target {
+        delete f from target confirm physical_key
+    }
+}
+
+/// Runs `action` once on each file `target` holds when the call runs, in
+/// name order. The call has whatever effect `action` has.
+fn each_file<P>(target: Pool<P>, action: Fn(File) -> Void) returns Void {
+    for f in files of target {
+        let done: Void = action(f)
+    }
+}
+
+/// `each_file` for an action that deletes and does nothing worse: the
+/// `confirm physical_key` ceiling rejects an action that synthesises or
+/// sequences, where the action is written.
+fn prune<P>(target: Pool<P>, action: Fn(File) -> Void confirm physical_key) returns Void {
+    for f in files of target {
+        let done: Void = action(f)
+    }
+}

@@ -17,6 +17,9 @@ const BENCHMARKS_SOURCE_NSL: &str = include_str!("../../packages/nuclescript-ben
 const RECOVERY_MANIFEST_JSON: &str = include_str!("../../packages/nuclescript-recovery/package.json");
 const RECOVERY_SOURCE_NSL: &str = include_str!("../../packages/nuclescript-recovery/src/recovery.nsl");
 
+const STD_MANIFEST_JSON: &str = include_str!("../../packages/nuclescript-std/package.json");
+const STD_SOURCE_NSL: &str = include_str!("../../packages/nuclescript-std/src/std.nsl");
+
 /// `packages/registry.json` — the index of every package the CLI knows
 /// about. This is genuinely parsed at startup (not just present on disk):
 /// [`get_registry`] resolves each listed entry's manifest and seeds the
@@ -61,6 +64,7 @@ fn embedded_manifest_for_path(path: &str) -> Option<&'static str> {
         "packages/nuclescript-profiles/package.json" => Some(PROFILES_MANIFEST_JSON),
         "packages/nuclescript-benchmarks/package.json" => Some(BENCHMARKS_MANIFEST_JSON),
         "packages/nuclescript-recovery/package.json" => Some(RECOVERY_MANIFEST_JSON),
+        "packages/nuclescript-std/package.json" => Some(STD_MANIFEST_JSON),
         _ => None,
     }
 }
@@ -75,6 +79,7 @@ fn embedded_sources_for_manifest(manifest_path: &str) -> Vec<&'static str> {
         "packages/nuclescript-profiles/package.json" => vec![PROFILES_SOURCE_NSL],
         "packages/nuclescript-benchmarks/package.json" => vec![BENCHMARKS_SOURCE_NSL],
         "packages/nuclescript-recovery/package.json" => vec![RECOVERY_SOURCE_NSL],
+        "packages/nuclescript-std/package.json" => vec![STD_SOURCE_NSL],
         _ => vec![],
     }
 }

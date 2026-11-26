@@ -1,0 +1,40 @@
+{
+  "name": "@nuclescript/std",
+  "import": "nuclescript/std",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "The NucleScript standard library, written in NucleScript: generic helpers that loop over the files a pool holds, with effect ceilings on the actions they run.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VyomKulshrestha/Nucle-OS.git",
+    "directory": "packages/nuclescript-std"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
+  "exports": [
+    {
+      "name": "clear",
+      "kind": "function",
+      "description": "Deletes every file a pool of any profile holds when the call runs."
+    },
+    {
+      "name": "each_file",
+      "kind": "function",
+      "description": "Runs a closure once on each file a pool holds when the call runs, with the closure's own effect."
+    },
+    {
+      "name": "prune",
+      "kind": "function",
+      "description": "Runs a closure on each file a pool holds; the closure may delete and nothing worse (confirm physical_key ceiling)."
+    }
+  ],
+  "source": "src/std.nsl",
+  "readme": "README.md"
+}

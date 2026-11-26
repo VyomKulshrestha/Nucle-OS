@@ -28,6 +28,13 @@
       "version": "0.1.0",
       "description": "Consensus and recovery templates for turning a noisy channel into a recovered pool.",
       "manifest": "packages/nuclescript-recovery/package.json"
+    },
+    {
+      "name": "@nuclescript/std",
+      "import": "nuclescript/std",
+      "version": "0.1.0",
+      "description": "The NucleScript standard library, written in NucleScript: generic helpers over the files a pool holds.",
+      "manifest": "packages/nuclescript-std/package.json"
     }
   ]
 }
