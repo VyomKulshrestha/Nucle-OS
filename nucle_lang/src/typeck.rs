@@ -132,7 +132,7 @@ pub struct SymbolTable {
     pub enums: HashMap<String, EnumDecl>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct TypeChecker {
     pools: HashMap<String, PoolDecl>,
     pool_bindings: HashMap<String, ProbPoolType>,
@@ -391,26 +391,53 @@ impl TypeChecker {
         TestDecl { name: test.name.clone(), body: desugared_body, span: test.span }
     }
 
-    /// Evaluates `condition` at compile time and type-checks only the
-    /// taken branch (the untaken branch is never checked at all, matching
-    /// `#[cfg(...)]` more than a runtime `if` -- see `IfDecl`'s doc
-    /// comment). Returns that branch's desugared declarations, or an empty
-    /// `Vec` if `condition` couldn't be evaluated (the error is already
-    /// recorded by `eval_condition`).
+    /// Evaluates `condition` at compile time and keeps only the taken
+    /// branch (see `IfDecl`'s doc comment). Returns that branch's desugared
+    /// declarations, or an empty `Vec` if `condition` couldn't be evaluated
+    /// (the error is already recorded by `eval_condition`).
+    ///
+    /// The untaken branch is checked too, on a copy of the checker so that
+    /// nothing it declares leaks into the program, and each error it would
+    /// raise is reported as an `E-IF-UNTAKEN-BRANCH` warning. NucleScript
+    /// 1.x promises no new errors on programs 1.0 accepted, so a mistake
+    /// in a branch that does not run is a warning until 2.0.
     fn check_if(&mut self, if_decl: &IfDecl) -> Vec<Declaration> {
         let Some(taken) = self.eval_condition(&if_decl.condition, if_decl.span, "if") else {
             return Vec::new();
         };
-        let branch: &[Declaration] = if taken {
-            &if_decl.then_branch
-        } else {
-            if_decl.else_branch.as_deref().unwrap_or(&[])
-        };
+        let else_branch = if_decl.else_branch.as_deref().unwrap_or(&[]);
+        let (branch, untaken): (&[Declaration], &[Declaration]) =
+            if taken { (&if_decl.then_branch, else_branch) } else { (else_branch, &if_decl.then_branch) };
+        self.check_untaken_branch(untaken);
         let mut out = Vec::new();
         for decl in branch {
             out.extend(self.check_declaration_single(decl));
         }
         out
+    }
+
+    /// Checks the branch an `if` does not take, on a copy of this checker,
+    /// and reports each of its errors as an `E-IF-UNTAKEN-BRANCH` warning.
+    /// A failed `assert` is left out: an assertion inside a branch only
+    /// claims something about the case where that branch runs.
+    fn check_untaken_branch(&mut self, branch: &[Declaration]) {
+        if branch.is_empty() {
+            return;
+        }
+        let mut shadow = self.clone();
+        shadow.report = TypeReport::default();
+        for decl in branch {
+            shadow.check_declaration_single(decl);
+        }
+        for diagnostic in shadow.report.diagnostics {
+            if diagnostic.level != DiagnosticLevel::Error || diagnostic.code == "E-ASSERTION-FAILED" {
+                continue;
+            }
+            self.report.warning(diagnostic.span, "E-IF-UNTAKEN-BRANCH", format!(
+                "in the branch this `if` does not take: {} ({}); it is skipped now, and will be an error in NucleScript 2.0",
+                diagnostic.message, diagnostic.code
+            ));
+        }
     }
 
     /// Unrolls the loop by substituting `binding` with each item's literal

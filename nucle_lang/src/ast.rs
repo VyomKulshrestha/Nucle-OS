@@ -102,8 +102,8 @@ pub struct TestDecl {
 /// extend its body's scope) and produces a `Program` with every `If`
 /// already resolved away -- `codegen`/`middle`/`sim_backend` never see
 /// this variant. This mirrors Rust's `#[cfg(...)]` more than a runtime
-/// `if`: the untaken branch is not type-checked at all, not merely
-/// skipped at "runtime".
+/// `if`. The untaken branch is checked on a copy of the checker, and its
+/// errors are reported as `E-IF-UNTAKEN-BRANCH` warnings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IfDecl {
     pub condition: Expr,

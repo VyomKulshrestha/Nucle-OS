@@ -153,3 +153,48 @@ fn non_boolean_condition_is_rejected() {
     assert!(!report.ok, "expected a bare (non-comparison) condition to fail");
     assert!(report.diagnostics.iter().any(|d| d.code == "E-CONDITION-NOT-BOOLEAN"));
 }
+
+/// A mistake in the branch an `if` does not take used to vanish: that
+/// branch was never checked. It is now checked on a copy of the checker
+/// and reported as a warning, so the program still compiles (NucleScript
+/// 1.x adds no new errors) but the mistake is visible.
+#[test]
+fn an_error_in_the_untaken_branch_is_a_warning() {
+    let src = r#"
+        pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+        let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+        if noisy > 10.0 {
+            let recovered: Pool<Recovered> = consensus_vote(missing_pool, coverage: 10x)
+        } else {
+            let recovered: Pool<Recovered> = consensus_vote(noisy, coverage: 2x)
+        }
+    "#;
+    let program = parse(src);
+    let (report, desugared) = check_and_desugar(&program);
+    assert!(!report.has_errors(), "the untaken branch must not add errors: {:?}", report.diagnostics);
+    let warnings: Vec<_> = report.diagnostics.iter().filter(|d| d.code == "E-IF-UNTAKEN-BRANCH").collect();
+    assert_eq!(warnings.len(), 1, "{:?}", report.diagnostics);
+    assert!(warnings[0].message.contains("missing_pool"), "{}", warnings[0].message);
+    // Only the taken branch survives desugaring, as before.
+    let recovered = desugared.declarations.iter().filter(|d| matches!(d, Declaration::Let(b) if b.name == "recovered")).count();
+    assert_eq!(recovered, 1);
+}
+
+/// Checking the untaken branch must not leak its bindings into the
+/// program, and an `assert` there is about the case where that branch
+/// runs, so a failing one is not reported.
+#[test]
+fn the_untaken_branch_leaves_no_bindings_and_skips_its_asserts() {
+    let src = r#"
+        pool archive: DnaPool { codec: Ternary, redundancy: 3x, profile: Illumina }
+        let noisy: Pool<Illumina, 0.35%> = simulate archive under Illumina
+        if noisy > 10.0 {
+            let only_when_noisy: Pool<Recovered> = consensus_vote(noisy, coverage: 10x)
+            assert noisy > 10.0, "this branch only runs on noisy pools"
+        }
+        let only_when_noisy: Pool<Recovered> = consensus_vote(noisy, coverage: 3x)
+    "#;
+    let program = parse(src);
+    let (report, _) = check_and_desugar(&program);
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+}
