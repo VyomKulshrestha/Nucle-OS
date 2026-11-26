@@ -94,3 +94,43 @@ fn a_sheet_a_vendor_would_refuse_is_not_written() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("stores nothing to synthesize"), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(!sheet.exists());
 }
+
+#[test]
+fn flanked_oligos_share_one_primer_pair_and_still_describe_themselves() {
+    let dir = scratch("flank");
+    let source = program(&dir);
+    let plain = dir.join("plain.fasta");
+    let flanked = dir.join("flanked.fasta");
+    let pair = "ACGTCAGTGCATGACTGACT,TGCATCAGTCAGACTGCATG";
+    json(nucle().arg("--json").args(["hardware", "order"]).arg(&source).args(["--vendor", "twist", "--out"]).arg(&plain));
+    let v = json(nucle().arg("--json").args(["hardware", "order"]).arg(&source).args(["--vendor", "twist", "--flank", pair, "--out"]).arg(&flanked));
+    assert_eq!(v["flanks"]["forward"], "ACGTCAGTGCATGACTGACT");
+    assert!((v["flanks"]["forward_tm_celsius"].as_f64().unwrap() - v["flanks"]["reverse_tm_celsius"].as_f64().unwrap()).abs() <= 5.0);
+
+    let sequences = |path: &std::path::Path| -> Vec<String> {
+        std::fs::read_to_string(path).unwrap().lines().filter(|l| !l.starts_with('>')).map(str::to_string).collect()
+    };
+    let (plain, flanked_seqs) = (sequences(&plain), sequences(&flanked));
+    assert_eq!(plain.len(), flanked_seqs.len());
+    for (p, f) in plain.iter().zip(&flanked_seqs) {
+        // Header strands too: the whole pool amplifies with one pair.
+        assert_eq!(*f, format!("ACGTCAGTGCATGACTGACT{p}CATGCAGTCTGACTGATGCA"));
+    }
+
+    // The flanked sheet still gives back its file table once told the pair.
+    let header = json(nucle().arg("--json").args(["bootstrap", "inspect"]).arg(&flanked).args(["--flank", pair]));
+    assert_eq!(header["files"][0]["name"], "archive/records.csv");
+
+    // A primer pair that would prime badly writes nothing.
+    let refused = dir.join("refused.fasta");
+    let out = nucle()
+        .args(["hardware", "order"])
+        .arg(&source)
+        .args(["--vendor", "twist", "--flank", "GCGCGCGCGCGCGCGCGCGC,TGCATCAGTCAGACTGCATG", "--out"])
+        .arg(&refused)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("100% GC"), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!refused.exists());
+}

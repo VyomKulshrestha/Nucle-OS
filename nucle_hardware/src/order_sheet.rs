@@ -125,6 +125,136 @@ pub fn check(vendor: Vendor, oligos: &[Oligo]) -> OrderCheck {
     }
 }
 
+/// One primer pair added to both ends of every oligo, so the whole pool
+/// (header strands included) amplifies, and takes sequencing adapters,
+/// with a single PCR. Each file's own primers stay inside, for picking
+/// one file out later. Both primers are written 5' to 3' as they would be
+/// ordered: an oligo becomes `forward`, then the payload, then the
+/// reverse complement of `reverse`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Flanks {
+    pub forward: String,
+    pub reverse: String,
+}
+
+/// How many bases at a primer's 3' end must not occur anywhere in the
+/// payload, on either strand: extension starts there, so a match is a
+/// second place the primer could prime.
+pub const PRIMER_3P_SCREEN: usize = 12;
+
+impl Flanks {
+    /// Parses `FORWARD,REVERSE`.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let (forward, reverse) = text
+            .split_once(',')
+            .ok_or_else(|| format!("expected two primers as FORWARD,REVERSE; got '{text}'"))?;
+        Ok(Flanks { forward: forward.trim().to_ascii_uppercase(), reverse: reverse.trim().to_ascii_uppercase() })
+    }
+
+    /// What is wrong with the primers on their own: 18 to 30 nt of A/C/G/T,
+    /// 40-60% GC, no run of four or more of one base, and melting
+    /// temperatures (basic GC formula) within 5 °C of each other. These are
+    /// common primer-design rules of thumb, not a substitute for the
+    /// sequencing lab's own primers.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        for (role, primer) in [("forward", &self.forward), ("reverse", &self.reverse)] {
+            if let Some(bad) = primer.chars().find(|c| !matches!(c, 'A' | 'C' | 'G' | 'T')) {
+                problems.push(format!("{role} primer contains '{bad}'; only A, C, G and T"));
+                continue;
+            }
+            if !(18..=30).contains(&primer.len()) {
+                problems.push(format!("{role} primer is {} nt; use 18-30", primer.len()));
+            }
+            let gc = gc_fraction(primer);
+            if !(0.4..=0.6).contains(&gc) {
+                problems.push(format!("{role} primer is {:.0}% GC; use 40-60%", gc * 100.0));
+            }
+            if longest_run(primer) >= 4 {
+                problems.push(format!("{role} primer has a run of {} identical bases; keep runs to 3", longest_run(primer)));
+            }
+        }
+        if problems.is_empty() {
+            let (f, r) = (melting_celsius(&self.forward), melting_celsius(&self.reverse));
+            if (f - r).abs() > 5.0 {
+                problems.push(format!("the primers melt {:.1} °C apart ({f:.1} and {r:.1}); keep them within 5 °C", (f - r).abs()));
+            }
+        }
+        problems
+    }
+
+    /// `oligos` with both primer sites added, and every payload where a
+    /// primer's last [`PRIMER_3P_SCREEN`] bases also occur on either strand.
+    pub fn apply(&self, oligos: &[Oligo]) -> (Vec<Oligo>, Vec<String>) {
+        let tail = reverse_complement(&self.reverse);
+        let mut problems = Vec::new();
+        for (role, primer) in [("forward", &self.forward), ("reverse", &self.reverse)] {
+            let end = &primer[primer.len().saturating_sub(PRIMER_3P_SCREEN)..];
+            let end_rc = reverse_complement(end);
+            for oligo in oligos {
+                if oligo.sequence.contains(end) || oligo.sequence.contains(&end_rc) {
+                    problems.push(format!("{} contains the {role} primer's last {} bases; it could prime there", oligo.name, end.len()));
+                }
+            }
+        }
+        let flanked = oligos
+            .iter()
+            .map(|o| Oligo { name: o.name.clone(), sequence: format!("{}{}{}", self.forward, o.sequence, tail) })
+            .collect();
+        (flanked, problems)
+    }
+
+    /// `sequence` without the primer sites, when it starts with the
+    /// forward primer and ends with the reverse one's complement; otherwise
+    /// unchanged.
+    pub fn strip<'a>(&self, sequence: &'a str) -> &'a str {
+        let tail = reverse_complement(&self.reverse);
+        match sequence.strip_prefix(self.forward.as_str()).and_then(|s| s.strip_suffix(tail.as_str())) {
+            Some(inner) => inner,
+            None => sequence,
+        }
+    }
+}
+
+/// The reverse complement of an A/C/G/T string (other characters kept).
+pub fn reverse_complement(sequence: &str) -> String {
+    sequence
+        .chars()
+        .rev()
+        .map(|c| match c {
+            'A' => 'T',
+            'T' => 'A',
+            'C' => 'G',
+            'G' => 'C',
+            other => other,
+        })
+        .collect()
+}
+
+fn gc_fraction(sequence: &str) -> f64 {
+    if sequence.is_empty() {
+        return 0.0;
+    }
+    sequence.chars().filter(|c| matches!(c, 'G' | 'C')).count() as f64 / sequence.len() as f64
+}
+
+fn longest_run(sequence: &str) -> usize {
+    let bytes = sequence.as_bytes();
+    let (mut best, mut run) = (0, 0);
+    for (i, b) in bytes.iter().enumerate() {
+        run = if i > 0 && bytes[i - 1] == *b { run + 1 } else { 1 };
+        best = best.max(run);
+    }
+    best
+}
+
+/// Melting temperature by the basic formula for primers over 13 nt,
+/// 64.9 + 41 (GC - 16.4) / N (no salt or concentration correction).
+pub fn melting_celsius(primer: &str) -> f64 {
+    let gc = primer.chars().filter(|c| matches!(c, 'G' | 'C')).count() as f64;
+    64.9 + 41.0 * (gc - 16.4) / primer.len() as f64
+}
+
 /// The sheet's text.
 pub fn render(format: SheetFormat, oligos: &[Oligo]) -> String {
     match format {
@@ -188,6 +318,47 @@ mod tests {
         let oligos = [oligo("a_d0", 8), oligo("a_p0", 4)];
         assert_eq!(render(SheetFormat::Fasta, &oligos), ">a_d0\nACGTACGT\n>a_p0\nACGT\n");
         assert_eq!(render(SheetFormat::Csv, &oligos), "Name,Sequence\na_d0,ACGTACGT\na_p0,ACGT\n");
+    }
+
+    const FORWARD: &str = "ACGTCAGTGCATGACTGACT";
+    const REVERSE: &str = "TGCATCAGTCAGACTGCATG";
+
+    #[test]
+    fn flanks_wrap_every_oligo_and_come_off_again() {
+        let flanks = Flanks::parse(&format!("{},{}", FORWARD.to_lowercase(), REVERSE)).unwrap();
+        assert!(flanks.problems().is_empty(), "{:?}", flanks.problems());
+        let (flanked, problems) = flanks.apply(&[oligo("a_d0", 40)]);
+        assert!(problems.is_empty(), "{problems:?}");
+        let seq = &flanked[0].sequence;
+        assert_eq!(seq.len(), 80);
+        assert!(seq.starts_with(FORWARD));
+        // The reverse primer anneals to the top strand's 3' end.
+        assert!(seq.ends_with(&reverse_complement(REVERSE)));
+        assert_eq!(flanks.strip(seq), oligo("a_d0", 40).sequence);
+        assert_eq!(flanks.strip("ACGT"), "ACGT", "a sequence without the flanks is left alone");
+        assert!(Flanks::parse(FORWARD).is_err());
+    }
+
+    #[test]
+    fn primers_that_would_not_amplify_well_are_refused() {
+        let problems = |f: &str, r: &str| Flanks { forward: f.into(), reverse: r.into() }.problems();
+        assert!(problems("ACGTCAGT", REVERSE).iter().any(|p| p.contains("8 nt")));
+        assert!(problems("GCGCGCGCGCGCGCGCGCGC", REVERSE).iter().any(|p| p.contains("100% GC")));
+        assert!(problems("ACGTAAAACAGTGCATGACG", REVERSE).iter().any(|p| p.contains("run of 4")));
+        assert!(problems("ACGTNAGTGCATGACTGACT", REVERSE).iter().any(|p| p.contains("'N'")));
+        // 40% and 60% GC are each fine alone but melt 8.2 °C apart.
+        assert!(problems("ACGTCAGTACATGACTGATT", "GCATCAGTCAGCCTGCATGC").iter().any(|p| p.contains("°C apart")));
+    }
+
+    #[test]
+    fn a_payload_holding_a_primer_end_is_flagged() {
+        let flanks = Flanks { forward: FORWARD.into(), reverse: REVERSE.into() };
+        let end = &FORWARD[FORWARD.len() - PRIMER_3P_SCREEN..];
+        let inside = Oligo { name: "x_d0".into(), sequence: format!("AAC{end}CAA") };
+        let other_strand = Oligo { name: "x_d1".into(), sequence: format!("AAC{}CAA", reverse_complement(&REVERSE[REVERSE.len() - PRIMER_3P_SCREEN..])) };
+        let (_, problems) = flanks.apply(&[inside, other_strand]);
+        assert!(problems.iter().any(|p| p.starts_with("x_d0 contains the forward primer's last 12 bases")), "{problems:?}");
+        assert!(problems.iter().any(|p| p.starts_with("x_d1 contains the reverse primer's last 12 bases")), "{problems:?}");
     }
 
     #[test]

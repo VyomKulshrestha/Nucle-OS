@@ -57,12 +57,19 @@ fn read_sequences(text: &str) -> Vec<DnaStrand> {
     out
 }
 
-pub fn cmd_inspect(file: &str, json: bool) {
+pub fn cmd_inspect(file: &str, flank: Option<&str>, json: bool) {
     let text = std::fs::read_to_string(file).unwrap_or_else(|e| {
         eprintln!("Error reading '{file}': {e}");
         std::process::exit(1);
     });
-    let strands = read_sequences(&text);
+    let mut strands = read_sequences(&text);
+    if let Some(flank) = flank {
+        let flanks = nucle_hardware::order_sheet::Flanks::parse(flank).unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(1);
+        });
+        strands = strands.iter().filter_map(|s| DnaStrand::from_str(flanks.strip(&s.to_string())).ok()).collect();
+    }
     let header = match ArchiveHeader::from_strands(&strands) {
         Ok(h) => h,
         Err(e) => {

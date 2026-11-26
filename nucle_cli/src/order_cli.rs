@@ -3,20 +3,32 @@
 //! vendor's limits. Nothing is ordered; the sheet is for a person to
 //! upload (see `nucle_hardware::order_sheet`).
 
-use nucle_hardware::order_sheet::{check, oligo_name, render, Oligo, Vendor};
+use nucle_hardware::order_sheet::{check, melting_celsius, oligo_name, render, Flanks, Oligo, Vendor};
 use nucle_lang::middle::{lower_program, MirOp};
 use nucle_lang::Codec;
 use nucle_vfs::syscall::{CodecKind, NucleOS};
 use std::path::Path;
 
-pub fn cmd_order(source: &str, vendor: &str, out: &str, json: bool) {
+pub fn cmd_order(source: &str, vendor: &str, out: &str, flank: Option<&str>, json: bool) {
     let fail = |message: String| -> ! {
         eprintln!("{message}");
         std::process::exit(1);
     };
     let vendor = Vendor::parse(vendor).unwrap_or_else(|| fail(format!("unknown vendor '{vendor}'; expected twist or idt")));
     let format = vendor.format_for(out).unwrap_or_else(|e| fail(e));
-    let oligos = oligos_for_program(source).unwrap_or_else(|e| fail(e));
+    let flanks = flank.map(|text| Flanks::parse(text).unwrap_or_else(|e| fail(e)));
+    let mut oligos = oligos_for_program(source).unwrap_or_else(|e| fail(e));
+    if let Some(flanks) = &flanks {
+        let mut problems = flanks.problems();
+        if problems.is_empty() {
+            let (flanked, screen) = flanks.apply(&oligos);
+            problems = screen;
+            oligos = flanked;
+        }
+        if !problems.is_empty() {
+            fail(format!("these primers would not suit this order; no sheet written:\n  {}", problems.join("\n  ")));
+        }
+    }
     let report = check(vendor, &oligos);
     if !report.problems.is_empty() {
         fail(format!("{} would not take this order; no sheet written:\n  {}", vendor.name(), report.problems.join("\n  ")));
@@ -35,11 +47,26 @@ pub fn cmd_order(source: &str, vendor: &str, out: &str, json: bool) {
                 "shortest": report.shortest,
                 "longest": report.longest,
                 "idt_scales": report.idt_scales,
+                "flanks": flanks.as_ref().map(|f| serde_json::json!({
+                    "forward": f.forward,
+                    "reverse": f.reverse,
+                    "forward_tm_celsius": melting_celsius(&f.forward),
+                    "reverse_tm_celsius": melting_celsius(&f.reverse),
+                })),
             })
         );
         return;
     }
     println!("Wrote {} oligos ({}-{} nt) for {} to {}.", report.oligos, report.shortest, report.longest, vendor.name(), out);
+    if let Some(f) = &flanks {
+        println!(
+            "Every oligo starts with {} and ends with the reverse complement of {} (Tm {:.1} and {:.1} °C): one PCR with that pair amplifies the whole pool.",
+            f.forward,
+            f.reverse,
+            melting_celsius(&f.forward),
+            melting_celsius(&f.reverse)
+        );
+    }
     if vendor == Vendor::Idt {
         println!("IDT oPools scales that take a pool this size: {}.", report.idt_scales.join(", "));
         println!("IDT's oPools page takes Excel uploads: paste the Name and Sequence columns into its template.");

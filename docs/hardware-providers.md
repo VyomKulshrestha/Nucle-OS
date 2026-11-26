@@ -100,6 +100,18 @@ written if the vendor would refuse it:
 | Twist | `.fasta` or `.csv` (`Name,Sequence`) | 20-350 nt | not checked |
 | IDT oPools | `.csv` (`Name,Sequence`), pasted into the Excel template IDT's page provides | 40-350 nt | 2-384 oligos at 50 pmol, 10-2,000 at 10 pmol, 100-20,000 at 1 pmol |
 
+`--flank FORWARD,REVERSE` adds one primer pair to every oligo, header
+strands included: the forward primer in front, the reverse primer's
+reverse complement behind. The whole pool then amplifies, and takes
+sequencing adapters, in one PCR, while each file's own primers stay inside
+for picking one file out. The pair is refused, and no sheet written, if a
+primer is outside 18-30 nt or 40-60% GC, has a run of four identical
+bases, melts more than 5 °C from the other (64.9 + 41(GC - 16.4)/N), or
+has its last 12 bases anywhere in the payload on either strand. These are
+rules of thumb; the sequencing lab's own pair is the one to use. `nucle
+bootstrap inspect order.fasta --flank FORWARD,REVERSE` strips the sites
+before reading the header.
+
 Every sequence must be plain A/C/G/T and every name unique. For IDT the
 command lists the scales that take a pool of that size. The IDT figures are
 from its oPools entry page, and still matched it on 8 November 2026. The

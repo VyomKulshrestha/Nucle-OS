@@ -613,6 +613,10 @@ enum HardwareSubcommand {
         /// Sheet to write; the extension picks the format
         #[arg(short, long)]
         out: String,
+        /// Primer pair to add to both ends of every oligo, as FORWARD,REVERSE
+        /// (5' to 3'), so the whole pool amplifies with one PCR
+        #[arg(long)]
+        flank: Option<String>,
     },
     /// Poll vendor jobs previously submitted by `hardware export`.
     Status {
@@ -635,6 +639,10 @@ enum BootstrapAction {
     Inspect {
         /// Strand dump to read
         file: String,
+        /// Primer pair the strands were flanked with (FORWARD,REVERSE), to
+        /// strip before reading the header
+        #[arg(long)]
+        flank: Option<String>,
     },
 }
 
@@ -736,7 +744,7 @@ fn run() {
         Commands::Block { action } => cmd_block(action, cli.json),
         Commands::Bootstrap { action } => match action {
             BootstrapAction::Export { out } => bootstrap_cli::cmd_export(&out, &pool_dir, passphrase.as_deref(), cli.json),
-            BootstrapAction::Inspect { file } => bootstrap_cli::cmd_inspect(&file, cli.json),
+            BootstrapAction::Inspect { file, flank } => bootstrap_cli::cmd_inspect(&file, flank.as_deref(), cli.json),
         },
         Commands::Simulate { file, profile, coverage, years, celsius, medium } => {
             cmd_simulate(&file, &profile, coverage, years.map(|y| (y, celsius, medium)), cli.json)
@@ -2687,7 +2695,7 @@ fn indexed_output_path(base: &str, index: usize) -> String {
 fn cmd_hardware(subcommand: HardwareSubcommand, pool_dir: &std::path::Path, json: bool) {
     match subcommand {
         HardwareSubcommand::Capabilities { provider } => cmd_hardware_capabilities(provider.as_deref(), json),
-        HardwareSubcommand::Order { source, vendor, out } => order_cli::cmd_order(&source, &vendor, &out, json),
+        HardwareSubcommand::Order { source, vendor, out, flank } => order_cli::cmd_order(&source, &vendor, &out, flank.as_deref(), json),
         HardwareSubcommand::Export {
             source,
             output,
