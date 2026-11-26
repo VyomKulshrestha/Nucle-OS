@@ -69,9 +69,9 @@ with Checked Effects and Channel-Typed Pools}
 \author{Vyom Kulshrestha\\
 \small Independent Researcher, India\\
 \small ORCID \href{https://orcid.org/0009-0009-1434-7148}{0009-0009-1434-7148}}
-\date{Technical report, version 2, 9 November 2026\\
-\small NucleScript 1.0, NucleOS v0.1.70\\
-\small \href{https://doi.org/10.5281/zenodo.24059497}{doi:10.5281/zenodo.24059497}}
+\date{Technical report, version 3, 26 November 2026\\
+\small NucleScript 1.0, NucleOS v0.1.87\\
+\small \href{https://doi.org/10.5281/zenodo.24556406}{doi:10.5281/zenodo.24556406}}
 
 \begin{document}
 \maketitle
@@ -83,7 +83,7 @@ error rates depend on the instrument, yet they are written as scripts
 that nothing checks before they run. NucleScript is a programming
 language for these programs. A pool's type names the
 sequencer profile it was read through and an error rate that consensus
-lowers. Operations that synthesise, sequence or delete have effects, each
+lowers by a share measured on real reads. Operations that synthesise, sequence or delete have effects, each
 needs a confirmation written at the operation, and a function type can
 bound the effects of the closures passed through it. NucleScript is
 implemented in Rust as part of NucleOS, which supplies the codecs
@@ -91,12 +91,14 @@ implemented in Rust as part of NucleOS, which supplies the codecs
 simulator with channels measured from real oligo pools, and consensus and
 clustering of real reads. The checker is checked in two ways. A runtime
 monitor runs the shipped examples and generated programs and compares
-what each did with what the checker promised; with the work of writing the
-rules down formally, it has found eight defects, all fixed. A Lean~4
-proof shows, for a core calculus with closures, aliases, closures the
-checker cannot see into, and higher-order functions, that an accepted
-program performs only confirmed operations, only effects the checker
-reports, and nothing a closure's ceiling forbids. On public data, a
+what each did with what the checker promised. A Lean~4
+proof shows, for a core calculus with closures that take closures as
+arguments, aliases, closures the checker cannot see into, higher-order
+functions, loops and early returns, that an accepted program performs
+only confirmed operations, only effects the checker reports, and nothing
+a closure's ceiling forbids. A checker extracted from those rules, proved
+to follow them, agrees with the Rust checker on 20,000 generated
+programs. Together these found ten defects in the checker, all fixed. On public data, a
 NucleScript program decodes 99.73\% and 96.94\% of the strands of two
 Illumina oligo pools with their labels, and 99.73\% and 95.82\% without
 them; the same decoder recovers 94.7\% of 2,000 MinION clusters. No
@@ -140,11 +142,12 @@ far its checker can be trusted. Its contributions are:
   promise for language version~1.0.
 \item A runtime monitor and a random program generator that check the
   checker's promises on running programs (Section~\ref{sec:monitor}).
-  Together with formalising the rules, they found eight defects in the
-  checker, all now fixed.
 \item A proof in Lean~4 \cite{lean4} that the effect and confirmation
   rules keep three of the checker's four promises for a core calculus of
-  the language (Section~\ref{sec:proof}).
+  the language, and a checker Lean can run, proved to follow the rules,
+  that is compared with the Rust checker on generated programs
+  (Section~\ref{sec:proof}). With the monitor, this work found ten
+  defects in the checker, all now fixed.
 \item An evaluation of decoding on public sequencing data
   (Section~\ref{sec:eval}): a MinION dataset and two Illumina oligo pools,
   the latter decoded from inside a NucleScript program.
@@ -305,9 +308,17 @@ A pool's type is \nsl{Pool<}$P$\nsl{, }$r$\nsl{>}, where $P$ is a
 sequencer profile or \nsl{Recovered}, and $r$ an error rate in percent.
 Simulating a pool under profile $P$ gives the profile's default rate
 (0.35\% for Illumina, 5\% for Nanopore, 0.03\% for Twist and 0.05\% for
-IDT). \nsl{consensus\_vote} at coverage $c \ge 2$ divides the rate by
-$c^2$, a deliberately simple model of majority voting that the type
-system treats as a bound, not a prediction. Where branches produce pools,
+IDT). \nsl{consensus\_vote} at coverage $c \ge 2$ multiplies the rate by
+the share of error a consensus of $c$ reads left on real reads: the
+published decoder (partial-order vote, then median polish to the strand
+length) run on every strand with at least $c$ reads, keeping its first
+$c$, on the MinION sample of Section~\ref{sec:eval} and both Illumina
+pools. The type takes the worst of the three at each coverage, never lets
+it rise with coverage, and does not extrapolate past the last coverage
+measured. The MinION reads are the worst at every coverage: they keep
+0.93 of their error at 2 reads, 0.079 at 5 and 0.037 at 10, so a
+Nanopore pool's 5\% becomes 0.18\% at 10x. Earlier versions divided the
+rate by $c^2$, which promised 0.05\%. Where branches produce pools,
 as in the arms of a \nsl{match}, the result takes the worse rate: the
 type promises only the noise every branch can guarantee. A declared rate
 that disagrees with the inferred one is an error.
@@ -343,10 +354,10 @@ Form & Effects \\
 a pipeline with a \nsl{store into} step & $\{\Syn\}$ \\
 a closure literal & $\emptyset$: defining one runs nothing \\
 $f(a_1,\dots,a_n)$, $f$ a function or closure in $\Gamma$ & $E(\text{body of } f) \cup E(a_i)$ for each closure $a_i$ passed to an unannotated \nsl{Fn} parameter \\
-$p()$, $p$ typed \nsl{Fn(...) -> T confirm hardware} & $\{\Syn\}$ \\
-$p()$, $p$ typed \nsl{Fn(...) -> T confirm physical\_key} & $\{\Des\}$ \\
-$p()$, $p$ an unannotated \nsl{Fn} parameter & $\emptyset$; the call that passed the closure adds its effects \\
-$g()$, $g$ a closure the checker cannot trace & every effect \\
+$p(\dots)$, $p$ typed \nsl{Fn(...) -> T confirm hardware} & $\{\Syn, \Seq\}$; \nsl{confirm synthesis} gives $\{\Syn\}$ and \nsl{confirm sequencing} $\{\Seq\}$ \\
+$p(\dots)$, $p$ typed \nsl{Fn(...) -> T confirm physical\_key} & $\{\Des\}$ \\
+$p(a_1,\dots,a_n)$, $p$ an unannotated \nsl{Fn} parameter & $\bigcup_i E(a_i)$; the call that passed the closure in $p$ adds its effects \\
+$g(a_1,\dots,a_n)$, $g$ a closure the checker cannot trace & every effect \\
 \nsl{match}, \nsl{if} & the union over every arm or branch, taken or not \\
 a block $d_1 \dots d_n$ & $\bigcup_i E(d_i)$, with \nsl{let} bindings of closures, aliases and annotated types entering $\Gamma$ \\
 \bottomrule
@@ -389,14 +400,16 @@ call through an unannotated parameter has every effect.
 \label{sec:impl}
 
 NucleScript is implemented in the NucleOS workspace: 14 Rust crates and
-about 54,000 lines of Rust, of which the compiler crate \nsl{nucle\_lang}
-is about 17,000. A program goes through a lexer and parser, a type and
+about 56,000 lines of Rust, of which the compiler crate \nsl{nucle\_lang}
+is about 19,000. A program goes through a lexer and parser, a type and
 effect checker that also resolves compile-time \nsl{if} and \nsl{for}, a
 mid-level representation, an optimizer that raises redundancy for the
 chosen profile and coverage, and either a simulation backend or an
 interpreter that runs the operations against the NucleOS virtual file
-system. The effect rules of Table~\ref{tab:rules} live in
-\nsl{effects.rs} (872 lines) and the ceiling check in
+system. A \nsl{for f in files of pool} loop is the one construct that
+runs at run time, once per file the pool holds. The effect rules of
+Table~\ref{tab:rules} live in \nsl{effects.rs} (959 lines) and the
+ceiling check in
 \nsl{typeck::check\_fn\_effect\_compatibility}.
 
 The layers underneath are:
@@ -416,21 +429,28 @@ The layers underneath are:
   (Section~\ref{sec:eval}), plus Arrhenius decay for three storage media.
 \item \textbf{Hardware boundary.} \nsl{nucle hardware order} turns a
   program's stores into an oligo-pool order sheet for Twist or IDT,
-  checked against the limits each vendor publishes; adapters for vendor
-  APIs exist but no order has been placed.
+  checked against the limits each vendor publishes, optionally with one
+  primer pair on every oligo so the whole pool amplifies in one PCR.
+  \nsl{nucle restore} rebuilds HEDGES files from sequencing reads alone,
+  finding each file's reads by its primer pair and the strand order in
+  the strands. A pilot kit in \texttt{scripts/pilot} predicts a first run
+  from the measured channels; adapters for vendor APIs exist but no order
+  has been placed.
 \item \textbf{Tooling.} A language server, a VS Code extension, a
-  formatter, a test runner, documentation generation, and a playground
-  compiled to WebAssembly.
+  formatter, a test runner, documentation generation, a playground
+  compiled to WebAssembly, and a standard library package written in
+  NucleScript itself.
 \end{itemize}
 
-The workspace has 952 tests. NucleScript 1.0 was declared on 7 November
+The workspace has 1,000 tests. NucleScript 1.0 was declared on 7 November
 2026 with a stability promise: every 1.x release accepts and runs what
 1.0 accepts, with the same effects and confirmations, except for
 soundness fixes, each of which is logged. A frozen corpus of the 33
 example programs that shipped with 1.0 records, for each, whether it is
 accepted, its diagnostic codes, and each declaration's effect; every
-release must reproduce it. The three soundness fixes of
-Section~\ref{sec:monitor} changed none of the 33.
+release must reproduce it. None of the soundness fixes of
+Section~\ref{sec:monitor}, each logged as an exception to the promise,
+changed any of the 33.
 
 \section{Checking the checker}
 \label{sec:monitor}
@@ -474,10 +494,10 @@ twenty-five drops its confirmation and about one closure in twenty is
 given a ceiling it does not fit, so rejections are exercised too.
 
 \paragraph{Results.} In CI, 300 generated programs run on every push:
-215 are accepted, and they run 2,871 stores and 313 deletes. A run of
-5,000 programs on 8 November 2026 accepted 3,540, ran 48,086 stores and
-4,900 deletes, and broke no promise. The reports are close to exact: of
-the 45,903 top-level declarations that ran an operation, 131 were
+209 are accepted, and they run 2,637 stores and 369 deletes. A run of
+5,000 programs on 26 November 2026 accepted 3,384, ran 44,988 stores and
+5,325 deletes, and broke no promise. The reports are close to exact: of
+the 42,711 top-level declarations that ran an operation, 322 were
 reported with a worse effect than they performed, mostly calls through a
 closure the checker cannot trace. The rules allow that, since every arm
 counts whether it runs or not and a run that stops early never reaches
@@ -485,7 +505,7 @@ its later operations.
 
 \paragraph{What it found.} The monitor's first run failed on five shipped
 examples and 159 of the 300 generated programs. Table~\ref{tab:defects}
-lists the eight defects found since. The last three came while writing
+lists the ten defects found since. The last three came while writing
 the rules down for the proof of Section~\ref{sec:proof}: the calculus
 made it plain that a closure can leave the scope the effect walk watches,
 and its ceiling rule had to say what a parameter without a ceiling may
@@ -509,11 +529,14 @@ test that fails on the code before its fix.
 6 & A call through a closure returned from a function counted as Pure and fit every ceiling. & calculus, generator \\
 7 & At top level, \nsl{let again: Fn() -> Void = wipe} was never evaluated, so \nsl{again()} found nothing to call. & calculus, generator \\
 8 & A function could pass its own unannotated \nsl{Fn} parameter into a \nsl{confirm hardware} slot, and a caller could then give it a closure that deletes. & calculus, generator \\
+9 & A closure handed to a call through a parameter was dropped from the effect report: a delete passed that way was reported Pure and ran under \nsl{confirm hardware}. & calculus \\
+10 & A closure bound by \nsl{let} that called its own argument fit a ceiling, which a literal that does could not. & Lean checker \\
 \bottomrule
 \end{tabularx}
 \caption{Defects in the checker found by the runtime monitor, by
-formalising the rules, and by the generator extended afterwards. All are
-fixed.}
+formalising the rules, by the generator extended afterwards, and by
+comparing the Rust checker with the Lean one
+(Section~\ref{sec:compare}). All are fixed.}
 \label{tab:defects}
 \end{table}
 
@@ -523,9 +546,10 @@ fixed.}
 Testing shows that the programs run so far kept their promises. To show
 that every accepted program does, the effect and confirmation rules were
 written down in Lean~4 \cite{lean4} for a core of the language, and the
-first three promises proved for it. The development is one file of 651
-lines with no library beyond Lean's core; the three main theorems use no
-axiom but propositional extensionality, and CI rebuilds the proof on
+first three promises proved for it. The rules and theorems take 982 lines
+and the runnable checker of Section~\ref{sec:compare} 576 more, with no
+library beyond Lean's core; the theorems rest on Lean's standard axioms
+\texttt{propext} and \texttt{Quot.sound}, and CI rebuilds the proof on
 every push and fails if any step rests on \texttt{sorry}.
 
 \subsection{The core calculus}
@@ -535,10 +559,10 @@ Statements are:
 \[
 \begin{array}{rcl}
 s & ::= & \mathsf{op}(o) \mid s_1; s_2 \mid s_1 \oplus s_2
-  \mid \mathsf{let}\ x{:}k = \mathsf{fn}\{s_b\};\ s
+  \mid \mathsf{let}\ x{:}k = \mathsf{fn}(\bar{q})\{s_b\};\ s
   \mid \mathsf{let}\ x = y;\ s \\
-  & \mid & \mathsf{let}\ x{:}k = \mathsf{opaque}\{s_b\};\ s
-  \mid x() \mid f(x_1,\dots,x_n)
+  & \mid & \mathsf{let}\ x{:}k = \mathsf{opaque}(\bar{q})\{s_b\};\ s
+  \mid x(\bar{y}) \mid f(\bar{y}) \mid \mathsf{loop}\ s \mid \mathsf{stop}
 \end{array}
 \]
 An operation $o$ has an optional effect and a flag saying whether its
@@ -547,23 +571,29 @@ confirmation was written. $s_1 \oplus s_2$ is a branch (\nsl{if} or
 $\mathsf{opaque}\{s_b\}$ is a closure the rules cannot see into, such as
 one returned by a function: $s_b$ is what it does, which the effect rule
 for calls never looks at. Named functions take closure arguments, each
-parameter with or without a ceiling, and capture nothing. Closures take
-no arguments of their own. Pools, files and \nsl{Result} add no effects
-of their own and are left out.
+parameter with or without a ceiling, and capture nothing. A closure takes
+closures $\bar{q}$ as arguments of its own, without ceilings.
+$\mathsf{loop}\ s$ is a loop over a pool's files, which runs $s$ zero or
+more times, and $\mathsf{stop}$ is a \nsl{?} meeting an \nsl{Err}, which
+ends the function or closure it is in. Pools, files and \nsl{Result}
+values add no effects of their own and are left out.
 
-\paragraph{Semantics.} A closure value $\clo(s_b, \rho, ks)$ holds its
-body, its captured environment and the ceilings of the slots it was
-bound into. The big-step judgment $\rho \vdash_{cs} s \Downarrow t$ runs
+\paragraph{Semantics.} A closure value $\clo(\bar{q}, s_b, \rho, ks)$
+holds its parameters, its body, its captured environment and the
+ceilings of the slots it was bound into. The big-step judgment $\rho \vdash_{cs} s \Downarrow t$ runs
 $s$ under the ceilings $cs$ of the closure calls in progress and produces
 the list $t$ of events it performed; each event records an effect,
 whether its confirmation was written, and $cs$, as the monitor's trace
-does. The rules that matter are the closure call, which runs the body
-under $ks \app cs$, and argument binding, which adds a parameter's
-ceiling to the value's $ks$:
+does. The rules that matter are the closure call, which binds the
+closure's parameters to the arguments and runs the body under
+$ks \app cs$, and argument binding, which adds a parameter's ceiling to
+the value's $ks$:
 \begin{mathpar}
 \inferrule
-  {\rho(x) = \clo(s_b, \rho', ks) \\ \rho' \vdash_{ks \app cs} s_b \Downarrow t}
-  {\rho \vdash_{cs} x() \Downarrow t}
+  {\rho(x) = \clo(\bar{q}, s_b, \rho', ks) \\
+   \rho_a = [q_i \mapsto \rho(y_i)] \\
+   \rho_a \app \rho' \vdash_{ks \app cs} s_b \Downarrow t}
+  {\rho \vdash_{cs} x(\bar{y}) \Downarrow t}
 \and
 \inferrule
   {P(f) = (\bar{p}{:}\bar{k},\ s_f) \\
@@ -575,34 +605,38 @@ ceiling to the value's $ks$:
 \paragraph{Rules.} The judgment $\Gamma \vdash s : R, U$ gives a
 statement two things: $R$, the effects it may have itself, and $U$, the
 parameters without a ceiling whose closures it may call. A name in
-$\Gamma$ is bound either to $\known(R, U)$, a closure whose effects are
-known, or to $\param(p)$, a parameter without a ceiling, with
-$R(\param(p)) = \emptyset$ and $U(\param(p)) = [p]$. $R$ is what
+$\Gamma$ is bound either to $\known(R, U, \bar{q})$, a closure with
+parameters $\bar{q}$ whose effects are known, or to $\param(p)$, a
+parameter without a ceiling, with $R(\param(p)) = \emptyset$ and
+$U(\param(p)) = [p]$. A closure's $U$ may name its own parameters, which
+each call fills; the rest of it is its outer part. $R$ is what
 \nsl{nucle explain} reports; a call adds the effects of the closures it
 passes for $U$. A closure fits a ceiling only if it calls no parameter
 without one:
 \[
 \fits(k, R, U) \iff \forall c.\ k = c \Rightarrow U = [\,] \wedge R \subseteq \allowed(c)
 \]
-This is the rule defect~8 broke. The rules for closures and calls are:
+This is the rule defect~8 broke, and since a closure's own parameters are
+in its $U$ when it calls them, one that calls its arguments fits no
+ceiling, the rule defect~10 broke. The rules for closures and calls are:
 \begin{mathpar}
 \inferrule
-  {\Gamma \vdash s_b : R_b, U_b \\ \fits(k, R_b, U_b) \\
-   \Gamma, x{:}\known(R_b, U_b) \vdash s : R, U}
-  {\Gamma \vdash \mathsf{let}\ x{:}k = \mathsf{fn}\{s_b\};\ s : R, U}
+  {\Gamma, \bar{q}{:}\param \vdash s_b : R_b, U_b \\ \fits(k, R_b, U_b) \\
+   \Gamma, x{:}\known(R_b, U_b, \bar{q}) \vdash s : R, U}
+  {\Gamma \vdash \mathsf{let}\ x{:}k = \mathsf{fn}(\bar{q})\{s_b\};\ s : R, U}
 \and
 \inferrule
   {\Gamma(y) = b \\ \Gamma, x{:}b \vdash s : R, U}
   {\Gamma \vdash \mathsf{let}\ x = y;\ s : R, U}
 \\
 \inferrule
-  {\Gamma \vdash s_b : R_b, U_b \\ \fits(k, R_b, U_b) \\
-   \Gamma, x{:}\known(\opq(k), [\,]) \vdash s : R, U}
-  {\Gamma \vdash \mathsf{let}\ x{:}k = \mathsf{opaque}\{s_b\};\ s : R, U}
+  {\Gamma, \bar{q}{:}\param \vdash s_b : R_b, U_b \\ \fits(k, R_b, U_b) \\
+   \Gamma, x{:}\known(\opq(k), \cdot, \cdot) \vdash s : R, U}
+  {\Gamma \vdash \mathsf{let}\ x{:}k = \mathsf{opaque}(\bar{q})\{s_b\};\ s : R, U}
 \and
 \inferrule
-  {\Gamma(x) = b}
-  {\Gamma \vdash x() : R(b), U(b)}
+  {\Gamma(x) = b \\ \Gamma \vdash \bar{y} : R_a, U_a}
+  {\Gamma \vdash x(\bar{y}) : R(b) \cup R_a,\ \mathit{outer}(b) \app U_a}
 \\
 \inferrule
   {P(f) = (\bar{p}{:}\bar{k},\ s_f) \\ \Gamma \vdash \bar{x} \triangleright \bar{p}{:}\bar{k} : R_a, U_a}
@@ -613,7 +647,13 @@ with one, which is defect~6's fix. The argument judgment
 $\Gamma \vdash \bar{x} \triangleright \bar{p}{:}\bar{k} : R_a, U_a$ adds
 $R(b)$ and $U(b)$ for each argument bound to $b$ that goes to a parameter
 without a ceiling, and requires $U(b) = [\,]$ and
-$R(b) \subseteq \allowed(c)$ for one with ceiling $c$. $\Phi(f)$ is the
+$R(b) \subseteq \allowed(c)$ for one with ceiling $c$. In a closure call,
+$\Gamma \vdash \bar{y} : R_a, U_a$ adds every argument's effects and
+outer uses, which defect~9's fix counts too; when $x$ holds a closure with
+a ceiling, which cannot call its arguments, they add nothing. The
+opaque binding's uses are its own parameters without a ceiling and none
+with one. A closure's parameters are named apart from the parameters the
+closures in scope may run, the usual convention. $\Phi(f)$ is the
 effect of calling $f$; a program is accepted when each function body's
 $R$ is within its $\Phi$. The least fixed point the checker computes
 (Table~\ref{tab:rules}) is one such $\Phi$.
@@ -642,9 +682,10 @@ $\mathit{conf}(ev)$ holds for every $ev \in t$.
 
 The proof needs an invariant the rules do not state: a closure value does
 at most what the binding that holds it says, given what the enclosing
-function's parameters hold. With $\sigma$ mapping each parameter to the
+function's parameters hold, besides what its own arguments do, and calls
+none of its arguments if the binding says it does not. With $\sigma$ mapping each parameter to the
 effects its closures may have, a binding means
-$\llbracket b \rrbracket_\sigma = R(b) \cup \bigcup_{p \in U(b)} \sigma(p)$,
+$\llbracket b \rrbracket_\sigma = R(b) \cup \bigcup_{p \in \mathit{outer}(b)} \sigma(p)$,
 and $\mathit{ValOk}_B(\clo(s_b, \rho', ks))$ holds when, for some
 $\Gamma'$ and $\sigma'$ with $\Gamma' \vdash s_b : R, U$ and
 $\rho'$ matching $\Gamma'$ under $\sigma'$,
@@ -664,19 +705,44 @@ function, the callee's environment matches its parameter context under
 the constant $\sigma_f = \lambda p.\ R_a \cup \bigcup_{q \in U_a}
 \sigma(q)$: each parameter without a ceiling is bounded by everything the
 call passes, which is coarse but enough, and each parameter with a
-ceiling holds a value that took the ceiling on. The theorems follow with
+ceiling holds a value that took the ceiling on. A closure call extends
+the closure's $\sigma'$ with its own parameters bounded by the arguments,
+which leaves everything it captured meaning what it meant, because its
+parameters are named apart. The theorems follow with
 $\sigma = \lambda p.\ \emptyset$, since a whole program starts with no
 parameters and no ceilings in force.
 
-\subsection{What the proof does not cover}
+\subsection{Checking the Rust checker against the rules}
+\label{sec:compare}
 
 The Lean rules were written by hand from \nsl{effects.rs} and
-\nsl{typeck.rs}, and nothing ties the two together; a slip in the Rust
-that the Lean rules do not share is still caught only by the monitor and
-the tests. The core leaves out closures with arguments of their own,
-generics, \nsl{Result} and \nsl{?}, enums except as a source of opaque
-closures, and value shapes, so the fourth promise rests on testing
-alone.
+\nsl{typeck.rs}, so the two could drift apart. A function
+$\mathit{check}$ computes a statement's $R$ and $U$ or rejects it, and
+$\mathit{check\_sound}$ proves that whatever it returns is a derivation of
+the rules, so the three theorems hold for every program it accepts. It is
+built into a program, \texttt{nsl-check}, and a test generates programs
+in the core, writes each as NucleScript and for \texttt{nsl-check}, and
+fails if the two checkers differ on whether a program is accepted or on
+its worst effect. CI runs 1,000 on every push.
+
+Its first run found 40 disagreements, which came down to two places where
+the Rust type checker rejected programs the rules accept, neither
+unsound. Once the core and the generator covered closures that take
+arguments, it found two more: defect~10, which the Rust checker accepted
+unsoundly, and a rule of the Lean core that counted the arguments of a
+call through a slot with a ceiling, which cannot run them; the Rust
+checker had that one right. A run of 20,000 programs on 26 November 2026
+accepted 9,639 and found no disagreement. The same programs against the
+Rust checker as it was before defects~9 and~10 were fixed give six, each a
+program it accepted and the rules reject.
+
+\subsection{What the proof does not cover}
+
+The comparison ties the Rust checker to the rules only where the
+generator reaches; it is testing, not proof. The core leaves out closure
+parameters with ceilings of their own, closure parameters that reuse a
+name in scope, generics, enums except as a source of opaque closures, and
+value shapes, so the fourth promise rests on testing alone.
 
 \section{Decoding real reads}
 \label{sec:eval}
@@ -826,28 +892,37 @@ implementation got wrong until the rules were written down.
   fourth promise and the rest of the language rest on testing.
 \item \textbf{Error-rate types are estimates.} The rates come from
   published profiles and from the measured channels of one study, and the
-  consensus rule is a simple bound. They say nothing about a lab's own
-  instruments.
+  consensus share from three read sets, the MinION one only 50 strands.
+  No Twist or IDT reads were measured, and they say nothing about a lab's
+  own instruments.
 \item \textbf{Synthesis and sequencing share a ceiling}, and
   \nsl{store} needs no confirmation, by design.
-\item \textbf{The software has no DOI yet.} This report has one, but the
-  repository's releases are not yet archived on Zenodo.
+\item \textbf{Restoring from reads covers HEDGES.} The other codecs keep
+  their strand order in the pool directory, so \nsl{nucle restore} lists
+  their files without rebuilding them.
 \end{itemize}
 
 \section{Availability}
 
 NucleOS and NucleScript are MIT-licensed at
 \url{https://github.com/VyomKulshrestha/Nucle-OS}, and this report
-describes release v0.1.70. A playground runs in the browser at
+describes release v0.1.87. Every release from v0.1.74 is archived on
+Zenodo (all versions:
+\href{https://doi.org/10.5281/zenodo.24552558}{doi:10.5281/zenodo.24552558}). A playground runs in the browser at
 \url{https://nuclescript.github.io/playground/}. In the repository:
 
 \begin{itemize}[leftmargin=*,itemsep=1pt]
-\item \texttt{proofs/}: the Lean proof, built with \texttt{lake build} on
-  Lean 4.35.0.
+\item \texttt{proofs/}: the Lean proof and \texttt{nsl-check}, built with
+  \texttt{lake build} on Lean 4.35.0.
 \item \texttt{nucle\_lang/tests/soundness.rs} and
-  \texttt{soundness\_regressions.rs}: the monitor's tests and the eight
-  regressions; \texttt{NSL\_SOUNDNESS\_PROGRAMS} sets the number of
-  generated programs.
+  \texttt{soundness\_regressions.rs}: the monitor's tests and the
+  regressions. The variable \texttt{NSL\_SOUNDNESS\_PROGRAMS} sets the
+  number of generated programs.
+\item \texttt{nucle\_lang/tests/lean\_differential.rs}: the comparison of
+  the two checkers, which finds \texttt{nsl-check} through the variable
+  \texttt{NSL\_LEAN\_CHECKER}.
+\item \texttt{scripts/pilot/}: the order sheets, dry run and read-back of
+  a first wet-lab run, not yet ordered.
 \item \texttt{scripts/erp173549/}: \texttt{prepare.py} rebuilds the
   Illumina pools and \texttt{decode.nsl} decodes them. The references are
   GPL-3.0, so no copy ships with the repository.
