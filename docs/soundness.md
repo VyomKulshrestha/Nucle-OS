@@ -213,6 +213,18 @@ a ceiling may do inside one.
   a ceiling is checked, such a parameter now counts as every effect; the
   generator, once it learned to write `relay`, found one program of its
   300 that broke the ceiling on the code before the fix.
+- **A closure handed to a parameter was never counted.** Inside `fn
+  apply(g: Fn(Fn() -> Void) -> Void)`, a call `g(wipe)` added nothing for
+  `wipe`. The closure `g` holds counts its own parameter's calls as ∅ and
+  leaves them to the call sites that pass it a closure, but `wipe` is built
+  inside `apply`, so no call site saw it. `nucle explain` called
+  `apply(fn(k: Fn() -> Void) -> Void { k() })` Pure while it deleted, and
+  the delete ran inside a closure accepted under `confirm hardware`. A call
+  through a parameter, or through a closure the checker cannot see into
+  (one returned by a function, taken out of an enum, or bound to one),
+  now counts every closure passed to it. This one was found by writing the
+  Lean rules for closures with arguments of their own, which said the call
+  must count them.
 
 Each is pinned in `soundness_regressions.rs` too, and those tests also
 fail on the code before the fixes.

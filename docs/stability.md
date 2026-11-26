@@ -64,6 +64,14 @@ program, is logged below and recorded by running the test with
 
 ## Log
 
+- **26 November 2026, NucleOS v0.1.86:** soundness fix. A call through a
+  `Fn` parameter, or through a closure the checker cannot see into, now
+  counts the effects of every closure passed to it, since the closure it
+  calls may call them. A program 1.0 accepted that handed a closure to a
+  parameter this way, from inside a closure under a `confirm` ceiling the
+  handed-on closure breaks, is now rejected, and `nucle explain` reports
+  such calls with the effects they have. None of the 33 programs in the
+  1.0 corpus changed.
 - **26 November 2026, NucleOS v0.1.81:** measured numbers. The error rate
   `consensus_vote` gives its result is now the source's rate times the
   share of error the consensus decoder left on real reads at that
